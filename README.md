@@ -1,7 +1,7 @@
 # Nemorosa
 
 ![Python Version](https://img.shields.io/badge/python-3.7%2B-blue)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License](https://img.shields.io/badge/license-gplv3-green)](LICENSE)
 
 Nemorosa is a specialized tool that scans your Transmission torrent client to find matching torrents on Gazelle-based private trackers (like RED/OPS/DIC) for cross-seeding purposes. It automatically downloads matching .torrent files, renames files to match your existing content, and adds them to Transmission with minimal configuration.
 
