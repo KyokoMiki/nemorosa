@@ -9,7 +9,7 @@ import requests
 import time
 
 # imports: custom
-import modules.cookies
+import modules.cookies, modules.logger
 
 class LoginException(Exception):
     pass
@@ -26,13 +26,14 @@ class WhatAPI:
             'Content-type': 'application/x-www-form-urlencoded',
             'Accept-Charset': 'utf-8',
             'User-Agent': 'whatapi [isaaczafuta]',
-            **{'Authorization': api_key}
+            **({'Authorization': api_key} if api_key else {})
         }
         self.authkey = None
         self.passkey = None
         self.server = server
         self.last_request_time = 0
         self.interval = interval + 0.1  # seconds between requests
+        self.logger = modules.logger.ColorLogger(loglevel=modules.logger.global_loglevel)
 
         if api_key == None:
             if cookies:
@@ -40,18 +41,15 @@ class WhatAPI:
                 try:
                     self._auth()
                 except RequestException as e:
-                    print(f"{Fore.RED}Failed to authenticate with cookies: {e}{Style.RESET_ALL}")
-                    self._login()
-            else:
-                self._login()
-        
-        modules.cookies.save_cookies(self.session.cookies)
+                    self.logger.error(f"Failed to authenticate with cookies: {e}")
+                finally:
+                    modules.cookies.save_cookies(self.session.cookies)
 
     def wait(self):
         now = time.monotonic()
         elapsed = now - self.last_request_time
         if elapsed < self.interval:
-            print(f"{Fore.CYAN}Sleep for {self.interval - elapsed}s{Style.RESET_ALL}")
+            self.logger.debug(f"Sleep for {self.interval - elapsed:.2f} seconds")
             time.sleep(self.interval - elapsed)
         self.last_request_time = time.monotonic()
 
@@ -60,19 +58,6 @@ class WhatAPI:
         accountinfo = self.request("index")
         self.authkey = accountinfo["response"]["authkey"]
         self.passkey = accountinfo["response"]["passkey"]
-
-    def _login(self):
-        '''Logs in user'''
-        loginpage = self.server + '/login.php'
-        data = {'username': self.username,
-                'password': self.password,
-                'keeplogged': 1,
-                'login': 'Login'
-        }
-        r = self.session.post(loginpage, data=data, allow_redirects=False)
-        if r.status_code != 302:
-            raise LoginException
-        self._auth()
 
     def logout(self):
         '''Logs out user'''
@@ -102,22 +87,22 @@ class WhatAPI:
     # get torrent object by id
     def torrent(self, torrent_id):
         torrent_object = {}
-        print("Getting torrent by id: %s", torrent_id)
+        self.logger.debug(f"Getting torrent by id: {torrent_id}")
         try:
             torrent_lookup = self.request(
                     'torrent',
                     id=torrent_id
             )
         except Exception as e:
-            print(f"{Fore.RED}Failed to get torrent by id {torrent_id}. Error: {e}{Style.RESET_ALL}")
+            self.logger.error(f"Failed to get torrent by id {torrent_id}. Error: {e}")
             return torrent_object  # return empty dict on error
         torrent_lookup_status = torrent_lookup.get('status', None)
         if torrent_lookup_status == "success":
-            print("Torrent lookup successful")
+            self.logger.debug(f"Torrent lookup successful for id: {torrent_id}")
             torrent_object = torrent_lookup["response"]["torrent"]
             torrent_object['fileList'] = self.parse_file_list(torrent_object.get('fileList', ''))
         else:
-            print(f"{Fore.RED}Torrent lookup failed. status = {torrent_lookup_status}{Style.RESET_ALL}")
+            self.logger.error(f"Torrent lookup failed for id: {torrent_id}. Status: {torrent_lookup_status}")
         # return torrent object
         return torrent_object
     
@@ -129,7 +114,7 @@ class WhatAPI:
         """
         file_list = {}
         if file_list_str:
-            print("Parsing file list")
+            self.logger.debug("Parsing file list")
             # split the string into individual entries
             entries = file_list_str.split('|||')
             for entry in entries:
@@ -140,9 +125,9 @@ class WhatAPI:
                     filesize = parts[1].rstrip('}}}').strip()
                     file_list[filename] = int(filesize)
                 else:
-                    print(f"{Fore.YELLOW}Malformed entry in file list: {entry}{Style.RESET_ALL}")
+                    self.logger.warning(f"Malformed entry in file list: {entry}")
         else:
-            print(f"{Fore.YELLOW}File list is empty or None{Style.RESET_ALL}")
+            self.logger.warning("File list is empty or None")
 
         return file_list
 
@@ -155,7 +140,7 @@ class WhatAPI:
             response = self.request("browse", **params)
             return response
         except Exception as e:
-            print(f"{Fore.RED}Error searching for torrent by filename '{filename}': {e}{Style.RESET_ALL}")
+            self.logger.error(f"Error searching for torrent by filename '{filename}': {e}")
             return {}
     
     def download_torrent(self, torrent_id):
@@ -170,17 +155,18 @@ class WhatAPI:
                 ajaxpage = self.server + '/ajax.php'
                 response = self.session.get(ajaxpage, params={"action": "download", "id": torrent_id})
                 if response.status_code != 200:
-                    print(f"{Fore.RED}Status of request is {response.status_code}. Aborting...{Style.RESET_ALL}")
-                    print(f"{Fore.RED}Response content: {response._content}{Style.RESET_ALL}")
+                    self.logger.error(f"Status of request is {response.status_code}. Aborting...")
+                    self.logger.error(f"Response content: {response._content}")
+                    raise RequestException
                 
-                print("Torrent downloaded successfully")
+                self.logger.debug(f"Torrent {torrent_id} downloaded successfully")
                 return response.content
             except Exception as e:
                 if attempt < max_retries - 1:
-                    print(f"Error downloading torrent: {e}, retrying ({attempt + 1}/{max_retries})...")
+                    self.logger.warning(f"Error downloading torrent: {e}, retrying ({attempt + 1}/{max_retries})...")
                     time.sleep(2)
                 else:
-                    print(f"{Fore.RED}Failed to download torrent after {max_retries} attempts: {e}{Style.RESET_ALL}")
+                    self.logger.error(f"Failed to download torrent after {max_retries} attempts: {e}")
                     return None
     
     def get_torrent_link(self, torrent_id):

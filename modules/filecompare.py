@@ -1,21 +1,24 @@
 import difflib
 from collections import defaultdict
-from colorama import Fore, init, Style
-
+import modules.logger
 
 def check_conflicts(fdict_local, fdict_torrent):
     """
     检测同名文件不同大小的冲突情况
-    
+
     Returns:
         bool: 如果存在冲突返回True，否则返回False
     """
     for name, size in fdict_torrent.items():
         if name in fdict_local:
             if fdict_local[name] != size:
-                print(f"{Fore.RED}File conflict detected! File: {name}, "
-                            f"Local size: {fdict_local[name]}, "
-                            f"Torrent size: {size}{Style.RESET_ALL}")
+                modules.logger.ColorLogger(
+                    loglevel=modules.logger.global_loglevel
+                ).error(
+                    f"File conflict detected! File: {name}, "
+                    f"Local size: {fdict_local[name]}, "
+                    f"Torrent size: {size}"
+                )
                 return True
     return False
 

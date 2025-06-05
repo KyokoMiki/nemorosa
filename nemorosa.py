@@ -18,90 +18,11 @@ import transmission_rpc
 
 # imports: custom
 import modules.filecompare, modules.api, modules.cookies
+import modules.logger
 
 # constants
 PROCESSED_DIRS_FILE = "processed-dirs.txt"
 CHECK_TRACKERS = ["flacsfor.me", "home.opsfet.ch", "52dic.vip"]
-
-# ================== Custom Print Logger ==================
-class ColorLogger:
-    def __init__(self, loglevel="info"):
-        levels = {
-            'debug': 0,
-            'info': 1,
-            'warning': 2,
-            'error': 3,
-            'critical': 4
-        }
-        self.level = levels.get(loglevel.lower(), 1)
-        self.colors = {
-            'success': Fore.GREEN,
-            'header': Fore.YELLOW,
-            'section': Fore.CYAN,
-            'prompt': Fore.MAGENTA,
-            'error': Fore.RED,
-            'critical': Fore.RED,
-            'debug': Fore.BLUE,
-            'info': Style.RESET_ALL,
-            'warning': Fore.YELLOW
-        }
-    
-    def _should_log(self, level_name):
-        level_map = {
-            'debug': 0,
-            'info': 1,
-            'warning': 2,
-            'error': 3,
-            'critical': 4,
-            'success': 1,
-            'header': 1,
-            'section': 1,
-            'prompt': 1
-        }
-        return level_map.get(level_name, 1) >= self.level
-    
-    def _log(self, level_name, msg, *args):
-        if not self._should_log(level_name):
-            return
-            
-        color = self.colors.get(level_name, Style.RESET_ALL)
-        formatted_msg = msg % args if args else msg
-        print(f"{color}{formatted_msg}{Style.RESET_ALL}")
-    
-    def success(self, msg, *args, **kwargs):
-        self._log('success', msg, *args)
-        
-    def header(self, msg, *args, **kwargs):
-        self._log('header', msg, *args)
-        
-    def section(self, msg, *args, **kwargs):
-        self._log('section', msg, *args)
-        
-    def prompt(self, msg, *args, **kwargs):
-        self._log('prompt', msg, *args)
-        
-    def error(self, msg, *args, **kwargs):
-        self._log('error', msg, *args)
-        
-    def critical(self, msg, *args, **kwargs):
-        self._log('critical', msg, *args)
-        
-    def info(self, msg, *args, **kwargs):
-        self._log('info', msg, *args)
-        
-    def debug(self, msg, *args, **kwargs):
-        self._log('debug', msg, *args)
-        
-    def warning(self, msg, *args, **kwargs):
-        self._log('warning', msg, *args)
-        
-    def exception(self, msg, *args, **kwargs):
-        self.error(msg, *args)
-        if 'exc_info' in kwargs and kwargs['exc_info']:
-            traceback.print_exc()
-
-def generate_logger(loglevel="info"):
-    return ColorLogger(loglevel)
 
 def parse_libtc_url(url):
     # transmission+http://127.0.0.1:9091/?session_path=/session/path/
@@ -205,7 +126,7 @@ def scan(
             break
 
     for fname in scan_querys:
-        logger.info(f"Searching for file: {fname}")
+        logger.debug(f"Searching for file: {fname}")
         search_resp = api.search_torrent_by_filename(fname)
         
         # 记录API响应状态
@@ -222,7 +143,7 @@ def scan(
                 torrents.extend(group["torrents"])
         
         # 记录找到的结果数量
-        logger.info(f"Found {len(torrents)} potential matches for file '{fname}'")
+        logger.debug(f"Found {len(torrents)} potential matches for file '{fname}'")
         
         # 按大小匹配
         size_match_found = False
@@ -243,7 +164,7 @@ def scan(
         
         # 按文件内容匹配
         if tid == -1:
-            logger.info(f"No size match found. Checking file contents for '{fname}'")
+            logger.debug(f"No size match found. Checking file contents for '{fname}'")
             for t_index, t in enumerate(torrents, 1):
                 logger.debug(f"Checking torrent #{t_index}/{len(torrents)}: ID {t['torrentId']}")
                 
@@ -267,21 +188,21 @@ def scan(
                         logger.success(f"Music file match found! Torrent ID: {tid} (File: {fname})")
                         # 检查文件冲突
                         if modules.filecompare.check_conflicts(fdict, resp_files):
-                            logger.info("Conflict detected. Skipping this torrent.")
+                            logger.debug("Conflict detected. Skipping this torrent.")
                             tid = -1  # 重置tid
                         
                         break
         
         # 如果找到匹配，提前退出
         if tid != -1:
-            logger.info(f"Match found with file '{fname}'. Stopping search.")
+            logger.debug(f"Match found with file '{fname}'. Stopping search.")
             break
         
         # 如果没有更多结果，停止搜索
         if len(torrents) == 0 or search_resp["response"]["pages"] <= 1:
-            logger.info(f"No more results for file '{fname}'")
+            logger.debug(f"No more results for file '{fname}'")
             if posixpath.splitext(fname)[1] in [".flac", ".mp3", ".dsf", ".dff", ".m4a"]:
-                logger.info("Stopping search as search result are zero")
+                logger.debug("Stopping search as music file match is not found")
                 break
 
     if tid == -1:
@@ -324,7 +245,7 @@ def scan(
                         )
                     )
                     if GLOBAL["cnt_dl_fail"] == 10:
-                        logger.info(
+                        logger.debug(
                             "Suppressing further hinting for .torrent file downloading failures"
                         )
         append_to_json_set(result_url_path, tid)
@@ -352,18 +273,18 @@ def inject_transmission_client(
             added_torrent = transmission_client.add_torrent(torrent_data, download_dir=download_dir, paused=True, labels=["nemorosa"])
             if added_torrent.name != original_torrent_name:
                 transmission_client.rename_torrent_path(added_torrent.id, location=added_torrent.name, name=original_torrent_name)
-                logger.info(f"Renamed torrent from {added_torrent.name} to {original_torrent_name}")
+                logger.debug(f"Renamed torrent from {added_torrent.name} to {original_torrent_name}")
             if rename_map != {}:
                 for torrent_file_name, local_file_name in rename_map.items():
                     transmission_client.rename_torrent_path(added_torrent.id, location=posixpath.join(original_torrent_name, torrent_file_name), name=local_file_name)
-                    logger.info(f"Renamed torrent file {torrent_file_name} to {local_file_name}")
+                    logger.debug(f"Renamed torrent file {torrent_file_name} to {local_file_name}")
 
                 transmission_client.verify_torrent(added_torrent.id)
             logger.success("Torrent added to Transmission successfully")
             return True
         except Exception as e:
             if attempt < max_retries - 1:
-                logger.info(f"Error injecting torrent into Transmission: {e}, retrying ({attempt + 1}/{max_retries})...")
+                logger.debug(f"Error injecting torrent into Transmission: {e}, retrying ({attempt + 1}/{max_retries})...")
                 time.sleep(2)
             else:
                 logger.error(f"Failed to inject torrent into Transmission after {max_retries} attempts: {e}")
@@ -448,13 +369,13 @@ def process_transmission_torrents(transmission_client, api, result_dir, no_downl
         
         # Get torrents from Transmission
         torrents = get_transmission_torrents(transmission_client, target_trackers)
-        logger.info("Found %d torrents in Transmission matching the criteria", len(torrents))
+        logger.debug("Found %d torrents in Transmission matching the criteria", len(torrents))
         
         for i, (torrent_name, torrent_details) in enumerate(torrents.items()):
 
             # Skip already scanned torrents
             if torrent_details['hash'] in scanned_set:
-                logger.info("Skipping already scanned torrent: %s (%s)", torrent_name, torrent_details['hash'])
+                logger.debug("Skipping already scanned torrent: %s (%s)", torrent_name, torrent_details['hash'])
                 continue
                 
             logger.header("Processing %d/%d: %s (%s)", i+1, len(torrents), torrent_name, torrent_details['hash'])
@@ -573,13 +494,13 @@ def main():
     parser.add_argument(
         "-a",
         "--api-key",
-        default="",
+        default=None,
         help="API key for authentication",
     )
     parser.add_argument(
         "-c",
         "--cookie",
-        default="",
+        default=None,
         help="Cookie string for authentication",
     )
     # parse arguments
@@ -595,9 +516,10 @@ def main():
     transmission_url = args.transmission
 
     # Set up logging
+    modules.logger.global_loglevel = args.loglevel
     global logger
-    logger = generate_logger(args.loglevel)
-    logger.section("===== Nemorosa Tool Starting =====")
+    logger = modules.logger.generate_logger(modules.logger.global_loglevel)
+    logger.section("===== Nemorosa Starting =====")
 
     # load cookies
     cookies = modules.cookies.get_cookies()
@@ -612,7 +534,7 @@ def main():
 
     # connect to API
     logger.section("===== Establishing Connections =====")
-    logger.info("Getting connection to API...")
+    logger.debug("Getting connection to API...")
     try:
         api = modules.api.WhatAPI(api_key=apikey, interval=interval, cookies=cookies, server=server)
         logger.success("API connection established")
@@ -622,7 +544,7 @@ def main():
 
     try:
         logger.section("===== Connecting to Transmission =====")
-        logger.info("Connecting to Transmission client at %s...", transmission_url)
+        logger.debug("Connecting to Transmission client at %s...", transmission_url)
         transmission_info = parse_libtc_url(transmission_url)
         transmission_client = transmission_rpc.Client(
             host=transmission_info.get("host", "localhost"),
@@ -640,7 +562,7 @@ def main():
         logger.critical("Error connecting to Transmission client: %s", e)
         sys.exit(1)
         
-    logger.section("===== Nemorosa Tool Finished =====")
+    logger.section("===== Nemorosa Finished =====")
 
 if __name__ == "__main__":
     # initialise colorama
