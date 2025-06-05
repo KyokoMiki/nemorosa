@@ -1,0 +1,6 @@
+*.log
+*.torrent
+**/__pycache__/
+cookies.dat
+results/
+.vscode/

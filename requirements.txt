@@ -1,0 +1,4 @@
+bencode.py==4.0.0
+colorama==0.4.6
+requests==2.32.3
+transmission_rpc==7.0.11
