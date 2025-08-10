@@ -34,8 +34,8 @@ def parse_libtc_url(url):
     scheme = parsed.scheme.split("+")
     netloc = parsed.netloc
     if "@" in netloc:
-        auth, netloc = netloc.split("@")
-        username, password = auth.split(":")
+        auth, netloc = netloc.rsplit("@", 1)  # 从右边分割一次，避免密码中的@导致分割错误
+        username, password = auth.split(":", 1) # 分割一次，允许密码中包含":"
         kwargs["username"] = username
         kwargs["password"] = password
 
