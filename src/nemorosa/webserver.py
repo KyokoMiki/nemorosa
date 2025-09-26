@@ -2,9 +2,11 @@
 
 import base64
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -111,6 +113,13 @@ async def root():
             "docs": "/docs",
         },
     }
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """Serve favicon.ico."""
+    favicon_path = Path(__file__).parent / "static" / "favicon.ico"
+    return FileResponse(favicon_path)
 
 
 @app.post("/api/webhook", response_model=WebhookResponse)

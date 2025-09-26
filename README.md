@@ -1,15 +1,21 @@
-# Nemorosa
+<div align="center"><img width="250px" src="https://cdn.jsdelivr.net/gh/KyokoMiki/nemorosa@main/src/nemorosa/static/nemorosa.svg"/></div>
+
+<h1 align="center">nemorosa</h1>
+
+<div align="center">
 
 [![PyPI version](https://badgen.net/pypi/v/nemorosa)](https://pypi.org/project/nemorosa/)
 [![PyPI - Python Version](https://badgen.net/pypi/python/nemorosa)](https://pypi.org/project/nemorosa/)
 [![CI](https://github.com/KyokoMiki/nemorosa/actions/workflows/release.yml/badge.svg)](https://github.com/KyokoMiki/nemorosa/actions/workflows/release.yml)
-[![License](https://badgen.net/github/license/KyokoMiki/nemorosa)](LICENSE)
+[![License](https://badgen.net/github/license/KyokoMiki/nemorosa)](https://github.com/KyokoMiki/nemorosa/blob/main/LICENSE)
 
-Nemorosa is a specialized cross-seeding tool designed specifically for music torrents, designed to work alongside [cross-seed](https://github.com/cross-seed/cross-seed).
+</div>
 
-Compared to existing music torrent cross-seeding tools, Nemorosa offers the strongest matching capabilities and the widest range of supported trackers, and the most natural and human-friendly user experience.
+`nemorosa` is a specialized cross-seeding tool designed specifically for music torrents, designed to work alongside [cross-seed](https://github.com/cross-seed/cross-seed).
 
-Unlike traditional music torrent cross-seeding tools that can only match torrents with identical hashes, Nemorosa excels at partial matching and automatic file mapping, enabling cross-seeding from **any source site** to Gazelle-based trackers.
+Compared to existing music torrent cross-seeding tools, nemorosa offers the strongest matching capabilities and the widest range of supported trackers, and the most natural and human-friendly user experience.
+
+Unlike traditional music torrent cross-seeding tools that can only match torrents with identical hashes, nemorosa excels at partial matching and automatic file mapping, enabling cross-seeding from **any source site** to Gazelle-based trackers.
 
 ## Features
 
@@ -22,7 +28,7 @@ Unlike traditional music torrent cross-seeding tools that can only match torrent
 - **Web Server Mode**: HTTP API and webhook support for integration with other tools and automation
   - **Scheduled Jobs**: Automated search and cleanup tasks with configurable intervals
   - **Announce Matching**: Automatically matches cross-seeds from IRC announces or RSS feeds by processing torrent announces from autobrr.
-  - **Triggering Searches**: Enables immediate cross-seed searches when torrents finish downloading by adding on-completion scripts to your torrent client that call Nemorosa's HTTP API.
+  - **Triggering Searches**: Enables immediate cross-seed searches when torrents finish downloading by adding on-completion scripts to your torrent client that call nemorosa's HTTP API.
 - **Smart Retry System**: Automatically retry failed downloads and track undownloaded torrents
 - **Multi-Client Support**: Works with Transmission, qBittorrent, and Deluge
 
@@ -34,7 +40,7 @@ Unlike traditional music torrent cross-seeding tools that can only match torrent
   - **qBittorrent**
   - **Deluge**
 
-  **Note**: If using Transmission, Deluge, or qBittorrent versions prior to 4.5.0, Nemorosa needs access to the client's torrents directory. When running in Docker, ensure you map the torrents directory to the Nemorosa container.
+  **Note**: If using Transmission, Deluge, or qBittorrent versions prior to 4.5.0, nemorosa needs access to the client's torrents directory. When running in Docker, ensure you map the torrents directory to the nemorosa container.
 - Access to Gazelle-based target trackers for cross-seeding (**source sites can be ANY type**):
   - **GazelleJSONAPI**: RED, OPS, DIC
   - **Gazelle (Legacy)**: LZTR, Libble
@@ -50,4 +56,4 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-This project is licensed under the GPL-3.0 License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the GPL-3.0 License - see the [LICENSE](https://github.com/KyokoMiki/nemorosa/blob/main/LICENSE) file for details.

@@ -79,7 +79,7 @@ def setup_argument_parser(config_defaults):
     # post-process injected torrents option
     parser.add_argument(
         "-p",
-        "--process-completed-matches",
+        "--post-process",
         action="store_true",
         default=False,
         help="post-process injected torrents",
