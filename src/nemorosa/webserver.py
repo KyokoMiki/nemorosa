@@ -47,9 +47,17 @@ async def lifespan(app: FastAPI):
     app_logger = logger.get_logger()
     job_manager = scheduler.get_job_manager()
 
-    # Startup
+    # Setup API connections
+    try:
+        target_apis = await api.setup_api_connections(config.cfg.target_sites)
+        api.set_target_apis(target_apis)
+        app_logger.info(f"API connections established for {len(target_apis)} target sites")
+    except Exception as e:
+        app_logger.error(f"Failed to establish API connections: {str(e)}")
+        app_logger.warning("Web server will start without API connections")
+
+    # Start scheduler if available
     if job_manager and api.get_target_apis():
-        # Start scheduler
         await job_manager.start_scheduler()
         app_logger.info("Scheduler started with configured jobs")
 
@@ -140,7 +148,7 @@ async def webhook(infoHash: str = Query(..., description="Torrent infohash"), _:
     try:
         # Process the torrent
         processor = NemorosaCore()
-        result = processor.process_single_torrent(infoHash)
+        result = await processor.process_single_torrent(infoHash)
 
         return WebhookResponse(status="success", message="Torrent processed successfully", data=result)
 
@@ -196,7 +204,7 @@ async def announce(
 
         # Process the torrent for cross-seeding using the reverse announce function
         processor = NemorosaCore()
-        result = processor.process_reverse_announce_torrent(
+        result = await processor.process_reverse_announce_torrent(
             torrent_name=request.name,
             torrent_link=request.link,
             torrent_data=torrent_bytes,

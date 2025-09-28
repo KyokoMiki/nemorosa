@@ -30,7 +30,7 @@ class NemorosaCore:
         }
         self.logger = logger.get_logger()
 
-    def hash_based_search(
+    async def hash_based_search(
         self,
         *,
         torrent_object: torf.Torrent,
@@ -68,7 +68,7 @@ class NemorosaCore:
                 torrent_hash = torrent_object.infohash
 
                 # Search torrent by hash
-                search_result = api.search_torrent_by_hash(torrent_hash)
+                search_result = await api.search_torrent_by_hash(torrent_hash)
                 if search_result:
                     self.logger.success(f"Found torrent by hash! Hash: {torrent_hash}")
 
@@ -84,7 +84,7 @@ class NemorosaCore:
 
         return None
 
-    def filename_search(
+    async def filename_search(
         self,
         *,
         fdict: dict,
@@ -116,7 +116,7 @@ class NemorosaCore:
             self.logger.debug(f"Searching for file: {fname}")
             fname_query = fname
             try:
-                torrents = api.search_torrent_by_filename(fname_query)
+                torrents = await api.search_torrent_by_filename(fname_query)
             except Exception as e:
                 self.logger.error(f"Error searching for file '{fname_query}': {e}")
                 raise
@@ -132,7 +132,7 @@ class NemorosaCore:
                         f"No results found for '{fname}', trying fallback search with basename: '{fname_query}'"
                     )
                     try:
-                        fallback_torrents = api.search_torrent_by_filename(fname_query)
+                        fallback_torrents = await api.search_torrent_by_filename(fname_query)
                         if fallback_torrents:
                             torrents = fallback_torrents
                             self.logger.debug(
@@ -163,7 +163,7 @@ class NemorosaCore:
 
             # Match by file content
             if tid is None:
-                tid = self.match_by_file_content(
+                tid = await self.match_by_file_content(
                     torrents=torrents,
                     fname_query=fname_query,
                     fname=fname,
@@ -274,7 +274,7 @@ class NemorosaCore:
             self.logger.error(f"Error searching torrent by filename in client: {e}")
             return []
 
-    def match_by_file_content(
+    async def match_by_file_content(
         self,
         *,
         torrents: list[dict],
@@ -302,7 +302,7 @@ class NemorosaCore:
         for t_index, t in enumerate(torrents, 1):
             self.logger.debug(f"Checking torrent #{t_index}/{len(torrents)}: ID {t['torrentId']}")
 
-            resp = api.torrent(t["torrentId"])
+            resp = await api.torrent(t["torrentId"])
             resp_files = resp.get("fileList", {})
 
             # Get files in fileList corresponding to fname_query
@@ -357,7 +357,7 @@ class NemorosaCore:
 
         return tid
 
-    def process_torrent_search(
+    async def process_torrent_search(
         self,
         *,
         torrent_details: ClientTorrentInfo,
@@ -388,7 +388,7 @@ class NemorosaCore:
         # Try hash-based search first if torrent object is available
         if torrent_object:
             try:
-                tid = self.hash_based_search(torrent_object=torrent_object, api=api)
+                tid = await self.hash_based_search(torrent_object=torrent_object, api=api)
             except Exception as e:
                 self.logger.error(f"Hash-based search failed: {e}")
                 search_error_occurred = True
@@ -396,7 +396,7 @@ class NemorosaCore:
         # If hash search didn't find anything, try filename search
         if tid is None:
             try:
-                tid = self.filename_search(fdict=torrent_details.fdict, tsize=torrent_details.total_size, api=api)
+                tid = await self.filename_search(fdict=torrent_details.fdict, tsize=torrent_details.total_size, api=api)
                 hash_match = False
             except Exception as e:
                 self.logger.error(f"Filename search failed: {e}")
@@ -429,7 +429,7 @@ class NemorosaCore:
             torrent_object.trackers = [api.announce]
             torrent_data = torrent_object.dump()
         else:
-            torrent_data = api.download_torrent(tid)
+            torrent_data = await api.download_torrent(tid)
             if torrent_data is None:
                 raise ValueError("Failed to download torrent data")
             torrent_object = torf.Torrent.read_stream(torrent_data)
@@ -495,7 +495,7 @@ class NemorosaCore:
 
         return tid, downloaded
 
-    def process_single_torrent_from_client(
+    async def process_single_torrent_from_client(
         self,
         torrent_details: ClientTorrentInfo,
     ) -> bool:
@@ -537,7 +537,7 @@ class NemorosaCore:
 
             try:
                 # Scan and match
-                tid, _ = self.process_torrent_search(
+                tid, _ = await self.process_torrent_search(
                     torrent_details=torrent_details,
                     api=api_instance,
                     torrent_object=torrent_object,  # Pass torrent object for hash search
@@ -553,7 +553,7 @@ class NemorosaCore:
 
         return any_success
 
-    def process_torrents(self):
+    async def process_torrents(self):
         """Process torrents in client, supporting multiple target sites."""
         self.logger.section("===== Processing Torrents =====")
 
@@ -578,7 +578,7 @@ class NemorosaCore:
                 )
 
                 # Process single torrent
-                any_success = self.process_single_torrent_from_client(
+                any_success = await self.process_single_torrent_from_client(
                     torrent_details=torrent_details,
                 )
 
@@ -596,7 +596,7 @@ class NemorosaCore:
             self.logger.success(".torrent files downloaded: %d", self.stats["downloaded"])
             self.logger.section("===== Torrent Processing Complete =====")
 
-    def retry_undownloaded_torrents(self):
+    async def retry_undownloaded_torrents(self):
         """Re-download undownloaded torrents."""
         self.logger.section("===== Retrying Undownloaded Torrents =====")
 
@@ -628,7 +628,7 @@ class NemorosaCore:
 
                     try:
                         # Download torrent data
-                        torrent_data = api_instance.download_torrent(torrent_id)
+                        torrent_data = await api_instance.download_torrent(torrent_id)
 
                         # Get torrent information
                         download_dir = torrent_info.get("download_dir", "")
@@ -788,7 +788,7 @@ class NemorosaCore:
         # the number of files with zero progress
         return undownloaded_blocks_count <= zero_progress_count
 
-    def process_single_torrent(
+    async def process_single_torrent(
         self,
         infohash: str,
     ) -> dict[str, Any]:
@@ -832,7 +832,7 @@ class NemorosaCore:
             self.stats = {"found": 0, "downloaded": 0, "scanned": 0, "cnt_dl_fail": 0}
 
             # Process the torrent using the same logic as process_single_torrent_from_client
-            any_success = self.process_single_torrent_from_client(
+            any_success = await self.process_single_torrent_from_client(
                 torrent_details=torrent_info,
             )
 
@@ -850,7 +850,7 @@ class NemorosaCore:
             self.logger.error(f"Error processing single torrent {infohash}: {str(e)}")
             return {"status": "error", "message": f"Error processing torrent: {str(e)}", "infohash": infohash}
 
-    def process_reverse_announce_torrent(
+    async def process_reverse_announce_torrent(
         self,
         torrent_name: str,
         torrent_link: str,

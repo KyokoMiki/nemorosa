@@ -1,10 +1,10 @@
 """Command line interface for nemorosa."""
 
 import argparse
-import http.cookies
+import atexit
+import signal
 import sys
 
-import requests.cookies
 from colorama import init
 
 from . import api, config, db, logger, torrent_client
@@ -24,6 +24,30 @@ class CustomHelpFormatter(argparse.HelpFormatter):
         default = self._get_default_metavar_for_optional(action)
         args_string = self._format_args(action, default)
         return ", ".join(action.option_strings) + " " + args_string
+
+
+def cleanup_resources():
+    """Cleanup resources on program exit."""
+    try:
+        app_logger = logger.get_logger()
+        if app_logger:
+            app_logger.debug("Cleaning up resources...")
+
+        # Cleanup database
+        db.cleanup_database()
+
+        if app_logger:
+            app_logger.debug("Resource cleanup completed")
+    except Exception as e:
+        # Use print to avoid logger issues during cleanup
+        print(f"Warning: Error during cleanup: {e}")
+
+
+def signal_handler(signum, frame):
+    """Handle interrupt signals."""
+    print(f"\nReceived signal {signum}, cleaning up...")
+    cleanup_resources()
+    sys.exit(0)
 
 
 def setup_argument_parser(config_defaults):
@@ -159,77 +183,15 @@ def setup_logger_and_config(pre_args):
     return app_logger
 
 
-def setup_target_sites(app_logger):
-    """Set up target sites configuration.
-
-    Args:
-        app_logger: Application logger instance.
-
-    Returns:
-        list: List of target site configurations.
-    """
-    target_sites = []
-
-    # Get target_site configuration from config object
-    if config.cfg.target_sites:
-        for site_config in config.cfg.target_sites:
-            site_cookies = None
-            if site_config.cookie:
-                simple_cookie = http.cookies.SimpleCookie(site_config.cookie)
-                site_cookies = requests.cookies.RequestsCookieJar()
-                site_cookies.update(simple_cookie)  # pyright: ignore[reportArgumentType]
-
-            target_sites.append(
-                {
-                    "server": site_config.server,
-                    "api_key": site_config.api_key,
-                    "cookies": site_cookies,
-                }
-            )
-    else:
-        app_logger.critical(
-            "No target sites configured in config file. Please add 'target_site' section to your config.yml"
-        )
-        sys.exit(1)
-
-    return target_sites
-
-
-def setup_api_connections(target_sites, app_logger):
-    """Establish API connections.
-
-    Args:
-        target_sites (list): List of target site configurations.
-        app_logger: Application logger instance.
-
-    Returns:
-        list: List of established API connections.
-    """
-    app_logger.section("===== Establishing API Connections =====")
-    target_apis = []
-
-    for i, site in enumerate(target_sites):
-        app_logger.debug(f"Connecting to target site {i + 1}/{len(target_sites)}: {site['server']}")
-        try:
-            api_instance = api.get_api_instance(server=site["server"], api_key=site["api_key"], cookies=site["cookies"])
-            target_apis.append(api_instance)
-            app_logger.success(f"API connection established for {site['server']}")
-        except Exception as e:
-            app_logger.error(f"API connection failed for {site['server']}: {str(e)}")
-            # Continue processing other sites, don't exit program
-
-    if not target_apis:
-        app_logger.critical("No API connections were successful. Exiting.")
-        sys.exit(1)
-
-    app_logger.success(f"Successfully connected to {len(target_apis)} target site(s)")
-    return target_apis
-
-
 def main():
     """Main function."""
     # Initialize colorama
     init(autoreset=True)
+
+    # Register cleanup handlers
+    atexit.register(cleanup_resources)
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
 
     # Step 1: Pre-parse configuration
     pre_parser, parser = setup_argument_parser({})
@@ -271,15 +233,6 @@ def main():
 
     app_logger.section("===== Nemorosa Starting =====")
 
-    # Set up target sites
-    target_sites = setup_target_sites(app_logger)
-
-    # Establish API connections
-    target_apis = setup_api_connections(target_sites, app_logger)
-
-    # Set global target_apis
-    api.set_target_apis(target_apis)
-
     try:
         app_logger.section("===== Connecting to Torrent Client =====")
         app_logger.debug("Connecting to torrent client at %s...", args.client)
@@ -298,42 +251,11 @@ def main():
                 port=args.port,
                 log_level=args.loglevel,
             )
-        elif args.torrent:
-            # Single torrent mode
-            processor = NemorosaCore()
-            app_logger.debug(f"Processing single torrent: {args.torrent}")
-            result = processor.process_single_torrent(args.torrent)
-
-            # Print result
-            app_logger.debug(f"Processing result: {result['status']}")
-            app_logger.debug(f"Message: {result['message']}")
-            if result.get("torrent_name"):
-                app_logger.debug(f"Torrent name: {result['torrent_name']}")
-            if result.get("infohash"):
-                app_logger.debug(f"Torrent infohash: {result['infohash']}")
-            if result.get("existing_trackers"):
-                app_logger.debug(f"Existing trackers: {result['existing_trackers']}")
-            if result.get("stats"):
-                stats = result["stats"]
-                app_logger.debug(
-                    f"Stats - Found: {stats.get('found', 0)}, "
-                    f"Downloaded: {stats.get('downloaded', 0)}, "
-                    f"Scanned: {stats.get('scanned', 0)}"
-                )
-        elif args.retry_undownloaded:
-            # Re-download undownloaded torrents
-            processor = NemorosaCore()
-            processor.retry_undownloaded_torrents()
-        elif args.post_process:
-            # Post-process injected torrents only
-            processor = NemorosaCore()
-            processor.post_process_injected_torrents()
         else:
-            # Normal torrent processing flow
-            processor = NemorosaCore()
-            processor.process_torrents()
-            processor.retry_undownloaded_torrents()
-            processor.post_process_injected_torrents()
+            # Non-server modes - use asyncio
+            import asyncio
+
+            asyncio.run(_async_main(args))
     except Exception as e:
         app_logger.critical("Error connecting to torrent client: %s", e)
         sys.exit(1)
@@ -341,5 +263,47 @@ def main():
     app_logger.section("===== Nemorosa Finished =====")
 
 
-if __name__ == "__main__":
-    main()
+async def _async_main(args):
+    """Async main function for non-server operations."""
+    app_logger = logger.get_logger()
+
+    # Establish API connections in async context
+    target_apis = await api.setup_api_connections(config.cfg.target_sites)
+    api.set_target_apis(target_apis)
+
+    if args.torrent:
+        # Single torrent mode
+        processor = NemorosaCore()
+        app_logger.debug(f"Processing single torrent: {args.torrent}")
+        result = await processor.process_single_torrent(args.torrent)
+
+        # Print result
+        app_logger.debug(f"Processing result: {result['status']}")
+        app_logger.debug(f"Message: {result['message']}")
+        if result.get("torrent_name"):
+            app_logger.debug(f"Torrent name: {result['torrent_name']}")
+        if result.get("infohash"):
+            app_logger.debug(f"Torrent infohash: {result['infohash']}")
+        if result.get("existing_trackers"):
+            app_logger.debug(f"Existing trackers: {result['existing_trackers']}")
+        if result.get("stats"):
+            stats = result["stats"]
+            app_logger.debug(
+                f"Stats - Found: {stats.get('found', 0)}, "
+                f"Downloaded: {stats.get('downloaded', 0)}, "
+                f"Scanned: {stats.get('scanned', 0)}"
+            )
+    elif args.retry_undownloaded:
+        # Re-download undownloaded torrents
+        processor = NemorosaCore()
+        await processor.retry_undownloaded_torrents()
+    elif args.post_process:
+        # Post-process injected torrents only
+        processor = NemorosaCore()
+        processor.post_process_injected_torrents()
+    else:
+        # Normal torrent processing flow
+        processor = NemorosaCore()
+        await processor.process_torrents()
+        await processor.retry_undownloaded_torrents()
+        processor.post_process_injected_torrents()

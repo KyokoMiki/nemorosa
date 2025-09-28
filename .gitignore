@@ -1,5 +1,7 @@
 *.log
 *.torrent
+.codacy
+.venv
 **/__pycache__/
 nemorosa.db
 results/

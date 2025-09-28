@@ -120,7 +120,7 @@ class JobManager:
 
             # Run the actual search process
             processor = NemorosaCore()
-            processor.process_torrents()
+            await processor.process_torrents()
 
             # Record successful completion
             end_time = int(datetime.now().timestamp())
@@ -148,7 +148,7 @@ class JobManager:
 
             # Run cleanup process
             processor = NemorosaCore()
-            processor.retry_undownloaded_torrents()
+            await processor.retry_undownloaded_torrents()
 
             # Then post-process injected torrents
             processor.post_process_injected_torrents()

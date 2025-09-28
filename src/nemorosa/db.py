@@ -322,6 +322,15 @@ _db_instance: TorrentDatabase | None = None
 _db_lock = threading.Lock()
 
 
+def cleanup_database():
+    """Cleanup global database instance."""
+    global _db_instance
+    with _db_lock:
+        if _db_instance is not None:
+            _db_instance.close()
+            _db_instance = None
+
+
 def get_database(db_path: str | None = None) -> TorrentDatabase:
     """Get global database instance.
 

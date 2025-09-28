@@ -1,15 +1,17 @@
 import html
 import json
 import threading
-import time
+from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urljoin, urlparse
 
+import httpx
 import humanfriendly
 import msgspec
-import requests
+from aiolimiter import AsyncLimiter
 from bs4 import BeautifulSoup, Tag
 
 from . import logger
+from .config import TargetSiteConfig
 
 
 class LoginException(Exception):
@@ -24,8 +26,10 @@ class GazelleBase:
     """Base class for Gazelle API, containing common attributes and methods."""
 
     def __init__(self, server):
-        self.session = requests.Session()
-        self.session.headers = {
+        timeout = httpx.Timeout(connect=30.0, read=60.0, write=30.0, pool=30.0)
+
+        self.client = httpx.AsyncClient(timeout=timeout)
+        self.client.headers = {
             "Accept-Charset": "utf-8",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
             " Chrome/137.0.0.0 Safari/537.36 Edg/137.0.0.0",
@@ -33,30 +37,28 @@ class GazelleBase:
         self.server = server
         self.authkey = None
         self.passkey = None
-        self.last_request_time = 0
+        self.auth_method = "cookies"  # Default authentication method
         self.logger = logger.get_logger()
 
         spec = TRACKER_SPECS[server]
-        self.interval = spec.interval + 0.1
+        self._rate_limiter = None
+        self.max_requests_per_10s = spec.max_requests_per_10s
         self.source_flag = spec.source_flag
         self.tracker_url = spec.tracker_url
         self.tracker_query = spec.tracker_query
 
     @property
+    def rate_limiter(self):
+        """Get rate limiter for current event loop."""
+        if self._rate_limiter is None:
+            self._rate_limiter = AsyncLimiter(self.max_requests_per_10s, 10)
+        return self._rate_limiter
+
+    @property
     def announce(self):
         return f"{self.tracker_url}/{self.passkey}/announce"
 
-    def wait(self):
-        """Ensure request interval time."""
-        now = time.monotonic()
-        elapsed = now - self.last_request_time
-        if elapsed < self.interval:
-            sleep_time = self.interval - elapsed
-            self.logger.debug(f"Sleep for {sleep_time:.2f} seconds")
-            time.sleep(sleep_time)
-        self.last_request_time = time.monotonic()
-
-    def torrent(self, torrent_id):
+    async def torrent(self, torrent_id):
         """Get torrent object - subclasses need to implement specific request logic.
 
         Args:
@@ -68,7 +70,7 @@ class GazelleBase:
         torrent_object = {}
         self.logger.debug(f"Getting torrent by id: {torrent_id}")
         try:
-            torrent_lookup = self._get_torrent_data(torrent_id)
+            torrent_lookup = await self._get_torrent_data(torrent_id)
         except Exception as e:
             self.logger.error(f"Failed to get torrent by id {torrent_id}. Error: {e}")
             return torrent_object  # return empty dict on error
@@ -82,7 +84,7 @@ class GazelleBase:
             self.logger.error(f"Torrent lookup failed for id: {torrent_id}. Status: {torrent_lookup_status}")
         return torrent_object
 
-    def _get_torrent_data(self, torrent_id):
+    async def _get_torrent_data(self, torrent_id):
         """Get torrent data using the Gazelle API.
 
         Args:
@@ -91,7 +93,7 @@ class GazelleBase:
         Returns:
             dict: Response data from the API.
         """
-        return self.ajax("torrent", id=torrent_id)
+        return await self.ajax("torrent", id=torrent_id)
 
     def parse_file_list(self, file_list_str):
         """Parse the file list from a torrent object.
@@ -124,49 +126,29 @@ class GazelleBase:
 
         return file_list
 
-    def download_torrent(self, torrent_id):
+    async def download_torrent(self, torrent_id):
         """Download a torrent by its ID.
 
         Args:
             torrent_id: The ID of the torrent to download.
 
         Returns:
-            bytes: The content of the torrent file with potentially modified source flag,
-                  or None if download fails.
+            bytes: The content of the torrent file, or None if download fails.
         """
-        max_retries = 8
-        for attempt in range(max_retries):
-            try:
-                self.wait()
-                response = self._download_torrent_response(torrent_id)
-                if response.status_code != 200:
-                    self.logger.error(f"Status of request is {response.status_code}. Aborting...")
-                    self.logger.error(f"Response content: {response._content}")
-                    raise RequestException(f"HTTP {response.status_code}: {response._content}")
+        if self.auth_method == "api_key":
+            ajaxpage = self.server + "/ajax.php"
+            response = await self.request(ajaxpage, params={"action": "download", "id": torrent_id})
+        else:
+            torrent_link = self.get_torrent_link(torrent_id)
+            response = await self.request(torrent_link)
 
-                self.logger.debug(f"Torrent {torrent_id} downloaded successfully")
-                return response.content
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    self.logger.warning(f"Error downloading torrent: {e}, retrying ({attempt + 1}/{max_retries})...")
-                    time.sleep(2)
-                else:
-                    self.logger.error(f"Failed to download torrent after {max_retries} attempts: {e}")
-                    return None
+        if response.status_code != 200:
+            self.logger.error(f"Status of request is {response.status_code}. Aborting...")
+            self.logger.error(f"Response content: {response.content}")
+            raise RequestException(f"HTTP {response.status_code}: {response.content}")
 
-    def _download_torrent_response(self, torrent_id):
-        """Get download torrent response - subclasses must implement.
-
-        Args:
-            torrent_id: The ID of the torrent to download.
-
-        Returns:
-            requests.Response: HTTP response object.
-
-        Raises:
-            NotImplementedError: Always raised for base class.
-        """
-        raise NotImplementedError("Subclasses must implement _download_torrent_response")
+        self.logger.debug(f"Torrent {torrent_id} downloaded successfully")
+        return response.content
 
     def get_torrent_url(self, torrent_id):
         """Get the permalink for a torrent by its ID.
@@ -209,7 +191,7 @@ class GazelleBase:
         """
         raise NotImplementedError("Subclasses must implement search_torrent_by_filename")
 
-    def search_torrent_by_hash(self, torrent_hash):
+    async def search_torrent_by_hash(self, torrent_hash):
         """Search torrent by hash using the Gazelle API.
 
         Args:
@@ -219,7 +201,7 @@ class GazelleBase:
             dict: Search result with torrent information, or None if not found.
         """
         try:
-            response = self.ajax("torrent", hash=torrent_hash)
+            response = await self.ajax("torrent", hash=torrent_hash)
             if response.get("status") == "success":
                 self.logger.debug(f"Hash search successful for hash '{torrent_hash}'")
                 return response
@@ -236,7 +218,7 @@ class GazelleBase:
             self.logger.error(f"Error searching for torrent by hash '{torrent_hash}': {e}")
             raise
 
-    def ajax(self, action, **kwargs):
+    async def ajax(self, action, **kwargs):
         """Make an AJAX request at a given action page.
 
         Args:
@@ -255,16 +237,14 @@ class GazelleBase:
             params["auth"] = self.authkey
         params.update(kwargs)
 
-        self.wait()  # Respect rate limit
-
-        r = self.session.get(ajaxpage, params=params, allow_redirects=False)
         try:
+            r = await self.request(ajaxpage, params=params)
             json_response = r.json()
             return json_response
         except ValueError as e:
             raise RequestException from e
 
-    def request(self, url, params=None, method="GET", data=None):
+    async def request(self, url, params=None, method="GET", data=None):
         """Send HTTP request and return response.
 
         Args:
@@ -274,21 +254,21 @@ class GazelleBase:
             data (dict, optional): Request body data.
 
         Returns:
-            requests.Response: HTTP response object.
+            httpx.Response: HTTP response object.
 
         Raises:
             ValueError: If unsupported HTTP method is used.
         """
-        self.wait()
-        full_url = urljoin(self.server, url)
+        async with self.rate_limiter:
+            full_url = urljoin(self.server, url)
 
-        if method == "GET":
-            response = self.session.get(full_url, params=params)
-        elif method == "POST":
-            response = self.session.post(full_url, data=data, params=params)
-        else:
-            raise ValueError("Unsupported HTTP method")
-        return response
+            if method == "GET":
+                response = await self.client.get(full_url, params=params)
+            elif method == "POST":
+                response = await self.client.post(full_url, data=data, params=params)
+            else:
+                raise ValueError("Unsupported HTTP method")
+            return response
 
 
 class GazelleJSONAPI(GazelleBase):
@@ -297,38 +277,37 @@ class GazelleJSONAPI(GazelleBase):
 
         # Add API key to headers (if provided)
         if api_key:
-            self.session.headers["Authorization"] = api_key
-
-        self.auth_method = "api_key" if api_key else "cookies"
+            self.client.headers["Authorization"] = api_key
+            self.auth_method = "api_key"
 
         if api_key is None and cookies:
-            self.session.cookies = cookies
+            for name, value in cookies.items():
+                self.client.cookies.set(name, value)
 
-        try:
-            self._auth()
-        except RequestException as e:
-            self.logger.error(f"Failed to authenticate: {e}")
-
-    def _auth(self):
+    async def auth(self):
         """Get auth key from server.
 
         Raises:
             RequestException: If authentication fails.
         """
-        accountinfo = self.ajax("index")
-        self.authkey = accountinfo["response"]["authkey"]
-        self.passkey = accountinfo["response"]["passkey"]
+        try:
+            accountinfo = await self.ajax("index")
+            self.authkey = accountinfo["response"]["authkey"]
+            self.passkey = accountinfo["response"]["passkey"]
+        except Exception as e:
+            self.logger.error(f"Authentication failed: {e}")
+            raise
 
-    def logout(self):
+    async def logout(self):
         """Log out user."""
         logoutpage = self.server + "/logout.php"
         params = {"auth": self.authkey}
-        self.session.get(logoutpage, params=params, allow_redirects=False)
+        await self.request(logoutpage, params=params)
 
-    def search_torrent_by_filename(self, filename):
+    async def search_torrent_by_filename(self, filename):
         params = {"filelist": filename}
         try:
-            response = self.ajax("browse", **params)
+            response = await self.ajax("browse", **params)
             # Log API response status
             if response.get("status") != "success":
                 self.logger.warning(f"API failure for file '{filename}': {json.dumps(response, ensure_ascii=False)}")
@@ -347,45 +326,31 @@ class GazelleJSONAPI(GazelleBase):
             self.logger.error(f"Error searching for torrent by filename '{filename}': {e}")
             raise
 
-    def _download_torrent_response(self, torrent_id):
-        """Implement the base class abstract method - get download torrent response.
-
-        Args:
-            torrent_id: The ID of the torrent to download.
-
-        Returns:
-            requests.Response: HTTP response object.
-        """
-        if self.auth_method == "api_key":
-            ajaxpage = self.server + "/ajax.php"
-            return self.session.get(ajaxpage, params={"action": "download", "id": torrent_id})
-        else:
-            torrent_link = self.get_torrent_link(torrent_id)
-            return self.session.get(torrent_link)
-
 
 class GazelleParser(GazelleBase):
     def __init__(self, cookies=None, server=None, api_key=None):
         super().__init__(server)
 
         if cookies:
-            self.session.cookies.update(cookies)
+            for name, value in cookies.items():
+                self.client.cookies.set(name, value)
             self.logger.debug("Using provided cookies")
         else:
             self.logger.warning("No cookies provided")
 
-    def _auth(self):
+    async def auth(self):
         """Get authkey and passkey from server by performing a blank search.
 
         Raises:
             RequestException: If authentication fails.
         """
         try:
-            self.search_torrent_by_filename("")
+            await self.search_torrent_by_filename("")
         except RequestException as e:
             self.logger.error(f"Failed to authenticate: {e}")
+            raise
 
-    def search_torrent_by_filename(self, filename):
+    async def search_torrent_by_filename(self, filename):
         """Execute search and return torrent list.
 
         Args:
@@ -396,7 +361,7 @@ class GazelleParser(GazelleBase):
         """
         params = {"action": "advanced", "filelist": filename}
 
-        response = self.request("torrents.php", params=params)
+        response = await self.request("torrents.php", params=params)
         return self.parse_search_results(response.text)
 
     def parse_search_results(self, html):
@@ -480,24 +445,12 @@ class GazelleParser(GazelleBase):
             self.logger.error(f"Error parsing torrent row: {e}")
             return None
 
-    def _download_torrent_response(self, torrent_id):
-        """Implement the base class abstract method - get download torrent response.
-
-        Args:
-            torrent_id: The ID of the torrent to download.
-
-        Returns:
-            requests.Response: HTTP response object.
-        """
-        download_url = self.get_torrent_link(torrent_id)
-        return self.request(download_url)
-
 
 class TrackerSpec(msgspec.Struct):
     """Predefined Tracker specification."""
 
     api_type: type[GazelleJSONAPI] | type[GazelleParser]
-    interval: int
+    max_requests_per_10s: int
     source_flag: str
     tracker_url: str
     tracker_query: str
@@ -506,35 +459,35 @@ class TrackerSpec(msgspec.Struct):
 TRACKER_SPECS = {
     "https://redacted.sh": TrackerSpec(
         api_type=GazelleJSONAPI,
-        interval=1,
+        max_requests_per_10s=10,
         source_flag="RED",
         tracker_url="https://flacsfor.me",
         tracker_query="flacsfor.me",
     ),
     "https://orpheus.network": TrackerSpec(
         api_type=GazelleJSONAPI,
-        interval=2,
+        max_requests_per_10s=5,
         source_flag="OPS",
         tracker_url="https://home.opsfet.ch",
         tracker_query="home.opsfet.ch",
     ),
     "https://dicmusic.com": TrackerSpec(
         api_type=GazelleJSONAPI,
-        interval=2,
+        max_requests_per_10s=5,
         source_flag="DICMusic",
         tracker_url="https://tracker.52dic.vip",
         tracker_query="tracker.52dic.vip",
     ),
     "https://libble.me": TrackerSpec(
         api_type=GazelleParser,
-        interval=4,
+        max_requests_per_10s=2,
         source_flag="LENNY",
         tracker_url="https://tracker.libble.me:34443",
         tracker_query="tracker.libble.me",
     ),
     "https://lztr.me": TrackerSpec(
         api_type=GazelleParser,
-        interval=4,
+        max_requests_per_10s=2,
         source_flag="LZTR",
         tracker_url="https://tracker.lztr.me:34443",
         tracker_query="tracker.lztr.me",
@@ -591,3 +544,43 @@ def set_target_apis(target_apis: list[GazelleJSONAPI | GazelleParser]) -> None:
     global _target_apis_instance
     with _target_apis_lock:
         _target_apis_instance = target_apis
+
+
+async def setup_api_connections(target_sites: list[TargetSiteConfig]):
+    """Establish API connections.
+
+    Args:
+        target_sites (list): List of TargetSiteConfig objects.
+
+    Returns:
+        list: List of established API connections.
+    """
+    app_logger = logger.get_logger()
+    app_logger.section("===== Establishing API Connections =====")
+    target_apis = []
+
+    for i, site in enumerate(target_sites):
+        # Convert cookie string to dict if present
+        site_cookies = None
+        if site.cookie:
+            simple_cookie = SimpleCookie(site.cookie)
+            site_cookies = {key: morsel.value for key, morsel in simple_cookie.items()}
+
+        app_logger.debug(f"Connecting to target site {i + 1}/{len(target_sites)}: {site.server}")
+        try:
+            api_instance = get_api_instance(server=site.server, api_key=site.api_key, cookies=site_cookies)
+            await api_instance.auth()
+            target_apis.append(api_instance)
+            app_logger.success(f"API connection established for {site.server}")
+        except Exception as e:
+            app_logger.error(f"API connection failed for {site.server}: {str(e)}")
+            # Continue processing other sites, don't exit program
+
+    if not target_apis:
+        app_logger.critical("No API connections were successful. Exiting.")
+        import sys
+
+        sys.exit(1)
+
+    app_logger.success(f"Successfully connected to {len(target_apis)} target site(s)")
+    return target_apis
