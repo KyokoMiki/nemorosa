@@ -5,6 +5,7 @@ This module provides a unified interface for different torrent clients including
 Transmission, qBittorrent, and Deluge.
 """
 
+import asyncio
 import base64
 import json
 import os
@@ -21,9 +22,10 @@ import msgspec
 import qbittorrentapi
 import torf
 import transmission_rpc
+from apscheduler.triggers.interval import IntervalTrigger
 from transmission_rpc.constants import RpcMethod
 
-from . import config, filecompare, logger
+from . import config, db, filecompare, logger, scheduler
 
 
 class TorrentState(Enum):
@@ -33,12 +35,10 @@ class TorrentState(Enum):
     DOWNLOADING = "downloading"
     SEEDING = "seeding"
     PAUSED = "paused"
-    STOPPED = "stopped"
     COMPLETED = "completed"
     CHECKING = "checking"
     ERROR = "error"
     QUEUED = "queued"
-    STALLED = "stalled"
     MOVING = "moving"
     ALLOCATING = "allocating"
     METADATA_DOWNLOADING = "metadata_downloading"
@@ -46,7 +46,7 @@ class TorrentState(Enum):
 
 # State mapping tables for different torrent clients
 TRANSMISSION_STATE_MAPPING = {
-    "stopped": TorrentState.STOPPED,
+    "stopped": TorrentState.PAUSED,
     "check pending": TorrentState.CHECKING,
     "checking": TorrentState.CHECKING,
     "download pending": TorrentState.QUEUED,
@@ -141,12 +141,40 @@ class TorrentClient(ABC):
     def __init__(self):
         self.logger = logger.get_logger()
 
+        # Monitoring state
+        self._monitoring = False
+        # key: torrent_id, value: is_verifying (False=delayed, True=verifying)
+        self._tracked_torrents: dict[str, bool] = {}
+        self._monitor_lock = threading.Lock()
+        self._torrents_processed_event = asyncio.Event()  # Event to signal when all torrents are processed
+
+        # Job configuration
+        self._monitor_job_id = "torrent_monitor"
+
+        # Get global job manager
+        self.job_manager = scheduler.get_job_manager()
+
     @abstractmethod
     def get_torrents(self) -> list[ClientTorrentInfo]:
         """Get all torrents from client.
 
         Returns:
             list[ClientTorrentInfo]: List of torrent information objects.
+        """
+        pass
+
+    @abstractmethod
+    def get_torrents_for_monitoring(self, torrent_ids: set[str]) -> dict[str, TorrentState]:
+        """Get torrent states for monitoring (optimized for specific torrents).
+
+        This method is optimized for monitoring specific torrents and should only
+        return the minimal required information (ID and state) for efficiency.
+
+        Args:
+            torrent_ids (set[str]): Set of torrent IDs to monitor.
+
+        Returns:
+            dict[str, TorrentState]: Mapping of torrent ID to current state.
         """
         pass
 
@@ -356,7 +384,7 @@ class TorrentClient(ABC):
 
     def inject_torrent(
         self, torrent_data, download_dir: str, local_torrent_name: str, rename_map: dict, hash_match: bool
-    ) -> bool:
+    ) -> tuple[bool, bool]:
         """Inject torrent into client (includes complete logic).
 
         Derived classes only need to implement specific client operation methods.
@@ -369,7 +397,9 @@ class TorrentClient(ABC):
             hash_match (bool): Whether this is a hash match, if True, skip verification.
 
         Returns:
-            bool: True if injection successful, False otherwise.
+            tuple[bool, bool]: (success, verified) where:
+                - success: True if injection successful, False otherwise
+                - verified: True if verification was performed, False otherwise
         """
         # Flag to track if rename map has been processed
         rename_map_processed = False
@@ -418,7 +448,7 @@ class TorrentClient(ABC):
                 # Verify torrent (if renaming was performed or not hash match for non-Transmission clients)
                 should_verify = (
                     current_name != local_torrent_name
-                    or rename_map
+                    or bool(rename_map)
                     or (not hash_match and not isinstance(self, TransmissionClient))
                 )
                 if should_verify:
@@ -427,17 +457,17 @@ class TorrentClient(ABC):
                     self._verify_torrent(torrent_id)
 
                 self.logger.success("Torrent injected successfully")
-                return True
+                return True, should_verify
             except Exception as e:
                 if attempt < max_retries - 1:
                     self.logger.debug(f"Error injecting torrent: {e}, retrying ({attempt + 1}/{max_retries})...")
                     time.sleep(2)
                 else:
                     self.logger.error(f"Failed to inject torrent after {max_retries} attempts: {e}")
-                    return False
+                    return False, False
 
         # This should never be reached, but just in case
-        return False
+        return False, False
 
     # ===== The following methods need to be implemented by derived classes =====
 
@@ -607,6 +637,75 @@ class TorrentClient(ABC):
 
         return results
 
+    def process_single_injected_torrent(self, matched_torrent_hash: str) -> dict:
+        """Process a single injected torrent to determine its status and take appropriate action.
+
+        Args:
+            matched_torrent_hash: The hash of the matched torrent to process
+
+        Returns:
+            dict: Statistics about the processing result with keys:
+                - status: 'completed', 'partial_kept', 'partial_removed', 'not_found', 'checking', 'error'
+                - started_downloading: bool indicating if download was started
+                - error_message: str containing error details if status is 'error'
+        """
+        stats = {"status": "not_found", "started_downloading": False, "error_message": None}
+
+        try:
+            database = db.get_database()
+
+            self.logger.debug(f"Checking matched torrent: {matched_torrent_hash}")
+
+            # Check if matched torrent exists in client
+            matched_torrent = self.get_torrent_info(matched_torrent_hash)
+            if not matched_torrent:
+                self.logger.debug(f"Matched torrent {matched_torrent_hash} not found in client, skipping")
+                stats["status"] = "not_found"
+                return stats
+
+            # Skip if matched torrent is checking
+            if matched_torrent.state == TorrentState.CHECKING:
+                self.logger.debug(f"Matched torrent {matched_torrent.name} is checking, skipping")
+                stats["status"] = "checking"
+                return stats
+
+            # If matched torrent is 100% complete, start downloading
+            if matched_torrent.progress == 1.0:
+                self.logger.info(f"Matched torrent {matched_torrent.name} is 100% complete, starting download")
+                # Start downloading the matched torrent
+                self.resume_torrent(matched_torrent.id)
+                self.logger.success(f"Started downloading matched torrent: {matched_torrent.name}")
+                # Mark as checked since it's 100% complete
+                database.update_scan_result_checked(matched_torrent_hash, True)
+                stats["status"] = "completed"
+                stats["started_downloading"] = True
+            # If matched torrent is not 100% complete, check file progress patterns
+            else:
+                self.logger.debug(
+                    f"Matched torrent {matched_torrent.name} not 100% complete "
+                    f"({matched_torrent.progress * 100:.1f}%), checking file patterns"
+                )
+
+                # Analyze file progress patterns
+                if filecompare.should_keep_partial_torrent(matched_torrent):
+                    self.logger.debug(f"Keeping partial torrent {matched_torrent.name} - valid pattern")
+                    # Mark as checked since we're keeping the partial torrent
+                    database.update_scan_result_checked(matched_torrent_hash, True)
+                    stats["status"] = "partial_kept"
+                else:
+                    self.logger.warning(f"Removing torrent {matched_torrent.name} - failed validation")
+                    self._remove_torrent(matched_torrent.id)
+                    # Clear matched torrent information from database
+                    database.clear_matched_torrent_info(matched_torrent_hash)
+                    stats["status"] = "partial_removed"
+
+        except Exception as e:
+            self.logger.error(f"Error processing torrent {matched_torrent_hash}: {e}")
+            stats["status"] = "error"
+            stats["error_message"] = str(e)
+
+        return stats
+
     @abstractmethod
     def _get_torrent_data_by_hash(self, torrent_hash: str) -> bytes | None:
         """Get torrent data from client by hash - subclasses must implement.
@@ -618,6 +717,164 @@ class TorrentClient(ABC):
             bytes | None: Torrent file data, or None if not available.
         """
         pass
+
+    # ===== Monitoring Methods =====
+
+    async def start_monitoring(self) -> None:
+        """Start the background monitoring service."""
+        if not self._monitoring:
+            self._monitoring = True
+
+            # Add scheduled job for monitoring to the global scheduler
+            self.job_manager.scheduler.add_job(
+                self._check_tracked_torrents,
+                trigger=IntervalTrigger(seconds=1),
+                id=self._monitor_job_id,
+                name="Torrent Monitor",
+                max_instances=1,  # Prevent overlapping executions
+                misfire_grace_time=60,
+                coalesce=True,
+                replace_existing=True,
+            )
+
+            # Ensure scheduler is running
+            if not self.job_manager.scheduler.running:
+                self.job_manager.scheduler.start()
+                self.logger.debug("Started global scheduler for torrent monitoring")
+
+            self.logger.info("Torrent monitoring started with global scheduler")
+
+    async def stop_monitoring(self) -> None:
+        """Stop the background monitoring service and wait for all tracked torrents to complete."""
+        if not self._monitoring:
+            return
+
+        self._monitoring = False
+
+        # Wait for all tracked torrents to be processed
+        if self._tracked_torrents:
+            self.logger.info(f"Waiting for {len(self._tracked_torrents)} tracked torrents to complete...")
+
+            # Clear the event to ensure we wait for current torrents
+            self._torrents_processed_event.clear()
+
+            # Check if all tasks are already empty after clearing the event
+            if not self._tracked_torrents:
+                self._torrents_processed_event.set()
+                self.logger.info("All tracked torrents already completed")
+            else:
+                try:
+                    # Wait for the event to be set (all torrents processed) with timeout
+                    await asyncio.wait_for(self._torrents_processed_event.wait(), timeout=30.0)
+                    self.logger.info("All tracked torrents completed")
+                except TimeoutError:
+                    self.logger.warning(f"Timeout waiting for {len(self._tracked_torrents)} torrents to complete")
+
+        self.logger.info("Torrent monitoring stopped")
+
+        # Remove the job from the global scheduler
+        try:
+            self.job_manager.scheduler.remove_job(self._monitor_job_id)
+            self.logger.info("Torrent monitoring stopped")
+        except Exception as e:
+            self.logger.warning(f"Error removing torrent monitor job: {e}")
+
+    async def _check_tracked_torrents(self) -> None:
+        """Check tracked torrents for verification completion.
+
+        This method is called by APScheduler at regular intervals.
+        """
+        if not self._tracked_torrents:
+            return
+
+        try:
+            # Only check torrents that are in verifying state (True)
+            verifying_torrents = {tid for tid, is_verifying in self._tracked_torrents.items() if is_verifying}
+            if not verifying_torrents:
+                return
+
+            # Get current torrent states using optimized monitoring method
+            current_states = self.get_torrents_for_monitoring(verifying_torrents)
+
+            # Check tracked torrents for completion
+            with self._monitor_lock:
+                completed_torrents = set()
+
+                for torrent_id in self._tracked_torrents:
+                    current_state = current_states.get(torrent_id)
+
+                    # Check if verification is no longer in progress
+                    # (not checking, allocating, or moving)
+                    if current_state in [
+                        TorrentState.PAUSED,
+                        TorrentState.COMPLETED,
+                    ]:
+                        self.logger.info(f"Verification completed for torrent {torrent_id}")
+
+                        # Call process_single_injected_torrent from torrent client
+                        try:
+                            self.process_single_injected_torrent(torrent_id)
+                        except Exception as e:
+                            self.logger.error(f"Error processing torrent {torrent_id}: {e}")
+
+                        # Remove from tracking
+                        completed_torrents.add(torrent_id)
+
+                # Remove completed torrents from tracking
+                for torrent_id in completed_torrents:
+                    self._tracked_torrents.pop(torrent_id, None)
+
+                # If no more tracked torrents, set the event
+                if not self._tracked_torrents:
+                    self._torrents_processed_event.set()
+
+        except Exception as e:
+            self.logger.error(f"Error checking tracked torrents: {e}")
+
+    async def track_verification(self, torrent_id: str) -> None:
+        """Start tracking a torrent for verification completion."""
+        with self._monitor_lock:
+            # Lazy start monitoring if not already started
+            if not self._monitoring:
+                await self.start_monitoring()
+
+            # Add to tracked torrents as delayed (False)
+            self._tracked_torrents[torrent_id] = False
+
+        # Start a background task to add torrent after 5 seconds delay
+        asyncio.create_task(self._delayed_add_torrent(torrent_id))
+        self.logger.debug(f"Scheduled tracking verification for torrent {torrent_id}")
+
+    async def _delayed_add_torrent(self, torrent_id: str) -> None:
+        """Add torrent to tracking list after 5 seconds delay."""
+        # Wait for 5 seconds - this delay is necessary for qBittorrent:
+        # After calling self._verify_torrent(torrent_id), qBittorrent doesn't immediately
+        # start verification. It needs processing time to begin the actual verification
+        # process, and this processing time cannot be queried. Therefore, we hard-code
+        # a 5-second wait to ensure the verification has started before we begin monitoring.
+        # The "Verifying torrent after renaming" wait is also added for qBittorrent compatibility.
+        await asyncio.sleep(5)
+        with self._monitor_lock:
+            # Update status to verifying (True)
+            if torrent_id in self._tracked_torrents:
+                self._tracked_torrents[torrent_id] = True
+                self.logger.debug(f"Started tracking verification for torrent {torrent_id}")
+
+    def stop_tracking(self, torrent_id: str) -> None:
+        """Stop tracking a torrent."""
+        with self._monitor_lock:
+            self._tracked_torrents.pop(torrent_id, None)
+            self.logger.debug(f"Stopped tracking torrent {torrent_id}")
+
+    def is_tracking(self, torrent_id: str) -> bool:
+        """Check if a torrent is being tracked."""
+        with self._monitor_lock:
+            return torrent_id in self._tracked_torrents
+
+    def get_tracked_count(self) -> int:
+        """Get the number of torrents being tracked."""
+        with self._monitor_lock:
+            return len(self._tracked_torrents)
 
 
 class TransmissionClient(TorrentClient):
@@ -872,6 +1129,39 @@ class TransmissionClient(TorrentClient):
             self.logger.error(f"Error getting torrent data from Transmission: {e}")
             return None
 
+    def get_torrents_for_monitoring(self, torrent_ids: set[str]) -> dict[str, TorrentState]:
+        """Get torrent states for monitoring (optimized for Transmission).
+
+        Uses Transmission's get_torrents with minimal fields to get only
+        the required state information for monitoring.
+
+        Args:
+            torrent_ids (set[str]): Set of torrent IDs to monitor.
+
+        Returns:
+            dict[str, TorrentState]: Mapping of torrent ID to current state.
+        """
+        if not torrent_ids:
+            return {}
+
+        try:
+            # Get minimal torrent info - only id and status
+            torrents = self.client.get_torrents(
+                ids=list(torrent_ids),
+                arguments=["hashString", "status"],  # Only get ID and status for efficiency
+            )
+
+            result = {
+                torrent.hash_string: TRANSMISSION_STATE_MAPPING.get(torrent.status, TorrentState.UNKNOWN)
+                for torrent in torrents
+            }
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Error getting torrent states for monitoring from Transmission: {e}")
+            return {}
+
 
 class QBittorrentClient(TorrentClient):
     """qBittorrent torrent client implementation."""
@@ -887,6 +1177,10 @@ class QBittorrentClient(TorrentClient):
         )
         # Authenticate with qBittorrent
         self.client.auth_log_in()
+
+        # Initialize sync state for incremental updates
+        self._last_rid = 0
+        self._torrent_states_cache: dict[str, TorrentState] = {}
 
     def get_torrents(self) -> list[ClientTorrentInfo]:
         """Get all torrents from qBittorrent."""
@@ -1054,6 +1348,66 @@ class QBittorrentClient(TorrentClient):
         except Exception as e:
             self.logger.error(f"Error getting torrent data from qBittorrent: {e}")
             return None
+
+    def get_torrents_for_monitoring(self, torrent_ids: set[str]) -> dict[str, TorrentState]:
+        """Get torrent states for monitoring (optimized for qBittorrent).
+
+        Uses qBittorrent's efficient sync/maindata API to get only the required
+        state information for monitoring specific torrents. This method implements
+        incremental sync using RID (Response ID) to only fetch changes since last call.
+
+        Args:
+            torrent_ids (set[str]): Set of torrent hashes to monitor.
+
+        Returns:
+            dict[str, TorrentState]: Mapping of torrent hash to current state.
+        """
+        if not torrent_ids:
+            return {}
+
+        try:
+            # Use qBittorrent's sync API for efficient monitoring
+            # This returns only changed data since last request using RID
+            maindata = self.client.sync_maindata(rid=self._last_rid)
+
+            # Update RID for next incremental request
+            new_rid = maindata.get("rid", self._last_rid)
+            if new_rid is not None:
+                self._last_rid = int(new_rid)
+
+            # Extract torrents data from sync response
+            torrents_data = maindata.get("torrents", {})
+
+            # Ensure torrents_data is a dictionary
+            if not isinstance(torrents_data, dict):
+                self.logger.warning("Unexpected torrents data format from qBittorrent sync API")
+                return {}
+
+            # Update cache with new data from torrents_data
+            for torrent_hash, torrent_info in torrents_data.items():
+                if isinstance(torrent_info, dict):
+                    state_str = torrent_info.get("state", "unknown")
+                    if isinstance(state_str, str):
+                        state = QBITTORRENT_STATE_MAPPING.get(state_str, TorrentState.UNKNOWN)
+                        self._torrent_states_cache[torrent_hash] = state
+
+            # Return cached states for requested torrents
+            return self._torrent_states_cache
+
+        except Exception as e:
+            self.logger.error(f"Error getting torrent states for monitoring from qBittorrent: {e}")
+            # On error, fall back to cached states for requested torrents
+            return self._torrent_states_cache
+
+    def reset_sync_state(self) -> None:
+        """Reset sync state for incremental updates.
+
+        This will cause the next sync request to return all data instead of just changes.
+        Useful when the sync state gets out of sync or when starting fresh monitoring.
+        """
+        self._last_rid = 0
+        self._torrent_states_cache.clear()
+        self.logger.debug("Reset qBittorrent sync state")
 
 
 class DelugeClient(TorrentClient):
@@ -1284,6 +1638,42 @@ class DelugeClient(TorrentClient):
         except Exception as e:
             self.logger.error(f"Error getting torrent data from Deluge: {e}")
             return None
+
+    def get_torrents_for_monitoring(self, torrent_ids: set[str]) -> dict[str, TorrentState]:
+        """Get torrent states for monitoring (optimized for Deluge).
+
+        Uses Deluge's get_torrents_status with minimal fields to get only
+        the required state information for monitoring.
+
+        Args:
+            torrent_ids (set[str]): Set of torrent IDs to monitor.
+
+        Returns:
+            dict[str, TorrentState]: Mapping of torrent ID to current state.
+        """
+        if not torrent_ids:
+            return {}
+
+        try:
+            # Get minimal torrent status - only state
+            torrents_status = self.client.call(
+                "core.get_torrents_status",
+                {"id": list(torrent_ids)},
+                ["state"],  # Only get state for efficiency
+            )
+
+            result = {}
+            if torrents_status and isinstance(torrents_status, dict):
+                result = {
+                    torrent_id: DELUGE_STATE_MAPPING.get(status.get("state"), TorrentState.UNKNOWN)
+                    for torrent_id, status in torrents_status.items()
+                }
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Error getting torrent states for monitoring from Deluge: {e}")
+            return {}
 
 
 class TorrentClientConfig(msgspec.Struct):

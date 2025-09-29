@@ -267,43 +267,47 @@ async def _async_main(args):
     """Async main function for non-server operations."""
     app_logger = logger.get_logger()
 
-    # Establish API connections in async context
-    target_apis = await api.setup_api_connections(config.cfg.target_sites)
-    api.set_target_apis(target_apis)
+    try:
+        # Establish API connections in async context
+        target_apis = await api.setup_api_connections(config.cfg.target_sites)
+        api.set_target_apis(target_apis)
 
-    if args.torrent:
-        # Single torrent mode
+        # Create processor instance
         processor = NemorosaCore()
-        app_logger.debug(f"Processing single torrent: {args.torrent}")
-        result = await processor.process_single_torrent(args.torrent)
 
-        # Print result
-        app_logger.debug(f"Processing result: {result['status']}")
-        app_logger.debug(f"Message: {result['message']}")
-        if result.get("torrent_name"):
-            app_logger.debug(f"Torrent name: {result['torrent_name']}")
-        if result.get("infohash"):
-            app_logger.debug(f"Torrent infohash: {result['infohash']}")
-        if result.get("existing_trackers"):
-            app_logger.debug(f"Existing trackers: {result['existing_trackers']}")
-        if result.get("stats"):
-            stats = result["stats"]
-            app_logger.debug(
-                f"Stats - Found: {stats.get('found', 0)}, "
-                f"Downloaded: {stats.get('downloaded', 0)}, "
-                f"Scanned: {stats.get('scanned', 0)}"
-            )
-    elif args.retry_undownloaded:
-        # Re-download undownloaded torrents
-        processor = NemorosaCore()
-        await processor.retry_undownloaded_torrents()
-    elif args.post_process:
-        # Post-process injected torrents only
-        processor = NemorosaCore()
-        processor.post_process_injected_torrents()
-    else:
-        # Normal torrent processing flow
-        processor = NemorosaCore()
-        await processor.process_torrents()
-        await processor.retry_undownloaded_torrents()
-        processor.post_process_injected_torrents()
+        if args.torrent:
+            # Single torrent mode
+            app_logger.debug(f"Processing single torrent: {args.torrent}")
+            result = await processor.process_single_torrent(args.torrent)
+
+            # Print result
+            app_logger.debug(f"Processing result: {result['status']}")
+            app_logger.debug(f"Message: {result['message']}")
+            if result.get("torrent_name"):
+                app_logger.debug(f"Torrent name: {result['torrent_name']}")
+            if result.get("infohash"):
+                app_logger.debug(f"Torrent infohash: {result['infohash']}")
+            if result.get("existing_trackers"):
+                app_logger.debug(f"Existing trackers: {result['existing_trackers']}")
+            if result.get("stats"):
+                stats = result["stats"]
+                app_logger.debug(
+                    f"Stats - Found: {stats.get('found', 0)}, "
+                    f"Downloaded: {stats.get('downloaded', 0)}, "
+                    f"Scanned: {stats.get('scanned', 0)}"
+                )
+        elif args.retry_undownloaded:
+            # Re-download undownloaded torrents
+            await processor.retry_undownloaded_torrents()
+        elif args.post_process:
+            # Post-process injected torrents only
+            processor.post_process_injected_torrents()
+        else:
+            # Normal torrent processing flow
+            await processor.process_torrents()
+    finally:
+        # Wait for torrent monitoring to complete all tracked torrents
+        client = torrent_client.get_torrent_client()
+        if client and client._monitoring:
+            app_logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
+            await client.stop_monitoring()

@@ -2,8 +2,13 @@ import difflib
 import posixpath
 import re
 from collections import defaultdict
+from itertools import groupby
+from typing import TYPE_CHECKING
 
 from . import logger
+
+if TYPE_CHECKING:
+    from .torrent_client import ClientTorrentInfo
 
 
 def is_music_file(filename: str) -> bool:
@@ -279,3 +284,30 @@ def generate_rename_map(fdict_local, fdict_torrent):
                         del size_map_local[torrent_size]
 
     return rename_map
+
+
+def should_keep_partial_torrent(torrent: "ClientTorrentInfo") -> bool:
+    """Check if a partial torrent should be kept based on piece and file progress patterns.
+
+    Compares the number of continuous undownloaded blocks with the number of files
+    that have zero progress. If there are more undownloaded blocks than zero-progress
+    files, it indicates a conflict.
+
+    Args:
+        torrent: The torrent to analyze.
+
+    Returns:
+        bool: True if torrent should be kept, False if it should be removed.
+    """
+    if not torrent.piece_progress or not torrent.files:
+        return False
+
+    # Count continuous blocks of undownloaded pieces (False values)
+    undownloaded_blocks_count = sum(1 for value, _ in groupby(torrent.piece_progress) if not value)
+
+    # Count continuous blocks of files with zero progress (completely undownloaded)
+    zero_progress_count = sum(1 for value, _ in groupby(torrent.files, key=lambda f: f.progress == 0.0) if value)
+
+    # Check for conflicts: number of continuous undownloaded blocks should not exceed
+    # the number of files with zero progress
+    return undownloaded_blocks_count <= zero_progress_count

@@ -8,7 +8,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
 from . import config, db, logger
-from .core import NemorosaCore
 
 
 class JobType(Enum):
@@ -119,8 +118,15 @@ class JobManager:
             self.database.update_job_run(job_name, start_time, next_run_time)
 
             # Run the actual search process
+            from .core import NemorosaCore
+
             processor = NemorosaCore()
             await processor.process_torrents()
+
+            client = processor.torrent_client
+            if client and client._monitoring:
+                self.logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
+                await client.stop_monitoring()
 
             # Record successful completion
             end_time = int(datetime.now().timestamp())
@@ -147,6 +153,8 @@ class JobManager:
             self.database.update_job_run(job_name, start_time, next_run_time)
 
             # Run cleanup process
+            from .core import NemorosaCore
+
             processor = NemorosaCore()
             await processor.retry_undownloaded_torrents()
 

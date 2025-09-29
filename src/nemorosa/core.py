@@ -1,14 +1,13 @@
 """Core processing functions for nemorosa."""
 
 import traceback
-from itertools import groupby
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import torf
 
 from . import api, config, db, filecompare, logger, torrent_client
-from .torrent_client import ClientTorrentInfo, TorrentConflictError, TorrentState
+from .torrent_client import ClientTorrentInfo, TorrentConflictError
 
 
 class NemorosaCore:
@@ -443,11 +442,13 @@ class NemorosaCore:
 
         # Inject torrent and handle renaming
         downloaded = False
+        verified = False
         if not config.cfg.global_config.no_download:
             try:
-                if self.torrent_client.inject_torrent(
+                success, verified = self.torrent_client.inject_torrent(
                     torrent_data, torrent_details.download_dir, torrent_details.name, rename_map, hash_match
-                ):
+                )
+                if success:
                     downloaded = True
                     self.stats["downloaded"] += 1
                     self.logger.success("Torrent injected successfully")
@@ -492,6 +493,11 @@ class NemorosaCore:
                 "rename_map": rename_map,
             }
             self.database.add_undownloaded_torrent(str(tid), torrent_info, site_host)
+
+        # Start tracking verification after database operations are complete
+        # Only track if torrent was successfully injected and verification was performed
+        if downloaded and verified:
+            await self.torrent_client.track_verification(torrent_object.infohash)
 
         return tid, downloaded
 
@@ -640,9 +646,10 @@ class NemorosaCore:
                         self.logger.debug(f"Rename map: {rename_map}")
 
                         # Try to inject torrent into client
-                        if self.torrent_client.inject_torrent(
+                        success, verified = self.torrent_client.inject_torrent(
                             torrent_data, download_dir, local_torrent_name, rename_map, False
-                        ):
+                        )
+                        if success:
                             retry_stats["successful"] += 1
                             retry_stats["removed"] += 1
 
@@ -702,53 +709,20 @@ class NemorosaCore:
             for matched_torrent_hash in matched_results:
                 stats["matches_checked"] += 1
 
-                self.logger.debug(f"Checking matched torrent: {matched_torrent_hash}")
+                # Process single torrent
+                result = self.torrent_client.process_single_injected_torrent(matched_torrent_hash)
 
-                # Check if matched torrent exists in client
-                matched_torrent = self.torrent_client.get_torrent_info(matched_torrent_hash)
-                if not matched_torrent:
-                    self.logger.debug(f"Matched torrent {matched_torrent_hash} not found in client, skipping")
-                    continue
-
-                # Skip if matched torrent is checking
-                if matched_torrent.state == TorrentState.CHECKING:
-                    self.logger.debug(f"Matched torrent {matched_torrent.name} is checking, skipping")
-                    continue
-
-                try:
-                    # If matched torrent is 100% complete, start downloading
-                    if matched_torrent.progress == 1.0:
-                        stats["matches_completed"] += 1
-                        self.logger.info(f"Matched torrent {matched_torrent.name} is 100% complete, starting download")
-                        # Start downloading the matched torrent
-                        self.torrent_client.resume_torrent(matched_torrent.id)
+                # Update stats based on result
+                if result["status"] == "completed":
+                    stats["matches_completed"] += 1
+                    if result["started_downloading"]:
                         stats["matches_started_downloading"] += 1
-                        self.logger.success(f"Started downloading matched torrent: {matched_torrent.name}")
-                        # Mark as checked since it's 100% complete
-                        self.database.update_scan_result_checked(matched_torrent_hash, True)
-                    # If matched torrent is not 100% complete, check file progress patterns
-                    else:
-                        self.logger.debug(
-                            f"Matched torrent {matched_torrent.name} not 100% complete "
-                            f"({matched_torrent.progress * 100:.1f}%), checking file patterns"
-                        )
-
-                        # Analyze file progress patterns
-                        if self._should_keep_partial_torrent(matched_torrent):
-                            self.logger.debug(f"Keeping partial torrent {matched_torrent.name} - valid pattern")
-                            # Mark as checked since we're keeping the partial torrent
-                            self.database.update_scan_result_checked(matched_torrent_hash, True)
-                            continue
-                        else:
-                            self.logger.warning(f"Removing torrent {matched_torrent.name} - failed validation")
-                            self.torrent_client._remove_torrent(matched_torrent.id)
-                            # Clear matched torrent information from database
-                            self.database.clear_matched_torrent_info(matched_torrent_hash)
-                            stats["matches_failed"] += 1
-
-                except Exception as e:
+                elif result["status"] == "partial_kept":
+                    # Partial torrent kept, no action needed
+                    pass
+                elif result["status"] in ("partial_removed", "error"):
                     stats["matches_failed"] += 1
-                    self.logger.error(f"Error processing torrent {matched_torrent_hash}: {e}")
+                # For "not_found" and "checking" status, no stats update needed
 
         except Exception as e:
             self.logger.error("Error processing injected torrents: %s", e)
@@ -761,32 +735,6 @@ class NemorosaCore:
             self.logger.success("Matches already downloading: %d", stats["matches_already_downloading"])
             self.logger.success("Matches failed: %d", stats["matches_failed"])
             self.logger.section("===== Injected Torrents Post-Processing Complete =====")
-
-    def _should_keep_partial_torrent(self, torrent: ClientTorrentInfo) -> bool:
-        """Check if a partial torrent should be kept based on piece and file progress patterns.
-
-        Compares the number of continuous undownloaded blocks with the number of files
-        that have zero progress. If there are more undownloaded blocks than zero-progress
-        files, it indicates a conflict.
-
-        Args:
-            torrent: The torrent to analyze.
-
-        Returns:
-            bool: True if torrent should be kept, False if it should be removed.
-        """
-        if not torrent.piece_progress or not torrent.files:
-            return False
-
-        # Count continuous blocks of undownloaded pieces (False values)
-        undownloaded_blocks_count = sum(1 for value, _ in groupby(torrent.piece_progress) if not value)
-
-        # Count continuous blocks of files with zero progress (completely undownloaded)
-        zero_progress_count = sum(1 for value, _ in groupby(torrent.files, key=lambda f: f.progress == 0.0) if value)
-
-        # Check for conflicts: number of continuous undownloaded blocks should not exceed
-        # the number of files with zero progress
-        return undownloaded_blocks_count <= zero_progress_count
 
     async def process_single_torrent(
         self,
@@ -929,9 +877,10 @@ class NemorosaCore:
             # Inject torrent and handle renaming
             downloaded = False
             if not config.cfg.global_config.no_download:
-                if self.torrent_client.inject_torrent(
+                success, verified = self.torrent_client.inject_torrent(
                     torrent_data, matched_torrent.download_dir, matched_torrent.name, rename_map, False
-                ):
+                )
+                if success:
                     downloaded = True
                     self.stats["downloaded"] += 1
                     self.logger.success("Torrent injected successfully")
