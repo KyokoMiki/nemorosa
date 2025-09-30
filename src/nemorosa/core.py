@@ -824,7 +824,7 @@ class NemorosaCore:
             self.logger.debug(f"Extracted torrent ID: {tid} from link: {torrent_link}")
 
             # Get all torrent information from torrent_client (not filtered)
-            all_torrents = self.torrent_client.get_torrents()
+            all_torrents = self.torrent_client.get_torrents(["name", "files", "trackers", "download_dir"])
 
             # Parse incoming torrent data
             torrent_object = torf.Torrent.read_stream(torrent_data)
@@ -877,7 +877,7 @@ class NemorosaCore:
             # Inject torrent and handle renaming
             downloaded = False
             if not config.cfg.global_config.no_download:
-                success, verified = self.torrent_client.inject_torrent(
+                success, _ = self.torrent_client.inject_torrent(
                     torrent_data, matched_torrent.download_dir, matched_torrent.name, rename_map, False
                 )
                 if success:
