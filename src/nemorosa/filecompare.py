@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 from . import logger
 
 if TYPE_CHECKING:
-    from .torrent_client import ClientTorrentInfo
+    from .clients import ClientTorrentInfo
 
 
 def is_music_file(filename: str) -> bool:

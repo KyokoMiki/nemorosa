@@ -6,8 +6,8 @@ from urllib.parse import parse_qs, urlparse
 
 import torf
 
-from . import api, config, db, filecompare, logger, torrent_client
-from .torrent_client import ClientTorrentInfo, TorrentConflictError
+from . import api, client_instance, config, db, filecompare, logger
+from .clients import ClientTorrentInfo, TorrentConflictError
 
 
 class NemorosaCore:
@@ -15,7 +15,7 @@ class NemorosaCore:
 
     def __init__(self):
         """Initialize the torrent processor."""
-        self.torrent_client = torrent_client.get_torrent_client()
+        self.torrent_client = client_instance.get_torrent_client()
         self.database = db.get_database()
         self.stats = {
             "found": 0,
@@ -823,7 +823,7 @@ class NemorosaCore:
 
             self.logger.debug(f"Extracted torrent ID: {tid} from link: {torrent_link}")
 
-            # Get all torrent information from torrent_client (not filtered)
+            # Get all torrent information from client_instance (not filtered)
             all_torrents = self.torrent_client.get_torrents(["name", "files", "trackers", "download_dir"])
 
             # Parse incoming torrent data

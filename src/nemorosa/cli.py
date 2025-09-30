@@ -7,7 +7,7 @@ import sys
 
 from colorama import init
 
-from . import api, config, db, logger, torrent_client
+from . import api, client_instance, config, db, logger
 from .core import NemorosaCore
 from .webserver import run_webserver
 
@@ -236,8 +236,8 @@ def main():
     try:
         app_logger.section("===== Connecting to Torrent Client =====")
         app_logger.debug("Connecting to torrent client at %s...", args.client)
-        app_torrent_client = torrent_client.create_torrent_client(args.client)
-        torrent_client.set_torrent_client(app_torrent_client)
+        app_torrent_client = client_instance.create_torrent_client(args.client)
+        client_instance.set_torrent_client(app_torrent_client)
         app_logger.success("Successfully connected to torrent client")
 
         # Decide operation based on command line arguments
@@ -307,7 +307,7 @@ async def _async_main(args):
             await processor.process_torrents()
     finally:
         # Wait for torrent monitoring to complete all tracked torrents
-        client = torrent_client.get_torrent_client()
+        client = client_instance.get_torrent_client()
         if client and client._monitoring:
             app_logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
             await client.stop_monitoring()
