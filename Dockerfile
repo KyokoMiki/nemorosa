@@ -1,5 +1,7 @@
-# Use official uv image with Python 3.13
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim
+# ===========================================
+# Stage 1: Builder - Install dependencies and build the project
+# ===========================================
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
 
 # Set working directory
 WORKDIR /app
@@ -21,7 +23,7 @@ COPY pyproject.toml uv.lock ./
 
 # Install dependencies
 RUN --mount=type=cache,target=/opt/uv-cache \
-    uv sync --locked --no-install-project
+    uv sync --locked --no-install-project --no-editable --no-dev
 
 # Copy source code
 COPY . .
@@ -30,16 +32,28 @@ COPY . .
 RUN --mount=type=cache,target=/opt/uv-cache \
     uv sync --locked --no-editable --no-dev
 
-# Create data directories for configuration and database
-RUN mkdir -p /app/data
+# ===========================================
+# Stage 2: Runtime - Minimal Python slim image
+# ===========================================
+FROM python:3.13-slim-bookworm
 
-# Set environment variables
+# Set working directory
+WORKDIR /app
+
+# Copy the virtual environment from builder stage
+COPY --from=builder /app/.venv /app/.venv
+
+# Set environment variables for Python virtual environment
+ENV PATH="/app/.venv/bin:$PATH"
 # Override platformdirs to use /app/data for configuration
 ENV XDG_CONFIG_HOME=/app/data
 ENV XDG_DATA_HOME=/app/data
 
+# Copy only the essential application files
+COPY --from=builder /app/src /app/src
+
 # Expose port for web interface
 EXPOSE 8256
 
-# Use uv to run the application
-ENTRYPOINT ["uv", "run", "--project", "/app", "--no-sync", "nemorosa"]
+# Use the installed application directly via Python module
+ENTRYPOINT ["nemorosa"]
