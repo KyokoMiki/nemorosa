@@ -26,6 +26,7 @@ class GlobalConfig(msgspec.Struct):
         default_factory=lambda: ["flacsfor.me", "home.opsfet.ch", "52dic.vip"]
     )
     check_music_only: bool = True
+    auto_start_torrents: bool = True
 
     def __post_init__(self):
         # Validate log level
@@ -250,6 +251,7 @@ global:
     - "home.opsfet.ch" 
     - "52dic.vip"
   check_music_only: true  # Whether to check music files only
+  auto_start_torrents: true  # Whether to automatically start torrents after successful injection
 
 server:
   # Web server settings

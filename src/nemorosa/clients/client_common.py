@@ -651,14 +651,19 @@ class TorrentClient(ABC):
 
             # If matched torrent is 100% complete, start downloading
             if matched_torrent.progress == 1.0:
-                self.logger.info(f"Matched torrent {matched_torrent.name} is 100% complete, starting download")
-                # Start downloading the matched torrent
-                self.resume_torrent(matched_torrent.hash)
-                self.logger.success(f"Started downloading matched torrent: {matched_torrent.name}")
+                self.logger.info(f"Matched torrent {matched_torrent.name} is 100% complete")
+                # Check if auto-start is enabled
+                if config.cfg.global_config.auto_start_torrents:
+                    # Start downloading the matched torrent
+                    self.resume_torrent(matched_torrent.hash)
+                    self.logger.success(f"Started downloading matched torrent: {matched_torrent.name}")
+                    stats["started_downloading"] = True
+                else:
+                    self.logger.info("Auto-start disabled, torrent will remain paused")
+                    stats["started_downloading"] = False
                 # Mark as checked since it's 100% complete
                 database.update_scan_result_checked(matched_torrent_hash, True)
                 stats["status"] = "completed"
-                stats["started_downloading"] = True
             # If matched torrent is not 100% complete, check file progress patterns
             else:
                 self.logger.debug(
