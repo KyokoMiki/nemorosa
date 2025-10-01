@@ -162,9 +162,9 @@ class NemorosaCore:
 
             # Match by file content
             if tid is None:
+                self.logger.debug(f"No size match found. Checking file contents for '{fname_query}'")
                 tid = await self.match_by_file_content(
                     torrents=torrents,
-                    fname_query=fname_query,
                     fname=fname,
                     fdict=fdict,
                     scan_querys=scan_querys,
@@ -277,7 +277,6 @@ class NemorosaCore:
         self,
         *,
         torrents: list[dict],
-        fname_query: str,
         fname: str,
         fdict: dict,
         scan_querys: list[str],
@@ -287,7 +286,6 @@ class NemorosaCore:
 
         Args:
             torrents (list[dict]): List of torrents to check.
-            fname_query (str): Query string for filename matching.
             fname (str): Original filename.
             fdict (dict): File dictionary mapping filename to size.
             scan_querys (list[str]): List of scan queries.
@@ -296,65 +294,26 @@ class NemorosaCore:
         Returns:
             int | None: Torrent ID if found, None otherwise.
         """
-        tid = None
-        self.logger.debug(f"No size match found. Checking file contents for '{fname_query}'")
         for t_index, t in enumerate(torrents, 1):
             self.logger.debug(f"Checking torrent #{t_index}/{len(torrents)}: ID {t['torrentId']}")
 
             resp = await api.torrent(t["torrentId"])
             resp_files = resp.get("fileList", {})
 
-            # Get files in fileList corresponding to fname_query
-            fname_query_words = fname_query.split()
-            matching_keys = []
+            check_music_file = fname if filecompare.is_music_file(fname) else scan_querys[-1]
 
-            if fname_query == fname:
-                matching_keys.append(fname_query)
-            else:
-                # Check all keys in resp_files
-                for key in resp_files:
-                    # Check if all words in fname_query are in key
-                    if all(word in key for word in fname_query_words):
-                        matching_keys.append(key)
-
-                self.logger.debug(
-                    f"Found {len(matching_keys)} files matching query '{fname_query}': "
-                    f"{matching_keys[:3]}{'...' if len(matching_keys) > 3 else ''}"
-                )
-
-            # Check if collected matching keys have file matches
-            matched = False
-            for matching_key in matching_keys:
-                # Check if this key is in our file dictionary and size matches
-                if resp_files.get(matching_key, 0) == fdict[fname]:
-                    self.logger.debug(f"File size match found for key: {matching_key}")
-
-                    # If it's a music file, match directly
-                    if filecompare.is_music_file(matching_key):
-                        tid = t["torrentId"]
-                        matched = True
-                        self.logger.success(f"Music file match found! Torrent ID: {tid} (File: {matching_key})")
-                        break  # Break out of matching_keys loop
-                    else:
-                        # For non-music files, still need to check music files
-                        check_music_file = scan_querys[-1]
-                        if resp_files.get(check_music_file, 0) == fdict.get(check_music_file, 0):
-                            tid = t["torrentId"]
-                            matched = True
-                            self.logger.success(f"File match found! Torrent ID: {tid} (File: {matching_key})")
-                            break  # Break out of matching_keys loop
-
-            if matched:
+            # For music files, byte-level size comparison is sufficient for identical matching
+            # as it provides reliable file identification without requiring full content comparison
+            if fdict[check_music_file] in resp_files.values():
                 # Check file conflicts
                 if filecompare.check_conflicts(fdict, resp_files):
                     self.logger.debug("Conflict detected. Skipping this torrent.")
-                    tid = None  # Reset tid
-                    matched = False
+                    return None
+                else:
+                    self.logger.success(f"File match found! Torrent ID: {t['torrentId']} (File: {check_music_file})")
+                    return t["torrentId"]
 
-                if matched:
-                    break  # Break out of torrent traversal loop
-
-        return tid
+        return None
 
     async def process_torrent_search(
         self,
