@@ -157,18 +157,6 @@ class TorrentClient(ABC):
         """
         pass
 
-    @abstractmethod
-    def resume_torrent(self, torrent_hash: str) -> bool:
-        """Resume downloading a torrent.
-
-        Args:
-            torrent_hash (str): Torrent hash.
-
-        Returns:
-            bool: True if successful, False otherwise.
-        """
-        pass
-
     # endregion
 
     # region Abstract Methods - Internal Operations
@@ -250,6 +238,18 @@ class TorrentClient(ABC):
 
         Returns:
             bytes | None: Torrent file data, or None if not available.
+        """
+        pass
+
+    @abstractmethod
+    def _resume_torrent(self, torrent_hash: str) -> bool:
+        """Resume downloading a torrent.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+
+        Returns:
+            bool: True if successful, False otherwise.
         """
         pass
 
@@ -615,8 +615,8 @@ class TorrentClient(ABC):
 
     # region Public Methods - Torrent Post-Processing
 
-    def process_single_injected_torrent(self, matched_torrent_hash: str) -> dict:
-        """Process a single injected torrent to determine its status and take appropriate action.
+    def post_process_single_injected_torrent(self, matched_torrent_hash: str) -> dict:
+        """Post-process a single injected torrent to determine its status and take appropriate action.
 
         Args:
             matched_torrent_hash: The hash of the matched torrent to process
@@ -655,7 +655,7 @@ class TorrentClient(ABC):
                 # Check if auto-start is enabled
                 if config.cfg.global_config.auto_start_torrents:
                     # Start downloading the matched torrent
-                    self.resume_torrent(matched_torrent.hash)
+                    self._resume_torrent(matched_torrent.hash)
                     self.logger.success(f"Started downloading matched torrent: {matched_torrent.name}")
                     stats["started_downloading"] = True
                 else:
@@ -776,9 +776,9 @@ class TorrentClient(ABC):
                 ]:
                     self.logger.info(f"Verification completed for torrent {torrent_hash}")
 
-                    # Call process_single_injected_torrent from torrent client
+                    # Call post_process_single_injected_torrent from torrent client
                     try:
-                        self.process_single_injected_torrent(torrent_hash)
+                        self.post_process_single_injected_torrent(torrent_hash)
                     except Exception as e:
                         self.logger.error(f"Error processing torrent {torrent_hash}: {e}")
 

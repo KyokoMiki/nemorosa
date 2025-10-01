@@ -195,15 +195,6 @@ class DelugeClient(TorrentClient):
             self.logger.error("Error retrieving torrent info from Deluge: %s", e)
             return None
 
-    def resume_torrent(self, torrent_hash: str) -> bool:
-        """Resume downloading a torrent in Deluge."""
-        try:
-            self.client.call("core.resume_torrent", [torrent_hash])
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
-            return False
-
     # endregion
 
     # region Abstract Methods - Internal Operations
@@ -293,5 +284,14 @@ class DelugeClient(TorrentClient):
         except Exception as e:
             self.logger.error(f"Error getting torrent data from Deluge: {e}")
             return None
+
+    def _resume_torrent(self, torrent_hash: str) -> bool:
+        """Resume downloading a torrent in Deluge."""
+        try:
+            self.client.call("core.resume_torrent", [torrent_hash])
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
+            return False
 
     # endregion

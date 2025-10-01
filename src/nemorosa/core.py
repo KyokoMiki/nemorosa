@@ -668,7 +668,7 @@ class NemorosaCore:
                 stats["matches_checked"] += 1
 
                 # Process single torrent
-                result = self.torrent_client.process_single_injected_torrent(matched_torrent_hash)
+                result = self.torrent_client.post_process_single_injected_torrent(matched_torrent_hash)
 
                 # Update stats based on result
                 if result["status"] == "completed":

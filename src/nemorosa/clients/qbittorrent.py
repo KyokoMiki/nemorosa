@@ -186,15 +186,6 @@ class QBittorrentClient(TorrentClient):
             # On error, fall back to cached states for requested torrents
             return self._torrent_states_cache
 
-    def resume_torrent(self, torrent_hash: str) -> bool:
-        """Resume downloading a torrent in qBittorrent."""
-        try:
-            self.client.torrents_resume(torrent_hashes=torrent_hash)
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
-            return False
-
     # endregion
 
     # region Abstract Methods - Internal Operations
@@ -281,6 +272,15 @@ class QBittorrentClient(TorrentClient):
         except Exception as e:
             self.logger.error(f"Error getting torrent data from qBittorrent: {e}")
             return None
+
+    def _resume_torrent(self, torrent_hash: str) -> bool:
+        """Resume downloading a torrent in qBittorrent."""
+        try:
+            self.client.torrents_resume(torrent_hashes=torrent_hash)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
+            return False
 
     # endregion
 

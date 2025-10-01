@@ -193,15 +193,6 @@ class TransmissionClient(TorrentClient):
             self.logger.error(f"Error getting torrent states for monitoring from Transmission: {e}")
             return {}
 
-    def resume_torrent(self, torrent_hash: str) -> bool:
-        """Resume downloading a torrent in Transmission."""
-        try:
-            self.client.start_torrent(torrent_hash)
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
-            return False
-
     # endregion
 
     # region Abstract Methods - Internal Operations
@@ -311,5 +302,14 @@ class TransmissionClient(TorrentClient):
         except Exception as e:
             self.logger.error(f"Error getting torrent data from Transmission: {e}")
             return None
+
+    def _resume_torrent(self, torrent_hash: str) -> bool:
+        """Resume downloading a torrent in Transmission."""
+        try:
+            self.client.start_torrent(torrent_hash)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
+            return False
 
     # endregion
