@@ -183,7 +183,7 @@ class TransmissionClient(TorrentClient):
             )
 
             result = {
-                torrent.hash_string: TRANSMISSION_STATE_MAPPING.get(torrent.status, TorrentState.UNKNOWN)
+                torrent.hash_string: TRANSMISSION_STATE_MAPPING.get(torrent.status.value, TorrentState.UNKNOWN)
                 for torrent in torrents
             }
 
