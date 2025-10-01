@@ -495,8 +495,7 @@ class NemorosaCore:
             self.database.add_undownloaded_torrent(str(tid), torrent_info, site_host)
 
         # Start tracking verification after database operations are complete
-        # Only track if torrent was successfully injected and verification was performed
-        if downloaded and verified:
+        if downloaded:
             await self.torrent_client.track_verification(torrent_object.infohash)
 
         return tid, downloaded
@@ -887,17 +886,9 @@ class NemorosaCore:
                 else:
                     self.logger.error(f"Failed to inject torrent: {tid}")
 
-            # Record scan result: matching torrent found
-            self.database.add_scan_result(
-                # Reverse scan matches should not affect subsequent forward matching
-                local_torrent_hash=f"reverse_{matched_torrent.hash}",
-                local_torrent_name=matched_torrent.name,
-                matched_torrent_id=str(tid),
-                site_host=site_host,
-                matched_torrent_hash=torrent_object.infohash,
-            )
-
-            if not downloaded:
+            if downloaded:
+                await self.torrent_client.track_verification(torrent_object.infohash)
+            else:
                 torrent_info = {
                     "download_dir": matched_torrent.download_dir,
                     "local_torrent_name": matched_torrent.name,
