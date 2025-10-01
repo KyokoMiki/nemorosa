@@ -78,6 +78,8 @@ class QBittorrentClient(TorrentClient):
         # Use the field specifications constant
         self.field_config = _QBITTORRENT_FIELD_SPECS
 
+    # region Abstract Methods - Public Operations
+
     def get_torrents(self, fields: list[str] | None) -> list[ClientTorrentInfo]:
         """Get all torrents from qBittorrent.
 
@@ -110,54 +112,6 @@ class QBittorrentClient(TorrentClient):
             self.logger.error("Error retrieving torrents from qBittorrent: %s", e)
             return []
 
-    def _add_torrent(self, torrent_data, download_dir: str, hash_match: bool) -> str:
-        """Add torrent to qBittorrent."""
-
-        # qBittorrent doesn't return the hash directly, we need to decode it
-        torrent_obj = torf.Torrent.read_stream(torrent_data)
-        info_hash = torrent_obj.infohash
-
-        current_time = time.time()
-
-        result = self.client.torrents_add(
-            torrent_files=torrent_data,
-            save_path=download_dir,
-            is_paused=True,
-            category=config.cfg.downloader.label,
-            use_auto_torrent_management=False,
-            is_skip_checking=hash_match,  # Skip hash checking if hash match
-        )
-
-        # qBittorrent returns "Ok." for success and "Fails." for failure
-        if result != "Ok.":
-            # Check if torrent already exists by comparing add time
-            try:
-                torrent_info = self.client.torrents_info(torrent_hashes=info_hash)
-                if torrent_info:
-                    # Get the first (and should be only) torrent with this hash
-                    existing_torrent = torrent_info[0]
-                    # Convert add time to unix timestamp
-                    add_time = existing_torrent.added_on
-                    if add_time < current_time:
-                        raise TorrentConflictError(existing_torrent.hash)
-                    # Check if tracker is correct
-                    target_tracker = torrent_obj.trackers.flat[0] if torrent_obj.trackers else ""
-                    if existing_torrent.tracker != target_tracker:
-                        raise TorrentConflictError(existing_torrent.hash)
-
-            except TorrentConflictError as e:
-                error_msg = f"The torrent to be injected cannot coexist with local torrent {e}"
-                self.logger.error(error_msg)
-                raise TorrentConflictError(error_msg) from e
-            except Exception as e:
-                raise ValueError(f"Failed to add torrent to qBittorrent: {e}") from e
-
-        return info_hash
-
-    def _remove_torrent(self, torrent_hash: str):
-        """Remove torrent from qBittorrent."""
-        self.client.torrents_delete(torrent_hashes=torrent_hash, delete_files=False)
-
     def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
         """Get torrent information."""
         try:
@@ -180,50 +134,6 @@ class QBittorrentClient(TorrentClient):
             )
         except Exception as e:
             self.logger.error("Error retrieving torrent info from qBittorrent: %s", e)
-            return None
-
-    def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str):
-        """Rename entire torrent."""
-        self.client.torrents_rename(torrent_hash=torrent_hash, new_torrent_name=new_name)
-        self.client.torrents_rename_folder(torrent_hash=torrent_hash, old_path=old_name, new_path=new_name)
-
-    def _rename_file(self, torrent_hash: str, old_path: str, new_name: str):
-        """Rename file within torrent."""
-        self.client.torrents_rename_file(torrent_hash=torrent_hash, old_path=old_path, new_path=new_name)
-
-    def _verify_torrent(self, torrent_hash: str):
-        """Verify torrent integrity."""
-        self.client.torrents_recheck(torrent_hashes=torrent_hash)
-
-    def resume_torrent(self, torrent_hash: str) -> bool:
-        """Resume downloading a torrent in qBittorrent."""
-        try:
-            self.client.torrents_resume(torrent_hashes=torrent_hash)
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
-            return False
-
-    def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
-        """
-        qBittorrent needs to prepend the root directory
-        """
-        new_rename_map = {}
-        for key, value in rename_map.items():
-            new_rename_map[posixpath.join(base_path, key)] = posixpath.join(base_path, value)
-        return new_rename_map
-
-    def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
-        """Get torrent data from qBittorrent."""
-        try:
-            torrent_data = self.client.torrents_export(torrent_hash=torrent_hash)
-            if torrent_data is None:
-                torrent_path = posixpath.join(self.torrents_dir, torrent_hash + ".torrent")
-                with open(torrent_path, "rb") as f:
-                    return f.read()
-            return torrent_data
-        except Exception as e:
-            self.logger.error(f"Error getting torrent data from qBittorrent: {e}")
             return None
 
     def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
@@ -276,6 +186,106 @@ class QBittorrentClient(TorrentClient):
             # On error, fall back to cached states for requested torrents
             return self._torrent_states_cache
 
+    def resume_torrent(self, torrent_hash: str) -> bool:
+        """Resume downloading a torrent in qBittorrent."""
+        try:
+            self.client.torrents_resume(torrent_hashes=torrent_hash)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
+            return False
+
+    # endregion
+
+    # region Abstract Methods - Internal Operations
+
+    def _add_torrent(self, torrent_data, download_dir: str, hash_match: bool) -> str:
+        """Add torrent to qBittorrent."""
+
+        # qBittorrent doesn't return the hash directly, we need to decode it
+        torrent_obj = torf.Torrent.read_stream(torrent_data)
+        info_hash = torrent_obj.infohash
+
+        current_time = time.time()
+
+        result = self.client.torrents_add(
+            torrent_files=torrent_data,
+            save_path=download_dir,
+            is_paused=True,
+            category=config.cfg.downloader.label,
+            use_auto_torrent_management=False,
+            is_skip_checking=hash_match,  # Skip hash checking if hash match
+        )
+
+        # qBittorrent returns "Ok." for success and "Fails." for failure
+        if result != "Ok.":
+            # Check if torrent already exists by comparing add time
+            try:
+                torrent_info = self.client.torrents_info(torrent_hashes=info_hash)
+                if torrent_info:
+                    # Get the first (and should be only) torrent with this hash
+                    existing_torrent = torrent_info[0]
+                    # Convert add time to unix timestamp
+                    add_time = existing_torrent.added_on
+                    if add_time < current_time:
+                        raise TorrentConflictError(existing_torrent.hash)
+                    # Check if tracker is correct
+                    target_tracker = torrent_obj.trackers.flat[0] if torrent_obj.trackers else ""
+                    if existing_torrent.tracker != target_tracker:
+                        raise TorrentConflictError(existing_torrent.hash)
+
+            except TorrentConflictError as e:
+                error_msg = f"The torrent to be injected cannot coexist with local torrent {e}"
+                self.logger.error(error_msg)
+                raise TorrentConflictError(error_msg) from e
+            except Exception as e:
+                raise ValueError(f"Failed to add torrent to qBittorrent: {e}") from e
+
+        return info_hash
+
+    def _remove_torrent(self, torrent_hash: str):
+        """Remove torrent from qBittorrent."""
+        self.client.torrents_delete(torrent_hashes=torrent_hash, delete_files=False)
+
+    def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str):
+        """Rename entire torrent."""
+        self.client.torrents_rename(torrent_hash=torrent_hash, new_torrent_name=new_name)
+        self.client.torrents_rename_folder(torrent_hash=torrent_hash, old_path=old_name, new_path=new_name)
+
+    def _rename_file(self, torrent_hash: str, old_path: str, new_name: str):
+        """Rename file within torrent."""
+        self.client.torrents_rename_file(torrent_hash=torrent_hash, old_path=old_path, new_path=new_name)
+
+    def _verify_torrent(self, torrent_hash: str):
+        """Verify torrent integrity."""
+        self.client.torrents_recheck(torrent_hashes=torrent_hash)
+
+    def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
+        """
+        qBittorrent needs to prepend the root directory
+        """
+        new_rename_map = {}
+        for key, value in rename_map.items():
+            new_rename_map[posixpath.join(base_path, key)] = posixpath.join(base_path, value)
+        return new_rename_map
+
+    def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
+        """Get torrent data from qBittorrent."""
+        try:
+            torrent_data = self.client.torrents_export(torrent_hash=torrent_hash)
+            if torrent_data is None:
+                torrent_path = posixpath.join(self.torrents_dir, torrent_hash + ".torrent")
+                with open(torrent_path, "rb") as f:
+                    return f.read()
+            return torrent_data
+        except Exception as e:
+            self.logger.error(f"Error getting torrent data from qBittorrent: {e}")
+            return None
+
+    # endregion
+
+    # region Monitoring Methods
+
     def reset_sync_state(self) -> None:
         """Reset sync state for incremental updates.
 
@@ -285,3 +295,5 @@ class QBittorrentClient(TorrentClient):
         self._last_rid = 0
         self._torrent_states_cache.clear()
         self.logger.debug("Reset qBittorrent sync state")
+
+    # endregion

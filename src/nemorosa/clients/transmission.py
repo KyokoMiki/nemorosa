@@ -100,6 +100,8 @@ class TransmissionClient(TorrentClient):
         # Use the field specifications constant
         self.field_config = _TRANSMISSION_FIELD_SPECS
 
+    # region Abstract Methods - Public Operations
+
     def get_torrents(self, fields: list[str] | None) -> list[ClientTorrentInfo]:
         """Get all torrents from Transmission.
 
@@ -134,6 +136,75 @@ class TransmissionClient(TorrentClient):
         except Exception as e:
             self.logger.error("Error retrieving torrents from Transmission: %s", e)
             return []
+
+    def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
+        """Get torrent information."""
+        try:
+            # Get requested fields (always include hash)
+            field_config = (
+                {k: v for k, v in self.field_config.items() if k in fields or k == "hash"}
+                if fields
+                else self.field_config
+            )
+
+            # Get required arguments from field_config
+            arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
+
+            torrent = self.client.get_torrent(torrent_hash, arguments=arguments)
+
+            # Build ClientTorrentInfo using field_config
+            return ClientTorrentInfo(
+                **{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()}
+            )
+        except Exception as e:
+            self.logger.error("Error retrieving torrent info from Transmission: %s", e)
+            return None
+
+    def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
+        """Get torrent states for monitoring (optimized for Transmission).
+
+        Uses Transmission's get_torrents with minimal fields to get only
+        the required state information for monitoring.
+
+        Args:
+            torrent_hashes (set[str]): Set of torrent hashes to monitor.
+
+        Returns:
+            dict[str, TorrentState]: Mapping of torrent hash to current state.
+        """
+        if not torrent_hashes:
+            return {}
+
+        try:
+            # Get minimal torrent info - only hash and status
+            torrents = self.client.get_torrents(
+                ids=list(torrent_hashes),
+                arguments=["hashString", "status"],  # Only get hash and status for efficiency
+            )
+
+            result = {
+                torrent.hash_string: TRANSMISSION_STATE_MAPPING.get(torrent.status, TorrentState.UNKNOWN)
+                for torrent in torrents
+            }
+
+            return result
+
+        except Exception as e:
+            self.logger.error(f"Error getting torrent states for monitoring from Transmission: {e}")
+            return {}
+
+    def resume_torrent(self, torrent_hash: str) -> bool:
+        """Resume downloading a torrent in Transmission."""
+        try:
+            self.client.start_torrent(torrent_hash)
+            return True
+        except Exception as e:
+            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
+            return False
+
+    # endregion
+
+    # region Abstract Methods - Internal Operations
 
     def _add_torrent(self, torrent_data, download_dir: str, hash_match: bool) -> str:
         """Add torrent to Transmission.
@@ -201,29 +272,6 @@ class TransmissionClient(TorrentClient):
         """
         self.client.remove_torrent(torrent_hash, delete_data=False)
 
-    def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
-        """Get torrent information."""
-        try:
-            # Get requested fields (always include hash)
-            field_config = (
-                {k: v for k, v in self.field_config.items() if k in fields or k == "hash"}
-                if fields
-                else self.field_config
-            )
-
-            # Get required arguments from field_config
-            arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
-
-            torrent = self.client.get_torrent(torrent_hash, arguments=arguments)
-
-            # Build ClientTorrentInfo using field_config
-            return ClientTorrentInfo(
-                **{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()}
-            )
-        except Exception as e:
-            self.logger.error("Error retrieving torrent info from Transmission: %s", e)
-            return None
-
     def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str):
         """Rename entire torrent."""
         self.client.rename_torrent_path(torrent_hash, location=old_name, name=new_name)
@@ -235,15 +283,6 @@ class TransmissionClient(TorrentClient):
     def _verify_torrent(self, torrent_hash: str):
         """Verify torrent integrity."""
         self.client.verify_torrent(torrent_hash)
-
-    def resume_torrent(self, torrent_hash: str) -> bool:
-        """Resume downloading a torrent in Transmission."""
-        try:
-            self.client.start_torrent(torrent_hash)
-            return True
-        except Exception as e:
-            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
-            return False
 
     def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
         """Process rename mapping to adapt to Transmission."""
@@ -273,35 +312,4 @@ class TransmissionClient(TorrentClient):
             self.logger.error(f"Error getting torrent data from Transmission: {e}")
             return None
 
-    def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
-        """Get torrent states for monitoring (optimized for Transmission).
-
-        Uses Transmission's get_torrents with minimal fields to get only
-        the required state information for monitoring.
-
-        Args:
-            torrent_hashes (set[str]): Set of torrent hashes to monitor.
-
-        Returns:
-            dict[str, TorrentState]: Mapping of torrent hash to current state.
-        """
-        if not torrent_hashes:
-            return {}
-
-        try:
-            # Get minimal torrent info - only hash and status
-            torrents = self.client.get_torrents(
-                ids=list(torrent_hashes),
-                arguments=["hashString", "status"],  # Only get hash and status for efficiency
-            )
-
-            result = {
-                torrent.hash_string: TRANSMISSION_STATE_MAPPING.get(torrent.status, TorrentState.UNKNOWN)
-                for torrent in torrents
-            }
-
-            return result
-
-        except Exception as e:
-            self.logger.error(f"Error getting torrent states for monitoring from Transmission: {e}")
-            return {}
+    # endregion

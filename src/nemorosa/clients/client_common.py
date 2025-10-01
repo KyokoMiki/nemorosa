@@ -107,6 +107,8 @@ class TorrentClient(ABC):
         # Get global job manager
         self.job_manager = scheduler.get_job_manager()
 
+    # region Abstract Methods - Public Operations
+
     @abstractmethod
     def get_torrents(self, fields: list[str] | None) -> list[ClientTorrentInfo]:
         """Get all torrents from client.
@@ -120,6 +122,23 @@ class TorrentClient(ABC):
 
         Returns:
             list[ClientTorrentInfo]: List of torrent information objects.
+        """
+        pass
+
+    @abstractmethod
+    def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
+        """Get torrent information.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+            fields (list[str] | None): List of field names to include in the result.
+                If None, all available fields will be included.
+                Available fields:
+                - hash, name, progress, total_size, files, trackers,
+                  download_dir, state, piece_progress
+
+        Returns:
+            ClientTorrentInfo | None: Torrent information object, or None if not found.
         """
         pass
 
@@ -149,6 +168,94 @@ class TorrentClient(ABC):
             bool: True if successful, False otherwise.
         """
         pass
+
+    # endregion
+
+    # region Abstract Methods - Internal Operations
+
+    @abstractmethod
+    def _add_torrent(self, torrent_data, download_dir: str, hash_match: bool) -> str:
+        """Add torrent to client, return torrent hash.
+
+        Args:
+            torrent_data: Torrent file data.
+            download_dir (str): Download directory.
+            hash_match (bool): Whether this is a hash match, if True, skip verification.
+
+        Returns:
+            str: Torrent hash.
+        """
+        pass
+
+    @abstractmethod
+    def _remove_torrent(self, torrent_hash: str):
+        """Remove torrent from client.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+        """
+        pass
+
+    @abstractmethod
+    def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str):
+        """Rename entire torrent.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+            old_name (str): Old torrent name.
+            new_name (str): New torrent name.
+        """
+        pass
+
+    @abstractmethod
+    def _rename_file(self, torrent_hash: str, old_path: str, new_name: str):
+        """Rename file within torrent.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+            old_path (str): Old file path.
+            new_name (str): New file name.
+        """
+        pass
+
+    @abstractmethod
+    def _verify_torrent(self, torrent_hash: str):
+        """Verify torrent integrity.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+        """
+        pass
+
+    @abstractmethod
+    def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
+        """Process rename mapping to adapt to specific torrent client.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+            base_path (str): Base path for files.
+            rename_map (dict): Original rename mapping.
+
+        Returns:
+            dict: Processed rename mapping.
+        """
+        pass
+
+    @abstractmethod
+    def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
+        """Get torrent data from client.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+
+        Returns:
+            bytes | None: Torrent file data, or None if not available.
+        """
+        pass
+
+    # endregion
+
+    # region Public Methods - Torrent Retrieval
 
     def get_single_torrent(self, infohash: str, target_trackers: list[str]) -> ClientTorrentInfo | None:
         """Get single torrent by infohash with existing trackers information.
@@ -337,6 +444,28 @@ class TorrentClient(ABC):
             self.logger.error("Error retrieving torrents: %s", e)
             return {}
 
+    def get_torrent_object(self, torrent_hash: str) -> "torf.Torrent | None":
+        """Get torrent object from client by hash.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+
+        Returns:
+            torf.Torrent | None: Torrent object, or None if not available.
+        """
+        try:
+            torrent_data = self._get_torrent_data(torrent_hash)
+            if torrent_data:
+                return torf.Torrent.read_stream(torrent_data)
+            return None
+        except Exception as e:
+            self.logger.error(f"Error getting torrent object for hash {torrent_hash}: {e}")
+            return None
+
+    # endregion
+
+    # region Public Methods - Torrent Injection
+
     def inject_torrent(
         self, torrent_data, download_dir: str, local_torrent_name: str, rename_map: dict, hash_match: bool
     ) -> tuple[bool, bool]:
@@ -426,111 +555,6 @@ class TorrentClient(ABC):
         # This should never be reached, but just in case
         return False, False
 
-    # ===== The following methods need to be implemented by derived classes =====
-
-    @abstractmethod
-    def _add_torrent(self, torrent_data, download_dir: str, hash_match: bool) -> str:
-        """Add torrent to client, return torrent hash.
-
-        Args:
-            torrent_data: Torrent file data.
-            download_dir (str): Download directory.
-            hash_match (bool): Whether this is a hash match, if True, skip verification.
-
-        Returns:
-            str: Torrent hash.
-        """
-        pass
-
-    @abstractmethod
-    def _remove_torrent(self, torrent_hash: str):
-        """Remove torrent from client.
-
-        Args:
-            torrent_hash (str): Torrent hash.
-        """
-        pass
-
-    @abstractmethod
-    def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
-        """Get torrent information.
-
-        Args:
-            torrent_hash (str): Torrent hash.
-            fields (list[str] | None): List of field names to include in the result.
-                If None, all available fields will be included.
-                Available fields:
-                - hash, name, progress, total_size, files, trackers,
-                  download_dir, state, piece_progress
-
-        Returns:
-            ClientTorrentInfo | None: Torrent information object, or None if not found.
-        """
-        pass
-
-    @abstractmethod
-    def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str):
-        """Rename entire torrent.
-
-        Args:
-            torrent_hash (str): Torrent hash.
-            old_name (str): Old torrent name.
-            new_name (str): New torrent name.
-        """
-        pass
-
-    @abstractmethod
-    def _rename_file(self, torrent_hash: str, old_path: str, new_name: str):
-        """Rename file within torrent.
-
-        Args:
-            torrent_hash (str): Torrent hash.
-            old_path (str): Old file path.
-            new_name (str): New file name.
-        """
-        pass
-
-    @abstractmethod
-    def _verify_torrent(self, torrent_hash: str):
-        """Verify torrent integrity.
-
-        Args:
-            torrent_hash (str): Torrent hash.
-        """
-        pass
-
-    @abstractmethod
-    def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
-        """Process rename mapping to adapt to specific torrent client.
-
-        Args:
-            torrent_hash (str): Torrent hash.
-            base_path (str): Base path for files.
-            rename_map (dict): Original rename mapping.
-
-        Returns:
-            dict: Processed rename mapping.
-        """
-        pass
-
-    def get_torrent_object(self, torrent_hash: str) -> "torf.Torrent | None":
-        """Get torrent object from client by hash.
-
-        Args:
-            torrent_hash (str): Torrent hash.
-
-        Returns:
-            torf.Torrent | None: Torrent object, or None if not available.
-        """
-        try:
-            torrent_data = self._get_torrent_data(torrent_hash)
-            if torrent_data:
-                return torf.Torrent.read_stream(torrent_data)
-            return None
-        except Exception as e:
-            self.logger.error(f"Error getting torrent object for hash {torrent_hash}: {e}")
-            return None
-
     def reverse_inject_torrent(
         self, matched_torrents: list[ClientTorrentInfo], new_name: str, reverse_rename_map: dict
     ) -> dict[str, bool]:
@@ -586,6 +610,10 @@ class TorrentClient(ABC):
                 self.logger.error(f"Failed to reverse inject torrent {torrent_hash}: {e}")
 
         return results
+
+    # endregion
+
+    # region Public Methods - Torrent Post-Processing
 
     def process_single_injected_torrent(self, matched_torrent_hash: str) -> dict:
         """Process a single injected torrent to determine its status and take appropriate action.
@@ -658,19 +686,9 @@ class TorrentClient(ABC):
 
         return stats
 
-    @abstractmethod
-    def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
-        """Get torrent data from client.
+    # endregion
 
-        Args:
-            torrent_hash (str): Torrent hash.
-
-        Returns:
-            bytes | None: Torrent file data, or None if not available.
-        """
-        pass
-
-    # ===== Monitoring Methods =====
+    # region Monitoring Methods
 
     async def start_monitoring(self) -> None:
         """Start the background monitoring service."""
@@ -696,8 +714,8 @@ class TorrentClient(ABC):
 
             self.logger.info("Torrent monitoring started with global scheduler")
 
-    async def stop_monitoring(self) -> None:
-        """Stop the background monitoring service and wait for all tracked torrents to complete."""
+    async def wait_for_monitoring_completion(self) -> None:
+        """Wait for monitoring to complete and all tracked torrents to finish processing."""
         if not self._monitoring:
             return
 
@@ -724,13 +742,6 @@ class TorrentClient(ABC):
 
         self.logger.info("Torrent monitoring stopped")
 
-        # Remove the job from the global scheduler
-        try:
-            self.job_manager.scheduler.remove_job(self._monitor_job_id)
-            self.logger.info("Torrent monitoring stopped")
-        except Exception as e:
-            self.logger.warning(f"Error removing torrent monitor job: {e}")
-
     async def _check_tracked_torrents(self) -> None:
         """Check tracked torrents for verification completion.
 
@@ -747,31 +758,30 @@ class TorrentClient(ABC):
 
             # Get current torrent states using optimized monitoring method
             current_states = self.get_torrents_for_monitoring(verifying_torrents)
+            completed_torrents = set()
+
+            for torrent_hash in self._tracked_torrents:
+                current_state = current_states.get(torrent_hash)
+
+                # Check if verification is no longer in progress
+                # (not checking, allocating, or moving)
+                if current_state in [
+                    TorrentState.PAUSED,
+                    TorrentState.COMPLETED,
+                ]:
+                    self.logger.info(f"Verification completed for torrent {torrent_hash}")
+
+                    # Call process_single_injected_torrent from torrent client
+                    try:
+                        self.process_single_injected_torrent(torrent_hash)
+                    except Exception as e:
+                        self.logger.error(f"Error processing torrent {torrent_hash}: {e}")
+
+                    # Remove from tracking
+                    completed_torrents.add(torrent_hash)
 
             # Check tracked torrents for completion
             with self._monitor_lock:
-                completed_torrents = set()
-
-                for torrent_hash in self._tracked_torrents:
-                    current_state = current_states.get(torrent_hash)
-
-                    # Check if verification is no longer in progress
-                    # (not checking, allocating, or moving)
-                    if current_state in [
-                        TorrentState.PAUSED,
-                        TorrentState.COMPLETED,
-                    ]:
-                        self.logger.info(f"Verification completed for torrent {torrent_hash}")
-
-                        # Call process_single_injected_torrent from torrent client
-                        try:
-                            self.process_single_injected_torrent(torrent_hash)
-                        except Exception as e:
-                            self.logger.error(f"Error processing torrent {torrent_hash}: {e}")
-
-                        # Remove from tracking
-                        completed_torrents.add(torrent_hash)
-
                 # Remove completed torrents from tracking
                 for torrent_hash in completed_torrents:
                     self._tracked_torrents.pop(torrent_hash, None)
@@ -779,6 +789,13 @@ class TorrentClient(ABC):
                 # If no more tracked torrents, set the event
                 if not self._tracked_torrents:
                     self._torrents_processed_event.set()
+                    self._monitoring = False
+                    # Remove the job from the global scheduler
+                    try:
+                        self.job_manager.scheduler.remove_job(self._monitor_job_id)
+                        self.logger.info("Torrent monitoring stopped")
+                    except Exception as e:
+                        self.logger.warning(f"Error removing torrent monitor job: {e}")
 
         except Exception as e:
             self.logger.error(f"Error checking tracked torrents: {e}")

@@ -310,4 +310,4 @@ async def _async_main(args):
         client = client_instance.get_torrent_client()
         if client and client._monitoring:
             app_logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
-            await client.stop_monitoring()
+            await client.wait_for_monitoring_completion()
