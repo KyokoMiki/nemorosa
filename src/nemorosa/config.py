@@ -3,11 +3,9 @@
 import secrets
 import sys
 from pathlib import Path
-from typing import Any
 
 import humanfriendly
 import msgspec
-import yaml
 from platformdirs import user_config_dir
 
 from . import logger
@@ -193,28 +191,6 @@ def find_config_path(config_path: str | None = None) -> str:
     raise FileNotFoundError(f"Config file not found at: {user_config_path}")
 
 
-def _parse_config(config_path: str) -> dict[str, Any]:
-    """Parse configuration file.
-
-    Args:
-        config_path: Configuration file path.
-
-    Returns:
-        Parsed configuration dictionary.
-
-    Raises:
-        ValueError: Raised when configuration file parsing fails.
-    """
-    try:
-        with open(config_path, encoding="utf-8") as f:
-            config_data = yaml.safe_load(f)
-            return config_data or {}
-    except yaml.YAMLError as e:
-        raise ValueError(f"Error parsing YAML config file '{config_path}': {e}") from e
-    except Exception as e:
-        raise ValueError(f"Error reading config file '{config_path}': {e}") from e
-
-
 def setup_config(config_path: str | None = None) -> NemorosaConfig:
     """Set up and load configuration.
 
@@ -227,24 +203,23 @@ def setup_config(config_path: str | None = None) -> NemorosaConfig:
     Raises:
         ValueError: Raised when configuration loading or validation fails.
     """
+    actual_config_path = None
     try:
         # Find configuration file
         actual_config_path = find_config_path(config_path)
 
-        # Parse configuration file
-        config_data = _parse_config(actual_config_path)
-
-        # Create configuration object
-        config = msgspec.convert(config_data, type=NemorosaConfig)
+        # Parse configuration file directly to NemorosaConfig using msgspec
+        with open(actual_config_path, "rb") as f:
+            config = msgspec.yaml.decode(f.read(), type=NemorosaConfig)
 
         return config
 
     except FileNotFoundError as e:
         raise ValueError(f"Configuration file not found: {e}") from e
-    except (msgspec.ValidationError, ValueError) as e:
-        raise ValueError(f"Error parsing configuration file: {e}") from e
+    except msgspec.ValidationError as e:
+        raise ValueError(f"Configuration validation error in '{actual_config_path}': {e}") from e
     except Exception as e:
-        raise ValueError(f"Failed to setup configuration: {e}") from e
+        raise ValueError(f"Error reading config file '{actual_config_path}': {e}") from e
 
 
 def create_default_config(target_path: str | None = None) -> str:

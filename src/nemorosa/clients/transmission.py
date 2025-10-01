@@ -1,7 +1,7 @@
 import base64
-import json
 import posixpath
 
+import msgspec
 import transmission_rpc
 from transmission_rpc.constants import RpcMethod
 
@@ -238,8 +238,8 @@ class TransmissionClient(TorrentClient):
 
         # Parse JSON response
         try:
-            data = json.loads(http_data)
-        except json.JSONDecodeError as error:
+            data = msgspec.json.decode(http_data)
+        except msgspec.DecodeError as error:
             raise ValueError("failed to parse response as json", query, http_data) from error
 
         if "result" not in data:

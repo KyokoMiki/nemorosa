@@ -1,5 +1,4 @@
 import html
-import json
 import threading
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urljoin, urlparse
@@ -239,9 +238,9 @@ class GazelleBase:
 
         try:
             r = await self.request(ajaxpage, params=params)
-            json_response = r.json()
+            json_response = msgspec.json.decode(r.content)
             return json_response
-        except ValueError as e:
+        except (ValueError, msgspec.DecodeError) as e:
             raise RequestException from e
 
     async def request(self, url, params=None, method="GET", data=None):
@@ -310,7 +309,7 @@ class GazelleJSONAPI(GazelleBase):
             response = await self.ajax("browse", **params)
             # Log API response status
             if response.get("status") != "success":
-                self.logger.warning(f"API failure for file '{filename}': {json.dumps(response, ensure_ascii=False)}")
+                self.logger.warning(f"API failure for file '{filename}': {msgspec.json.encode(response).decode()}")
                 return []
             else:
                 self.logger.debug(f"API search successful for file '{filename}'")

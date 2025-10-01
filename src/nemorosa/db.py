@@ -3,12 +3,13 @@ Database operation module - replacing JSON file storage.
 Provides SQLite storage functionality for torrent scan history, result mapping, URL records and other data.
 """
 
-import json
 import os
 import sqlite3
 import threading
 from contextlib import contextmanager, suppress
 from typing import Any
+
+import msgspec
 
 from . import config
 
@@ -176,7 +177,7 @@ class TorrentDatabase:
                 result[row["torrent_id"]] = {
                     "download_dir": row["download_dir"],
                     "local_torrent_name": row["local_torrent_name"],
-                    "rename_map": json.loads(row["rename_map"]) if row["rename_map"] else {},
+                    "rename_map": msgspec.json.decode(row["rename_map"]) if row["rename_map"] else {},
                 }
             return result
 
@@ -198,7 +199,7 @@ class TorrentDatabase:
                     site_host,
                     torrent_info.get("download_dir"),
                     torrent_info.get("local_torrent_name"),
-                    json.dumps(torrent_info.get("rename_map", {}), ensure_ascii=False),
+                    msgspec.json.encode(torrent_info.get("rename_map", {})).decode(),
                 ),
             )
 

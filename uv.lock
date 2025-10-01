@@ -287,6 +287,11 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/23/d8/f15b40611c2d5753d1abb0ca0da0c75348daf1252220e5dda2867bd81062/msgspec-0.19.0-cp313-cp313-win_amd64.whl", hash = "sha256:317050bc0f7739cb30d257ff09152ca309bf5a369854bbf1e57dffc310c1f20f", size = 187432, upload-time = "2024-12-27T17:40:16.256Z" },
 ]
 
+[package.optional-dependencies]
+yaml = [
+    { name = "pyyaml" },
+]
+
 [[package]]
 name = "nemorosa"
 version = "0.1.0"
@@ -300,9 +305,8 @@ dependencies = [
     { name = "fastapi" },
     { name = "httpx" },
     { name = "humanfriendly" },
-    { name = "msgspec" },
+    { name = "msgspec", extra = ["yaml"] },
     { name = "platformdirs" },
-    { name = "pyyaml" },
     { name = "qbittorrent-api" },
     { name = "torf" },
     { name = "transmission-rpc" },
@@ -326,9 +330,8 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.116.2" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "humanfriendly", specifier = ">=10.0" },
-    { name = "msgspec", specifier = ">=0.18.6" },
+    { name = "msgspec", extras = ["yaml"], specifier = ">=0.18.6" },
     { name = "platformdirs", specifier = ">=4.4.0" },
-    { name = "pyyaml", specifier = ">=6.0.2" },
     { name = "qbittorrent-api", specifier = ">=2025.7.0" },
     { name = "torf", specifier = ">=4.3.0" },
     { name = "transmission-rpc", specifier = ">=7.0.11" },
