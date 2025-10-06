@@ -514,22 +514,23 @@ class TorrentClient(ABC):
                     self._rename_torrent(torrent_hash, current_name, local_torrent_name)
                     self.logger.debug(f"Renamed torrent from {current_name} to {local_torrent_name}")
 
-                # Process rename map only once
-                if not rename_map_processed:
-                    rename_map = self._process_rename_map(
-                        torrent_hash=torrent_hash, base_path=local_torrent_name, rename_map=rename_map
-                    )
-                    rename_map_processed = True
-
-                # Rename files
-                if rename_map:
-                    for torrent_file_name, local_file_name in rename_map.items():
-                        self._rename_file(
-                            torrent_hash,
-                            torrent_file_name,
-                            local_file_name,
+                if not config.cfg.linking.enable_linking:
+                    # Process rename map only once
+                    if not rename_map_processed:
+                        rename_map = self._process_rename_map(
+                            torrent_hash=torrent_hash, base_path=local_torrent_name, rename_map=rename_map
                         )
-                        self.logger.debug(f"Renamed torrent file {torrent_file_name} to {local_file_name}")
+                        rename_map_processed = True
+
+                    # Rename files
+                    if rename_map:
+                        for torrent_file_name, local_file_name in rename_map.items():
+                            self._rename_file(
+                                torrent_hash,
+                                torrent_file_name,
+                                local_file_name,
+                            )
+                            self.logger.debug(f"Renamed torrent file {torrent_file_name} to {local_file_name}")
 
                 # Verify torrent (if renaming was performed or not hash match for non-Transmission clients)
                 should_verify = (
@@ -678,11 +679,19 @@ class TorrentClient(ABC):
                     database.update_scan_result_checked(matched_torrent_hash, True)
                     stats["status"] = "partial_kept"
                 else:
-                    self.logger.warning(f"Removing torrent {matched_torrent.name} - failed validation")
-                    self._remove_torrent(matched_torrent.hash)
-                    # Clear matched torrent information from database
-                    database.clear_matched_torrent_info(matched_torrent_hash)
-                    stats["status"] = "partial_removed"
+                    if config.cfg.linking.link_type in ["reflink", "reflink_or_copy"]:
+                        # Keep partial torrent explicitly due to reflink being enabled
+                        self.logger.info(
+                            f"Keeping partial torrent {matched_torrent.name} - kept due to reflink enabled"
+                        )
+                        database.update_scan_result_checked(matched_torrent_hash, True)
+                        stats["status"] = "partial_kept"
+                    else:
+                        self.logger.warning(f"Removing torrent {matched_torrent.name} - failed validation")
+                        self._remove_torrent(matched_torrent.hash)
+                        # Clear matched torrent information from database
+                        database.clear_matched_torrent_info(matched_torrent_hash)
+                        stats["status"] = "partial_removed"
 
         except Exception as e:
             self.logger.error(f"Error processing torrent {matched_torrent_hash}: {e}")

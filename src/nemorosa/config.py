@@ -16,6 +16,24 @@ APPNAME = "nemorosa"
 root_path = Path(__file__).parent.parent
 
 
+class LinkingConfig(msgspec.Struct):
+    """File linking configuration."""
+
+    enable_linking: bool = False
+    link_dirs: list[str] = msgspec.field(default_factory=list)
+    link_type: str = "hardlink"
+
+    def __post_init__(self):
+        # Validate link_type
+        valid_types = ["symlink", "hardlink", "reflink", "reflink_or_copy"]
+        if self.link_type not in valid_types:
+            raise ValueError(f"Invalid link_type '{self.link_type}'. Must be one of: {valid_types}")
+
+        # Validate link_dirs when linking is enabled
+        if self.enable_linking and not self.link_dirs:
+            raise ValueError("link_dirs must be specified when linking is enabled")
+
+
 class GlobalConfig(msgspec.Struct):
     """Global configuration."""
 
@@ -132,6 +150,7 @@ class NemorosaConfig(msgspec.Struct):
     downloader: DownloaderConfig = msgspec.field(default_factory=DownloaderConfig)
     server: ServerConfig = msgspec.field(default_factory=ServerConfig)
     target_sites: list[TargetSiteConfig] = msgspec.field(name="target_site", default_factory=list)
+    linking: LinkingConfig = msgspec.field(default_factory=LinkingConfig)
 
     def __post_init__(self):
         # Validate target_sites
@@ -252,6 +271,12 @@ global:
     - "52dic.vip"
   check_music_only: true  # Whether to check music files only
   auto_start_torrents: true  # Whether to automatically start torrents after successful injection
+
+linking:
+  # File linking configuration
+  enable_linking: false  # Whether to enable file linking
+  link_dirs: []  # List of directories to create links in
+  link_type: "hardlink"  # Type of link: symlink, hardlink, reflink, reflink_or_copy
 
 server:
   # Web server settings

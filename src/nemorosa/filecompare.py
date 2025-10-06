@@ -5,7 +5,7 @@ from collections import defaultdict
 from itertools import groupby
 from typing import TYPE_CHECKING
 
-from . import logger
+from . import config, logger
 
 if TYPE_CHECKING:
     from .clients import ClientTorrentInfo
@@ -229,7 +229,7 @@ def generate_rename_map(fdict_local, fdict_torrent):
 
     Args:
         fdict_local (dict): Local file dictionary.
-        fdict_torrent (dict): Torrent file dictionary.
+        fdict_torrent (dict): Remote torrent file dictionary.
 
     Returns:
         dict: Rename mapping dictionary, format like {"1.flac": "1-1.flac", "2.flac": "1-2.flac"}.
@@ -253,35 +253,30 @@ def generate_rename_map(fdict_local, fdict_torrent):
     rename_map = {}
 
     # Traverse torrent file dictionary
-    for torrent_name, torrent_size in list(remaining_torrent.items()):
+    for remote_filename, remote_filesize in remaining_torrent.items():
         # Check if there are local files with same size
-        if torrent_size in size_map_local:
-            local_names = size_map_local[torrent_size]
+        if remote_filesize in size_map_local:
+            local_names = size_map_local[remote_filesize]
 
             if len(local_names) == 1:
                 # Unique match: directly establish mapping
                 local_name = local_names[0]
-                rename_map[torrent_name] = local_name
-
-                # Remove matched files
-                del remaining_torrent[torrent_name]
-                del size_map_local[torrent_size]  # Entire size group matched
+                rename_map[remote_filename] = local_name
 
             elif len(local_names) > 1:
                 # Multiple files with same size: use pattern-based filename matching
-                best_match = filename_match(torrent_name, local_names)
+                best_match = filename_match(remote_filename, local_names)
 
                 # If match found
                 if best_match:
-                    rename_map[torrent_name] = best_match
+                    rename_map[remote_filename] = best_match
 
                     # Remove matched files
-                    del remaining_torrent[torrent_name]
-                    size_map_local[torrent_size].remove(best_match)
+                    size_map_local[remote_filesize].remove(best_match)
 
                     # If this size group is empty, remove entire group
-                    if not size_map_local[torrent_size]:
-                        del size_map_local[torrent_size]
+                    if not size_map_local[remote_filesize]:
+                        del size_map_local[remote_filesize]
 
     return rename_map
 
@@ -311,3 +306,56 @@ def should_keep_partial_torrent(torrent: "ClientTorrentInfo") -> bool:
     # Check for conflicts: number of continuous undownloaded blocks should not exceed
     # the number of files with zero progress
     return undownloaded_blocks_count <= zero_progress_count
+
+
+def generate_link_map(fdict_local: dict, fdict_torrent: dict) -> dict:
+    """Generate link mapping from local files to torrent files.
+
+    Args:
+        fdict_local (dict): Local file dictionary.
+        fdict_torrent (dict): Remote torrent file dictionary.
+
+    Returns:
+        dict: Link mapping dictionary, format like {"local.flac": "remote.flac"}.
+    """
+    link_map = {}
+
+    # Step 1: Create remaining file dictionary (remove same-name files)
+    remaining_local = fdict_local.copy()
+    remaining_torrent = fdict_torrent.copy()
+
+    # When using reflink, allow same-name files with different sizes to be treated as matches
+    if config.cfg.linking.link_type in ["reflink", "reflink_or_copy"]:
+        for name in fdict_torrent:
+            if name in fdict_local:
+                link_map[name] = name
+                del remaining_local[name]
+                del remaining_torrent[name]
+
+    # Group remote files by file size
+    size_map_remote = defaultdict(list)
+    for name, size in remaining_torrent.items():
+        size_map_remote[size].append(name)
+
+    # Traverse local file dictionary
+    for local_filename, local_filesize in remaining_local.items():
+        if local_filesize in size_map_remote:
+            remote_names = size_map_remote[local_filesize]
+
+            if len(remote_names) == 1:
+                remote_name = remote_names[0]
+                link_map[local_filename] = remote_name
+
+            elif len(remote_names) > 1:
+                best_match = filename_match(local_filename, remote_names)
+                if best_match:
+                    link_map[local_filename] = best_match
+
+                    # Remove matched files
+                    size_map_remote[local_filesize].remove(best_match)
+
+                    # If this size group is empty, remove entire group
+                    if not size_map_remote[local_filesize]:
+                        del size_map_remote[local_filesize]
+
+    return link_map

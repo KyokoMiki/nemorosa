@@ -6,7 +6,7 @@ from urllib.parse import parse_qs, urlparse
 
 import torf
 
-from . import api, client_instance, config, db, filecompare, logger
+from . import api, client_instance, config, db, filecompare, filelinking, logger
 from .clients import ClientTorrentInfo, TorrentConflictError
 
 
@@ -252,7 +252,10 @@ class NemorosaCore:
 
                         if size_match_found:
                             # Further verification: check if all files can match
-                            if not filecompare.check_conflicts(client_fdict, torrent_fdict):
+                            # Skip conflict checking when linking is enabled
+                            if config.cfg.linking.enable_linking or not filecompare.check_conflicts(
+                                client_fdict, torrent_fdict
+                            ):
                                 self.logger.success(f"Complete torrent match found: {torrent.name}")
                                 matched_torrents.append(torrent)
                             else:
@@ -306,12 +309,12 @@ class NemorosaCore:
             # as it provides reliable file identification without requiring full content comparison
             if fdict[check_music_file] in resp_files.values():
                 # Check file conflicts
-                if filecompare.check_conflicts(fdict, resp_files):
-                    self.logger.debug("Conflict detected. Skipping this torrent.")
-                    return None
-                else:
+                if config.cfg.linking.enable_linking or not filecompare.check_conflicts(fdict, resp_files):
                     self.logger.success(f"File match found! Torrent ID: {t['torrentId']} (File: {check_music_file})")
                     return t["torrentId"]
+                else:
+                    self.logger.debug("Conflict detected. Skipping this torrent.")
+                    return None
 
         return None
 
@@ -399,13 +402,28 @@ class NemorosaCore:
 
         rename_map = filecompare.generate_rename_map(torrent_details.fdict, fdict_torrent)
 
+        # Handle file linking and rename map based on configuration
+        if config.cfg.linking.enable_linking:
+            # Generate link map for file linking
+            file_mapping = filecompare.generate_link_map(torrent_details.fdict, fdict_torrent)
+            # File linking mode: create links first, then add torrent with linked directory
+            final_download_dir = filelinking.create_file_links_for_torrent(
+                torrent_object, torrent_details.download_dir, torrent_details.name, file_mapping
+            )
+            if final_download_dir is None:
+                self.logger.error("Failed to create file links, falling back to original directory")
+                final_download_dir = torrent_details.download_dir
+        else:
+            # Normal mode: generate rename map for file renaming
+            final_download_dir = torrent_details.download_dir
+
         # Inject torrent and handle renaming
         downloaded = False
         verified = False
         if not config.cfg.global_config.no_download:
             try:
                 success, verified = self.torrent_client.inject_torrent(
-                    torrent_data, torrent_details.download_dir, torrent_details.name, rename_map, hash_match
+                    torrent_data, final_download_dir, torrent_details.name, rename_map, hash_match
                 )
                 if success:
                     downloaded = True
@@ -447,7 +465,7 @@ class NemorosaCore:
         )
         if not downloaded:
             torrent_info = {
-                "download_dir": torrent_details.download_dir,
+                "download_dir": final_download_dir,
                 "local_torrent_name": torrent_details.name,
                 "rename_map": rename_map,
             }
@@ -832,11 +850,26 @@ class NemorosaCore:
             # Use client's file dictionary
             rename_map = filecompare.generate_rename_map(matched_torrent.fdict, fdict_torrent)
 
+            # Handle file linking and rename map based on configuration
+            if config.cfg.linking.enable_linking:
+                # Generate link map for file linking
+                file_mapping = filecompare.generate_link_map(matched_torrent.fdict, fdict_torrent)
+                # File linking mode: create links first, then add torrent with linked directory
+                final_download_dir = filelinking.create_file_links_for_torrent(
+                    torrent_object, matched_torrent.download_dir, matched_torrent.name, file_mapping
+                )
+                if final_download_dir is None:
+                    self.logger.error("Failed to create file links, falling back to original directory")
+                    final_download_dir = matched_torrent.download_dir
+            else:
+                # Normal mode: use original download directory
+                final_download_dir = matched_torrent.download_dir
+
             # Inject torrent and handle renaming
             downloaded = False
             if not config.cfg.global_config.no_download:
                 success, _ = self.torrent_client.inject_torrent(
-                    torrent_data, matched_torrent.download_dir, matched_torrent.name, rename_map, False
+                    torrent_data, final_download_dir, matched_torrent.name, rename_map, False
                 )
                 if success:
                     downloaded = True
@@ -849,7 +882,7 @@ class NemorosaCore:
                 await self.torrent_client.track_verification(torrent_object.infohash)
             else:
                 torrent_info = {
-                    "download_dir": matched_torrent.download_dir,
+                    "download_dir": final_download_dir,
                     "local_torrent_name": matched_torrent.name,
                     "rename_map": rename_map,
                 }
