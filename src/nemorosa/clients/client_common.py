@@ -47,6 +47,10 @@ class TorrentState(Enum):
     ALLOCATING = "allocating"
     METADATA_DOWNLOADING = "metadata_downloading"
 
+    def __bool__(self) -> bool:
+        """Make UNKNOWN state falsy for boolean checks."""
+        return self != TorrentState.UNKNOWN
+
 
 class TorrentConflictError(Exception):
     """Exception raised when torrent cannot coexist with local torrent due to source flag issues."""

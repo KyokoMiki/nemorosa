@@ -97,6 +97,9 @@ class TransmissionClient(TorrentClient):
             password=config.password,
         )
 
+        # Initialize torrent info cache: hash -> (torrent_info, cached_fields)
+        self._torrent_info_cache: dict[str, tuple[ClientTorrentInfo, set[str]]] = {}
+
         # Use the field specifications constant
         self.field_config = _TRANSMISSION_FIELD_SPECS
 
@@ -120,16 +123,35 @@ class TransmissionClient(TorrentClient):
                 else self.field_config
             )
 
-            # Union all argument sets
-            arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
+            # First, get all torrent hashes with minimal data
+            all_torrents = self.client.get_torrents(arguments=["hashString"])
 
-            torrents = self.client.get_torrents(arguments=arguments)
+            # Check which torrents need to fetch data
+            torrents_to_fetch = []
+            result = []
 
-            # Build torrent data with only requested fields using list comprehension
-            result = [
-                ClientTorrentInfo(**{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()})
-                for torrent in torrents
-            ]
+            for torrent in all_torrents:
+                t_hash = torrent.hash_string
+                cache_entry = self._torrent_info_cache.get(t_hash)
+
+                # Check if cache exists and contains all requested fields
+                if cache_entry and field_config.keys() <= cache_entry[1]:
+                    result.append(cache_entry[0])
+                else:
+                    torrents_to_fetch.append(t_hash)
+
+            # Fetch missing torrents incrementally
+            if torrents_to_fetch:
+                # Union all argument sets
+                arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
+
+                torrents_with_data = self.client.get_torrents(ids=torrents_to_fetch, arguments=arguments)
+
+                for torrent in torrents_with_data:
+                    values = {field_name: spec.extractor(torrent) for field_name, spec in field_config.items()}
+                    torrent_info = ClientTorrentInfo(**values)
+                    self._torrent_info_cache[torrent.hash_string] = (torrent_info, set(field_config.keys()))
+                    result.append(torrent_info)
 
             return result
 

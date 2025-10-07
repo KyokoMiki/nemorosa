@@ -47,9 +47,9 @@ _QBITTORRENT_FIELD_SPECS = {
     "progress": lambda t: t.progress,
     "total_size": lambda t: t.size,
     "files": lambda t: [ClientTorrentFile(name=f.name, size=f.size, progress=f.progress) for f in t.files],
-    "trackers": lambda t: [
-        tracker.url for tracker in t.trackers if tracker.url not in ("** [DHT] **", "** [PeX] **", "** [LSD] **")
-    ],
+    "trackers": lambda t: [t.tracker]
+    if t.trackers_count == 1
+    else [tracker.url for tracker in t.trackers if tracker.url not in ("** [DHT] **", "** [PeX] **", "** [LSD] **")],
     "download_dir": lambda t: t.save_path,
     "state": lambda t: QBITTORRENT_STATE_MAPPING.get(t.state, TorrentState.UNKNOWN),
     "piece_progress": lambda t: [piece == 2 for piece in t.pieceStates] if t.pieceStates else [],
@@ -74,6 +74,8 @@ class QBittorrentClient(TorrentClient):
         # Initialize sync state for incremental updates
         self._last_rid = 0
         self._torrent_states_cache: dict[str, TorrentState] = {}
+        # Initialize torrent info cache: hash -> (torrent_info, cached_fields)
+        self._torrent_info_cache: dict[str, tuple[ClientTorrentInfo, set[str]]] = {}
 
         # Use the field specifications constant
         self.field_config = _QBITTORRENT_FIELD_SPECS
@@ -100,11 +102,20 @@ class QBittorrentClient(TorrentClient):
 
             torrents = self.client.torrents_info()
 
-            # Build torrent data with only requested fields using list comprehension
-            result = [
-                ClientTorrentInfo(**{field_name: extractor(torrent) for field_name, extractor in field_config.items()})
-                for torrent in torrents
-            ]
+            result = []
+            for torrent in torrents:
+                t_hash = torrent.hash
+                cache_entry = self._torrent_info_cache.get(t_hash)
+
+                # Check if cache exists and contains all requested fields
+                if cache_entry and field_config.keys() <= cache_entry[1]:
+                    torrent_info = cache_entry[0]
+                else:
+                    values = {field_name: extractor(torrent) for field_name, extractor in field_config.items()}
+                    torrent_info = ClientTorrentInfo(**values)
+                    self._torrent_info_cache[t_hash] = (torrent_info, set(field_config.keys()))
+
+                result.append(torrent_info)
 
             return result
 
