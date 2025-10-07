@@ -214,52 +214,48 @@ class NemorosaCore:
             for fname in scan_queries:
                 self.logger.debug(f"Searching for file: {fname}")
 
+                # Get the file size to match
+                target_file_size = torrent_fdict[fname]
+
                 # Use make_filename_query to process filename
                 fname_query = filecompare.make_filename_query(fname)
                 if not fname_query:
                     continue
+
+                fname_query_words = fname_query.split()
 
                 # Search for matching files in all torrents in client
                 for torrent in all_torrents:
                     # Use client's file dictionary
                     client_fdict = torrent.fdict
 
-                    # Check if any file contains all space-separated search query words
-                    fname_query_words = fname_query.split()
-                    matching_files = []
+                    # First check: does any file have the same size?
+                    if target_file_size not in client_fdict.values():
+                        continue
 
-                    for client_file in client_fdict:
-                        # Check if all query words are in filename
-                        if all(word in client_file for word in fname_query_words):
-                            matching_files.append(client_file)
+                    self.logger.debug(f"Found matching file size in torrent: {torrent.name}")
 
-                    if matching_files:
-                        self.logger.debug(f"Found {len(matching_files)} matching files in torrent: {torrent.name}")
+                    # Second check: does the filename match after processing?
+                    size_and_name_match_found = False
+                    for client_file, client_file_size in client_fdict.items():
+                        # Check if size matches and all query words are in filename
+                        if client_file_size == target_file_size and all(
+                            word in client_file for word in fname_query_words
+                        ):
+                            size_and_name_match_found = True
+                            self.logger.success(f"Size match found! File: {client_file}, Size: {client_file_size}")
+                            break
 
-                        # Check if file size matches
-                        size_match_found = False
-                        for matching_file in matching_files:
-                            if (
-                                matching_file in client_fdict
-                                and fname in torrent_fdict
-                                and client_fdict[matching_file] == torrent_fdict[fname]
-                            ):
-                                size_match_found = True
-                                self.logger.success(
-                                    f"Size match found! File: {matching_file}, Size: {client_fdict[matching_file]}"
-                                )
-                                break
-
-                        if size_match_found:
-                            # Further verification: check if all files can match
-                            # Skip conflict checking when linking is enabled
-                            if config.cfg.linking.enable_linking or not filecompare.check_conflicts(
-                                client_fdict, torrent_fdict
-                            ):
-                                self.logger.success(f"Complete torrent match found: {torrent.name}")
-                                matched_torrents.append(torrent)
-                            else:
-                                self.logger.debug(f"Partial match found but verification failed: {torrent.name}")
+                    if size_and_name_match_found:
+                        # Further verification: check if all files can match
+                        # Skip conflict checking when linking is enabled
+                        if config.cfg.linking.enable_linking or not filecompare.check_conflicts(
+                            client_fdict, torrent_fdict
+                        ):
+                            self.logger.success(f"Complete torrent match found: {torrent.name}")
+                            matched_torrents.append(torrent)
+                        else:
+                            self.logger.debug(f"Partial match found but verification failed: {torrent.name}")
 
                 # If matching torrent found, can return early
                 if matched_torrents:
