@@ -1,5 +1,6 @@
 import html
 import threading
+from abc import ABC, abstractmethod
 from http.cookies import SimpleCookie
 from urllib.parse import parse_qs, urljoin, urlparse
 
@@ -21,7 +22,7 @@ class RequestException(Exception):
     pass
 
 
-class GazelleBase:
+class GazelleBase(ABC):
     """Base class for Gazelle API, containing common attributes and methods."""
 
     def __init__(self, server):
@@ -176,7 +177,8 @@ class GazelleBase:
             f"&torrent_pass={self.passkey}"
         )
 
-    def search_torrent_by_filename(self, filename):
+    @abstractmethod
+    async def search_torrent_by_filename(self, filename) -> list:
         """Search torrents by filename - subclasses must implement specific logic.
 
         Args:
@@ -184,11 +186,8 @@ class GazelleBase:
 
         Returns:
             list: List of matching torrent objects.
-
-        Raises:
-            NotImplementedError: Always raised for base class.
         """
-        raise NotImplementedError("Subclasses must implement search_torrent_by_filename")
+        pass
 
     async def search_torrent_by_hash(self, torrent_hash):
         """Search torrent by hash using the Gazelle API.
@@ -268,6 +267,15 @@ class GazelleBase:
             else:
                 raise ValueError("Unsupported HTTP method")
             return response
+
+    @abstractmethod
+    async def auth(self):
+        """Authenticate with the server - subclasses must implement specific logic.
+
+        Raises:
+            RequestException: If authentication fails.
+        """
+        pass
 
 
 class GazelleJSONAPI(GazelleBase):
@@ -363,16 +371,16 @@ class GazelleParser(GazelleBase):
         response = await self.request("torrents.php", params=params)
         return self.parse_search_results(response.text)
 
-    def parse_search_results(self, html):
+    def parse_search_results(self, html_content):
         """Parse search results page.
 
         Args:
-            html (str): HTML content of the search results page.
+            html_content (str): HTML content of the search results page.
 
         Returns:
             list: List of parsed torrent information.
         """
-        soup = BeautifulSoup(html, "html.parser")
+        soup = BeautifulSoup(html_content, "lxml")
         torrents = []
 
         # Find all torrents under albums

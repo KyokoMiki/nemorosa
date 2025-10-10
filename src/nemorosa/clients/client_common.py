@@ -99,7 +99,7 @@ class TorrentClient(ABC):
         self.logger = logger.get_logger()
 
         # Monitoring state
-        self._monitoring = False
+        self.monitoring = False
         # key: torrent_hash, value: is_verifying (False=delayed, True=verifying)
         self._tracked_torrents: dict[str, bool] = {}
         self._monitor_lock = threading.Lock()
@@ -111,7 +111,7 @@ class TorrentClient(ABC):
         # Get global job manager
         self.job_manager = scheduler.get_job_manager()
 
-    # region Abstract Methods - Public Operations
+    # region Abstract Public
 
     @abstractmethod
     def get_torrents(self, fields: list[str] | None) -> list[ClientTorrentInfo]:
@@ -163,7 +163,7 @@ class TorrentClient(ABC):
 
     # endregion
 
-    # region Abstract Methods - Internal Operations
+    # region Abstract Internal
 
     @abstractmethod
     def _add_torrent(self, torrent_data, download_dir: str, hash_match: bool) -> str:
@@ -259,7 +259,7 @@ class TorrentClient(ABC):
 
     # endregion
 
-    # region Public Methods - Torrent Retrieval
+    # region Torrent Retrieval
 
     def get_single_torrent(self, infohash: str, target_trackers: list[str]) -> ClientTorrentInfo | None:
         """Get single torrent by infohash with existing trackers information.
@@ -468,7 +468,7 @@ class TorrentClient(ABC):
 
     # endregion
 
-    # region Public Methods - Torrent Injection
+    # region Torrent Injection
 
     def inject_torrent(
         self, torrent_data, download_dir: str, local_torrent_name: str, rename_map: dict, hash_match: bool
@@ -618,7 +618,7 @@ class TorrentClient(ABC):
 
     # endregion
 
-    # region Public Methods - Torrent Post-Processing
+    # region Post-Processing
 
     def post_process_single_injected_torrent(self, matched_torrent_hash: str) -> dict:
         """Post-process a single injected torrent to determine its status and take appropriate action.
@@ -706,12 +706,12 @@ class TorrentClient(ABC):
 
     # endregion
 
-    # region Monitoring Methods
+    # region Monitoring
 
     async def start_monitoring(self) -> None:
         """Start the background monitoring service."""
-        if not self._monitoring:
-            self._monitoring = True
+        if not self.monitoring:
+            self.monitoring = True
 
             # Add scheduled job for monitoring to the global scheduler
             self.job_manager.scheduler.add_job(
@@ -734,10 +734,10 @@ class TorrentClient(ABC):
 
     async def wait_for_monitoring_completion(self) -> None:
         """Wait for monitoring to complete and all tracked torrents to finish processing."""
-        if not self._monitoring:
+        if not self.monitoring:
             return
 
-        self._monitoring = False
+        self.monitoring = False
 
         # Wait for all tracked torrents to be processed
         if self._tracked_torrents:
@@ -807,7 +807,7 @@ class TorrentClient(ABC):
                 # If no more tracked torrents, set the event
                 if not self._tracked_torrents:
                     self._torrents_processed_event.set()
-                    self._monitoring = False
+                    self.monitoring = False
                     # Remove the job from the global scheduler
                     try:
                         self.job_manager.scheduler.remove_job(self._monitor_job_id)
@@ -822,7 +822,7 @@ class TorrentClient(ABC):
         """Start tracking a torrent for verification completion."""
         with self._monitor_lock:
             # Lazy start monitoring if not already started
-            if not self._monitoring:
+            if not self.monitoring:
                 await self.start_monitoring()
 
             # Add to tracked torrents as delayed (False)
@@ -862,6 +862,8 @@ class TorrentClient(ABC):
         """Get the number of torrents being tracked."""
         with self._monitor_lock:
             return len(self._tracked_torrents)
+
+    # endregion
 
 
 class TorrentClientConfig(msgspec.Struct):

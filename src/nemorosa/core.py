@@ -1,13 +1,17 @@
 """Core processing functions for nemorosa."""
 
 import traceback
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
 import torf
 
-from . import api, client_instance, config, db, filecompare, filelinking, logger
+from . import client_instance, config, db, filecompare, filelinking, logger
+from .api import get_target_apis
 from .clients import ClientTorrentInfo, TorrentConflictError
+
+if TYPE_CHECKING:
+    from .api import GazelleJSONAPI, GazelleParser
 
 
 class NemorosaCore:
@@ -33,7 +37,7 @@ class NemorosaCore:
         self,
         *,
         torrent_object: torf.Torrent,
-        api: api.GazelleJSONAPI | api.GazelleParser,
+        api: "GazelleJSONAPI | GazelleParser",
     ) -> int | None:
         """Search for torrent using hash-based search.
 
@@ -88,7 +92,7 @@ class NemorosaCore:
         *,
         fdict: dict,
         tsize: int,
-        api: api.GazelleJSONAPI | api.GazelleParser,
+        api: "GazelleJSONAPI | GazelleParser",
     ) -> int | None:
         """Search for torrent using filename-based search.
 
@@ -104,7 +108,7 @@ class NemorosaCore:
         # search for the files with top 5 longest name
         tid = None
         scan_querys = []
-        max_fnames = sorted(fdict.keys(), key=lambda fname: len(fname), reverse=True)
+        max_fnames = sorted(fdict.keys(), key=len, reverse=True)
         for index, fname in enumerate(max_fnames):
             if index == 0 or filecompare.is_music_file(fname):
                 scan_querys.append(fname)
@@ -199,7 +203,7 @@ class NemorosaCore:
             matched_torrents = []
 
             # Get incoming torrent file list, sorted by filename length (longest first)
-            torrent_files = sorted(torrent_fdict.keys(), key=lambda fname: len(fname), reverse=True)
+            torrent_files = sorted(torrent_fdict.keys(), key=len, reverse=True)
 
             # Select top 5 longest filenames for search
             scan_queries = []
@@ -279,7 +283,7 @@ class NemorosaCore:
         fname: str,
         fdict: dict,
         scan_querys: list[str],
-        api: api.GazelleJSONAPI | api.GazelleParser,
+        api: "GazelleJSONAPI | GazelleParser",
     ) -> int | None:
         """Match torrents by file content.
 
@@ -318,7 +322,7 @@ class NemorosaCore:
         self,
         *,
         torrent_details: ClientTorrentInfo,
-        api: api.GazelleJSONAPI | api.GazelleParser,
+        api: "GazelleJSONAPI | GazelleParser",
         torrent_object: torf.Torrent | None = None,
     ):
         """Process torrent search and injection.
@@ -415,10 +419,9 @@ class NemorosaCore:
 
         # Inject torrent and handle renaming
         downloaded = False
-        verified = False
         if not config.cfg.global_config.no_download:
             try:
-                success, verified = self.torrent_client.inject_torrent(
+                success, _ = self.torrent_client.inject_torrent(
                     torrent_data, final_download_dir, torrent_details.name, rename_map, hash_match
                 )
                 if success:
@@ -493,7 +496,7 @@ class NemorosaCore:
         any_success = False
         existing_target_trackers = set(torrent_details.existing_target_trackers)
 
-        for api_instance in api.get_target_apis():
+        for api_instance in get_target_apis():
             # Get site hostname for this API instance
             site_host = urlparse(api_instance.server).netloc
 
@@ -536,7 +539,7 @@ class NemorosaCore:
         self.logger.section("===== Processing Torrents =====")
 
         # Extract target_trackers from target_apis
-        target_trackers = [api_instance.tracker_query for api_instance in api.get_target_apis()]
+        target_trackers = [api_instance.tracker_query for api_instance in get_target_apis()]
 
         # Reset stats for this processing session
         self.stats = {"found": 0, "downloaded": 0, "scanned": 0, "cnt_dl_fail": 0}
@@ -583,7 +586,7 @@ class NemorosaCore:
 
         try:
             # Process undownloaded torrents for each target site
-            for api_instance in api.get_target_apis():
+            for api_instance in get_target_apis():
                 site_host = urlparse(api_instance.server).netloc
                 self.logger.debug(f"Processing undownloaded torrents for site: {api_instance.server}")
 
@@ -618,7 +621,7 @@ class NemorosaCore:
                         self.logger.debug(f"Rename map: {rename_map}")
 
                         # Try to inject torrent into client
-                        success, verified = self.torrent_client.inject_torrent(
+                        success, _ = self.torrent_client.inject_torrent(
                             torrent_data, download_dir, local_torrent_name, rename_map, False
                         )
                         if success:
@@ -723,7 +726,7 @@ class NemorosaCore:
 
         try:
             # Extract target_trackers from target_apis
-            target_trackers = [api_instance.tracker_query for api_instance in api.get_target_apis()]
+            target_trackers = [api_instance.tracker_query for api_instance in get_target_apis()]
 
             # Get torrent details from torrent client with existing trackers info
             torrent_info = self.torrent_client.get_single_torrent(infohash, target_trackers)
@@ -817,7 +820,7 @@ class NemorosaCore:
 
             # Check if incoming torrent may trump local torrent
             for matched_torrent in matched_torrents:
-                for api_instance in api.get_target_apis():
+                for api_instance in get_target_apis():
                     # Check if local matched torrent contains tracker consistent with incoming torrent
                     local_hostname = urlparse(matched_torrent.trackers[0]).hostname
                     incoming_hostname = urlparse(torrent_object.trackers.flat[0]).hostname

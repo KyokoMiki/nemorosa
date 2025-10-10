@@ -87,14 +87,14 @@ class TransmissionClient(TorrentClient):
 
     def __init__(self, url: str):
         super().__init__()
-        config = parse_libtc_url(url)
-        self.torrents_dir = config.torrents_dir or "/config/torrents"
+        client_config = parse_libtc_url(url)
+        self.torrents_dir = client_config.torrents_dir or "/config/torrents"
 
         self.client = transmission_rpc.Client(
-            host=config.host or "localhost",
-            port=config.port or 9091,
-            username=config.username,
-            password=config.password,
+            host=client_config.host or "localhost",
+            port=client_config.port or 9091,
+            username=client_config.username,
+            password=client_config.password,
         )
 
         # Initialize torrent info cache: hash -> (torrent_info, cached_fields)

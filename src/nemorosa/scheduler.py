@@ -124,7 +124,7 @@ class JobManager:
             await processor.process_torrents()
 
             client = processor.torrent_client
-            if client and client._monitoring:
+            if client and client.monitoring:
                 self.logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
                 await client.wait_for_monitoring_completion()
 

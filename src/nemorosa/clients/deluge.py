@@ -71,13 +71,13 @@ class DelugeClient(TorrentClient):
 
     def __init__(self, url: str):
         super().__init__()
-        config = parse_libtc_url(url)
-        self.torrents_dir = config.torrents_dir or ""
+        client_config = parse_libtc_url(url)
+        self.torrents_dir = client_config.torrents_dir or ""
         self.client = deluge_client.DelugeRPCClient(
-            host=config.host or "localhost",
-            port=config.port or 58846,
-            username=config.username or "",
-            password=config.password or "",
+            host=client_config.host or "localhost",
+            port=client_config.port or 58846,
+            username=client_config.username or "",
+            password=client_config.password or "",
             decode_utf8=True,
         )
         # Connect to Deluge daemon

@@ -48,7 +48,7 @@ def make_filename_query(filename: str) -> str:
     # Replace common garbled characters and invisible characters with equal-length spaces
     # Including zero-width spaces, control characters, and other invisible Unicode characters
     sanitized_name = re.sub(
-        r'[?？�_\-\.·~`!@#$%^&*+=|\\:";\'<>?,/\u200b\u200c\u200d\u2060\ufeff\u00a0\u180e\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\u0000-\u001f\u007f-\u009f]',
+        r'[?？�_\-.·~`!@#$%^&*+=|\\:";\'<>,/\u200b\u200c\u200d\u2060\ufeff\u00a0\u180e\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\u0000-\u001f\u007f-\u009f]',
         " ",
         sanitized_name,
     )

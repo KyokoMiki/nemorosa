@@ -43,7 +43,7 @@ def cleanup_resources():
         print(f"Warning: Error during cleanup: {e}")
 
 
-def signal_handler(signum, frame):
+def signal_handler(signum, _):
     """Handle interrupt signals."""
     print(f"\nReceived signal {signum}, cleaning up...")
     cleanup_resources()
@@ -198,7 +198,7 @@ def main():
     pre_args, _ = pre_parser.parse_known_args()
 
     # Set up logger and configuration
-    app_logger = setup_logger_and_config(pre_args)
+    setup_logger_and_config(pre_args)
 
     # Merge configuration (command line arguments will override config file)
     config_defaults = {
@@ -308,6 +308,6 @@ async def _async_main(args):
     finally:
         # Wait for torrent monitoring to complete all tracked torrents
         client = client_instance.get_torrent_client()
-        if client and client._monitoring:
+        if client and client.monitoring:
             app_logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
             await client.wait_for_monitoring_completion()

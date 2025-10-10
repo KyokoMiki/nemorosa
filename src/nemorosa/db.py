@@ -111,7 +111,7 @@ class TorrentDatabase:
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_undownloaded_site_host ON undownloaded_torrents(site_host)")
 
-    # ================== Scan results related methods ==================
+    # region Scan results
 
     def add_scan_result(
         self,
@@ -155,7 +155,9 @@ class TorrentDatabase:
             )
             return cursor.fetchone() is not None
 
-    # ================== Undownloaded torrents related methods ==================
+    # endregion
+
+    # region Undownloaded torrents
 
     def load_undownloaded_torrents(self, site_host: str = "default") -> dict[str, dict[str, Any]]:
         """Load undownloaded torrent information for specified site.
@@ -263,7 +265,9 @@ class TorrentDatabase:
                 (matched_torrent_hash,),
             )
 
-    # ================== Job log related methods ==================
+    # endregion
+
+    # region Job log
 
     def get_job_last_run(self, job_name: str) -> int | None:
         """Get last run timestamp for a job.
@@ -309,6 +313,8 @@ class TorrentDatabase:
             cursor = conn.execute("SELECT run_count FROM job_log WHERE job_name = ?", (job_name,))
             result = cursor.fetchone()
             return result[0] if result else 0
+
+    # endregion
 
     def close(self):
         """Close database connection."""

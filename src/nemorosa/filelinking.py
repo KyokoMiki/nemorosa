@@ -268,8 +268,8 @@ def create_file_links_for_torrent(
 
     Args:
         torrent_object: Parsed torrent object
-        download_dir: Download directory
-        torrent_name: Torrent name
+        local_download_dir: Download directory
+        local_torrent_name: Torrent name
         file_mapping: File mapping for linking operations
 
     Returns:

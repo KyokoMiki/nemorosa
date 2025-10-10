@@ -41,7 +41,7 @@ class AnnounceRequest(BaseModel):
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(_: FastAPI):
     """Lifespan event handler for FastAPI app."""
     # Get logger and job manager
     app_logger = logger.get_logger()
@@ -131,24 +131,24 @@ async def favicon():
 
 
 @app.post("/api/webhook", response_model=WebhookResponse)
-async def webhook(infoHash: str = Query(..., description="Torrent infohash"), _: bool = Depends(verify_api_key)):
+async def webhook(infohash: str = Query(..., description="Torrent infohash"), _: bool = Depends(verify_api_key)):
     """Process a single torrent via webhook.
 
     Args:
-        infoHash: Torrent infohash from URL parameter
+        infohash: Torrent infohash from URL parameter
         _: API key verification
 
     Returns:
         WebhookResponse: Processing result
     """
-    # Validate infoHash is not empty
-    if not infoHash or not infoHash.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="infoHash cannot be empty")
+    # Validate infohash is not empty
+    if not infohash or not infohash.strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="infohash cannot be empty")
 
     try:
         # Process the torrent
         processor = NemorosaCore()
-        result = await processor.process_single_torrent(infoHash)
+        result = await processor.process_single_torrent(infohash)
 
         return WebhookResponse(status="success", message="Torrent processed successfully", data=result)
 
@@ -156,7 +156,7 @@ async def webhook(infoHash: str = Query(..., description="Torrent infohash"), _:
         raise
     except Exception as e:
         app_logger = logger.get_logger()
-        app_logger.error(f"Error processing torrent {infoHash}: {str(e)}")
+        app_logger.error(f"Error processing torrent {infohash}: {str(e)}")
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}"
@@ -391,4 +391,4 @@ def run_webserver(
     import uvicorn
 
     # Run server
-    uvicorn.run("nemorosa.webserver:app", host=host, port=port, log_level=log_level, reload=False)  # pyright: ignore[reportArgumentType]
+    uvicorn.run("nemorosa.webserver:app", host=host, port=port, log_level=log_level, reload=False)  # type: ignore[arg-type]

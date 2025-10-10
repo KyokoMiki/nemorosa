@@ -9,11 +9,11 @@ def setup_event_loop():
     """Setup the best available event loop for the current platform."""
     try:
         if sys.platform == "win32":
-            import winloop  # pyright: ignore[reportMissingImports]
+            import winloop  # type: ignore[import]
 
             winloop.install()
         else:
-            import uvloop  # pyright: ignore[reportMissingImports]
+            import uvloop  # type: ignore[import]
 
             uvloop.install()
     except Exception as e:

@@ -61,12 +61,12 @@ class QBittorrentClient(TorrentClient):
 
     def __init__(self, url: str):
         super().__init__()
-        config = parse_libtc_url(url)
-        self.torrents_dir = config.torrents_dir or ""
+        client_config = parse_libtc_url(url)
+        self.torrents_dir = client_config.torrents_dir or ""
         self.client = qbittorrentapi.Client(
-            host=config.url or "http://localhost:8080",
-            username=config.username,
-            password=config.password,
+            host=client_config.url or "http://localhost:8080",
+            username=client_config.username,
+            password=client_config.password,
         )
         # Authenticate with qBittorrent
         self.client.auth_log_in()
