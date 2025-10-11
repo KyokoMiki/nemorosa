@@ -74,18 +74,23 @@ class QBittorrentClient(TorrentClient):
         # Initialize sync state for incremental updates
         self._last_rid = 0
         self._torrent_states_cache: dict[str, TorrentState] = {}
-        # Initialize torrent info cache: hash -> (torrent_info, cached_fields)
-        self._torrent_info_cache: dict[str, tuple[ClientTorrentInfo, set[str]]] = {}
 
         # Use the field specifications constant
         self.field_config = _QBITTORRENT_FIELD_SPECS
 
+        # Initialize database cache on first connection
+        self._initialize_cache()
+
     # region Abstract Methods - Public Operations
 
-    def get_torrents(self, fields: list[str] | None) -> list[ClientTorrentInfo]:
+    def get_torrents(
+        self, torrent_hashes: list[str] | None = None, fields: list[str] | None = None
+    ) -> list[ClientTorrentInfo]:
         """Get all torrents from qBittorrent.
 
         Args:
+            torrent_hashes (list[str] | None): Optional list of torrent hashes to filter.
+                If None, all torrents will be returned.
             fields (list[str] | None): List of field names to include in the result.
                 If None, all available fields will be included.
 
@@ -100,21 +105,14 @@ class QBittorrentClient(TorrentClient):
                 else self.field_config
             )
 
-            torrents = self.client.torrents_info()
+            # Get torrents from qBittorrent
+            torrents = self.client.torrents_info(torrent_hashes=torrent_hashes)
 
+            # Build ClientTorrentInfo objects
             result = []
             for torrent in torrents:
-                t_hash = torrent.hash
-                cache_entry = self._torrent_info_cache.get(t_hash)
-
-                # Check if cache exists and contains all requested fields
-                if cache_entry and field_config.keys() <= cache_entry[1]:
-                    torrent_info = cache_entry[0]
-                else:
-                    values = {field_name: extractor(torrent) for field_name, extractor in field_config.items()}
-                    torrent_info = ClientTorrentInfo(**values)
-                    self._torrent_info_cache[t_hash] = (torrent_info, set(field_config.keys()))
-
+                values = {field_name: extractor(torrent) for field_name, extractor in field_config.items()}
+                torrent_info = ClientTorrentInfo(**values)
                 result.append(torrent_info)
 
             return result

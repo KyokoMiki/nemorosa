@@ -7,11 +7,14 @@ import os
 import sqlite3
 import threading
 from contextlib import contextmanager, suppress
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import msgspec
 
 from . import config
+
+if TYPE_CHECKING:
+    from .clients.client_common import ClientTorrentInfo
 
 
 class TorrentDatabase:
@@ -104,12 +107,38 @@ class TorrentDatabase:
                 )
             """)
 
+            # Client torrents cache table - cache static torrent information from client
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS client_torrents (
+                    hash TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    total_size INTEGER NOT NULL,
+                    download_dir TEXT,
+                    trackers TEXT,  -- JSON array of tracker URLs
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+
+            # Torrent files table - file index for fast searching
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS torrent_files (
+                    torrent_hash TEXT NOT NULL,
+                    file_path TEXT NOT NULL,
+                    file_size INTEGER NOT NULL,
+                    PRIMARY KEY (torrent_hash, file_path),
+                    FOREIGN KEY (torrent_hash) REFERENCES client_torrents(hash) ON DELETE CASCADE
+                )
+            """)
+
             # Create indexes to improve query performance
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_scan_results_matched_checked "
                 "ON scan_results(matched_torrent_hash, checked)"
             )
             conn.execute("CREATE INDEX IF NOT EXISTS idx_undownloaded_site_host ON undownloaded_torrents(site_host)")
+
+            # Indexes for client torrents cache
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_torrent_files_size ON torrent_files(file_size)")
 
     # region Scan results
 
@@ -313,6 +342,164 @@ class TorrentDatabase:
             cursor = conn.execute("SELECT run_count FROM job_log WHERE job_name = ?", (job_name,))
             result = cursor.fetchone()
             return result[0] if result else 0
+
+    # endregion
+
+    # region Client torrents cache
+
+    def save_client_torrent_info(self, torrent_info: "ClientTorrentInfo"):
+        """Save ClientTorrentInfo to database.
+
+        Args:
+            torrent_info: ClientTorrentInfo object from clients.client_common.
+        """
+        with self.transaction() as conn:
+            # Save torrent basic info (1 record)
+            conn.execute(
+                """INSERT OR REPLACE INTO client_torrents 
+                   (hash, name, total_size, download_dir, trackers, updated_at) 
+                   VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                (
+                    torrent_info.hash,
+                    torrent_info.name,
+                    torrent_info.total_size,
+                    torrent_info.download_dir,
+                    msgspec.json.encode(torrent_info.trackers).decode(),
+                ),
+            )
+
+            # Delete old file records for this torrent
+            conn.execute("DELETE FROM torrent_files WHERE torrent_hash = ?", (torrent_info.hash,))
+
+            # Insert file records (N records for N files)
+            if torrent_info.files:
+                file_records = [(torrent_info.hash, file_obj.name, file_obj.size) for file_obj in torrent_info.files]
+
+                conn.executemany(
+                    """INSERT INTO torrent_files 
+                       (torrent_hash, file_path, file_size) 
+                       VALUES (?, ?, ?)""",
+                    file_records,
+                )
+
+    def get_all_cached_torrent_hashes(self) -> set[str]:
+        """Get all cached torrent hashes.
+
+        Returns:
+            set[str]: Set of all torrent hashes in cache.
+        """
+        with self.connection as conn:
+            cursor = conn.execute("SELECT hash FROM client_torrents")
+            return {row["hash"] for row in cursor.fetchall()}
+
+    def delete_client_torrent(self, torrent_hash: str):
+        """Delete torrent and its files from cache.
+
+        Args:
+            torrent_hash (str): Torrent hash to delete.
+        """
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM client_torrents WHERE hash = ?", (torrent_hash,))
+
+    def clear_client_torrents_cache(self):
+        """Clear all cached client torrent information."""
+        with self.transaction() as conn:
+            conn.execute("DELETE FROM torrent_files")
+            conn.execute("DELETE FROM client_torrents")
+
+    def batch_save_client_torrents(self, torrents: list["ClientTorrentInfo"]):
+        """Batch save multiple torrents to database.
+
+        Args:
+            torrents: List of ClientTorrentInfo objects.
+        """
+        with self.transaction() as conn:
+            # Batch insert torrents
+            torrent_records = [
+                (
+                    t.hash,
+                    t.name,
+                    t.total_size,
+                    t.download_dir,
+                    msgspec.json.encode(t.trackers).decode(),
+                )
+                for t in torrents
+            ]
+
+            conn.executemany(
+                """INSERT OR REPLACE INTO client_torrents 
+                   (hash, name, total_size, download_dir, trackers, updated_at) 
+                   VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                torrent_records,
+            )
+
+            # Batch insert files
+            all_file_records = []
+            for t in torrents:
+                if t.files:
+                    for file in t.files:
+                        all_file_records.append((t.hash, file.name, file.size))
+
+            if all_file_records:
+                # Delete old files for all torrents
+                hashes = [t.hash for t in torrents]
+                placeholders = ",".join("?" * len(hashes))
+                conn.execute(f"DELETE FROM torrent_files WHERE torrent_hash IN ({placeholders})", hashes)
+
+                # Insert new files
+                conn.executemany(
+                    """INSERT INTO torrent_files 
+                       (torrent_hash, file_path, file_size) 
+                       VALUES (?, ?, ?)""",
+                    all_file_records,
+                )
+
+    def get_all_client_torrents_basic(self) -> dict[str, tuple[str, str]]:
+        """Get basic info (name, download_dir) for all cached torrents.
+
+        Returns:
+            dict[str, tuple[str, str]]: Mapping from hash to (name, download_dir).
+        """
+        with self.connection as conn:
+            cursor = conn.execute("SELECT hash, name, download_dir FROM client_torrents")
+            return {row["hash"]: (row["name"], row["download_dir"]) for row in cursor.fetchall()}
+
+    def search_torrent_by_file_match(self, target_file_size: int, fname_keywords: list[str]) -> list[sqlite3.Row]:
+        """Search torrents by file size and name keywords, return raw database rows.
+
+        Args:
+            target_file_size: Target file size to match.
+            fname_keywords: List of keywords that should appear in file path.
+
+        Returns:
+            List of database Row objects containing torrent and file information.
+        """
+        with self.connection as conn:
+            # Build conditions for subquery
+            conditions = ["tf2.file_size = ?"]
+            params = [target_file_size]
+
+            for keyword in fname_keywords:
+                conditions.append("LOWER(tf2.file_path) LIKE ?")
+                params.append(f"%{keyword.lower()}%")  # type: ignore
+
+            # Use subquery to first get matching torrent hashes, then get all files for those torrents
+            query = f"""
+                SELECT 
+                    ct.hash, ct.name, ct.download_dir, ct.total_size, ct.trackers,
+                    tf.file_path, tf.file_size
+                FROM client_torrents ct
+                JOIN torrent_files tf ON ct.hash = tf.torrent_hash
+                WHERE ct.hash IN (
+                    SELECT DISTINCT tf2.torrent_hash
+                    FROM torrent_files tf2
+                    WHERE {" AND ".join(conditions)}
+                )
+                ORDER BY ct.hash, tf.file_path
+            """
+
+            cursor = conn.execute(query, params)
+            return cursor.fetchall()
 
     # endregion
 

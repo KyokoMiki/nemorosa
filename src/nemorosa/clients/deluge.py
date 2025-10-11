@@ -83,18 +83,21 @@ class DelugeClient(TorrentClient):
         # Connect to Deluge daemon
         self.client.connect()
 
-        # Initialize torrent info cache: hash -> (torrent_info, cached_fields)
-        self._torrent_info_cache: dict[str, tuple[ClientTorrentInfo, set[str]]] = {}
-
-        # Use the field specifications constant
         self.field_config = _DELUGE_FIELD_SPECS
+
+        # Initialize database cache on first connection
+        self._initialize_cache()
 
     # region Abstract Methods - Public Operations
 
-    def get_torrents(self, fields: list[str] | None) -> list[ClientTorrentInfo]:
+    def get_torrents(
+        self, torrent_hashes: list[str] | None = None, fields: list[str] | None = None
+    ) -> list[ClientTorrentInfo]:
         """Get all torrents from Deluge.
 
         Args:
+            torrent_hashes (list[str] | None): Optional list of torrent hashes to filter.
+                If None, all torrents will be returned.
             fields (list[str] | None): List of field names to include in the result.
                 If None, all available fields will be included.
 
@@ -109,45 +112,23 @@ class DelugeClient(TorrentClient):
                 else self.field_config
             )
 
-            # First, get all torrent hashes with minimal data
-            all_torrents = self.client.call(
-                "core.get_torrents_status",
-                {},
-                ["hash"],
+            # Get required Deluge properties based on requested fields
+            arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
+
+            # Get torrents from Deluge (filtered by hashes if provided)
+            torrent_details = self.client.call(
+                "core.get_torrents_status", {"id": torrent_hashes} if torrent_hashes else {}, arguments
             )
-            if all_torrents is None:
+
+            if not torrent_details:
                 return []
 
-            # Check which torrents need to fetch data
-            torrents_to_fetch = []
+            # Build ClientTorrentInfo objects
             result = []
-
-            for torrent_hash in all_torrents:
-                cache_entry = self._torrent_info_cache.get(torrent_hash)
-
-                # Check if cache exists and contains all requested fields
-                if cache_entry and field_config.keys() <= cache_entry[1]:
-                    result.append(cache_entry[0])
-                else:
-                    torrents_to_fetch.append(torrent_hash)
-
-            # Fetch missing torrents incrementally
-            if torrents_to_fetch:
-                # Get required Deluge properties based on requested fields
-                arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
-
-                torrent_details = self.client.call(
-                    "core.get_torrents_status",
-                    {"id": torrents_to_fetch},
-                    arguments,
-                )
-
-                if torrent_details:
-                    for torrent in torrent_details.values():
-                        values = {field_name: spec.extractor(torrent) for field_name, spec in field_config.items()}
-                        torrent_info = ClientTorrentInfo(**values)
-                        self._torrent_info_cache[torrent["hash"]] = (torrent_info, set(field_config.keys()))
-                        result.append(torrent_info)
+            for torrent in torrent_details.values():
+                values = {field_name: spec.extractor(torrent) for field_name, spec in field_config.items()}
+                torrent_info = ClientTorrentInfo(**values)
+                result.append(torrent_info)
 
             return result
 

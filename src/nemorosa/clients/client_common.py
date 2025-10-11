@@ -114,10 +114,14 @@ class TorrentClient(ABC):
     # region Abstract Public
 
     @abstractmethod
-    def get_torrents(self, fields: list[str] | None) -> list[ClientTorrentInfo]:
+    def get_torrents(
+        self, torrent_hashes: list[str] | None = None, fields: list[str] | None = None
+    ) -> list[ClientTorrentInfo]:
         """Get all torrents from client.
 
         Args:
+            torrent_hashes (list[str] | None): Optional list of torrent hashes to filter.
+                If None, all torrents will be returned.
             fields (list[str] | None): List of field names to include in the result.
                 If None, all available fields will be included.
                 Available fields:
@@ -260,6 +264,121 @@ class TorrentClient(ABC):
     # endregion
 
     # region Torrent Retrieval
+
+    def _initialize_cache(self):
+        """Initialize database cache with all torrents from client.
+
+        This method is called during client initialization to populate the database cache
+        with all existing torrents from the client.
+        """
+        try:
+            database = db.get_database()
+            database.clear_client_torrents_cache()
+
+            # Get all torrents with static fields (exclude dynamic fields like progress, state, piece_progress)
+            self.logger.info("Initializing cache with all torrents from client...")
+            all_torrents = self.get_torrents(fields=["hash", "name", "total_size", "files", "trackers", "download_dir"])
+
+            if not all_torrents:
+                self.logger.debug("No torrents found in client for initial cache")
+                return
+
+            # Batch save to database
+            database.batch_save_client_torrents(all_torrents)
+            self.logger.success(f"Cached {len(all_torrents)} torrents to database")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to initialize cache: {e}")
+
+    def refresh_client_torrents_cache(self) -> None:
+        """Refresh local client_torrents database cache with incremental updates.
+
+        This method updates the client_torrents table in database with torrent information:
+        1. Get basic info for all torrents (hash, name, download_dir)
+        2. Get all cached torrents from database
+        3. Compare in Python to find modified torrents
+        4. Fetch only modified torrents from client API
+        5. Update client_torrents cache in database with modified torrents
+        """
+        try:
+            database = db.get_database()
+
+            # Step 1: Get basic info for all torrents (minimal API call)
+            basic_torrents = self.get_torrents(fields=["hash", "name", "download_dir"])
+            if not basic_torrents:
+                self.logger.debug("No torrents found in client")
+                return
+
+            # Step 2: Get all cached torrents in one query (optimized for batch comparison)
+            cached_torrents = database.get_all_client_torrents_basic()
+
+            # Step 3: Check which torrents need to be updated
+            torrents_to_fetch = [
+                torrent.hash
+                for torrent in basic_torrents
+                if cached_torrents.get(torrent.hash) != (torrent.name, torrent.download_dir)
+            ]
+
+            # Step 4: Fetch modified/new torrents from client API
+            if torrents_to_fetch:
+                # Get full info for modified torrents only
+                modified_torrents = self.get_torrents(
+                    torrent_hashes=torrents_to_fetch,
+                    fields=["hash", "name", "total_size", "files", "trackers", "download_dir"],
+                )
+
+                # Step 5: Update database
+                if modified_torrents:
+                    database.batch_save_client_torrents(modified_torrents)
+                    self.logger.debug(f"Updated {len(modified_torrents)} modified torrents in database cache")
+            else:
+                self.logger.debug("No modified torrents found, database cache is up to date")
+
+        except Exception as e:
+            self.logger.error(f"Error refreshing database cache: {e}")
+
+    def get_file_matched_torrents(self, target_file_size: int, fname_keywords: list[str]) -> list[ClientTorrentInfo]:
+        """Get torrents matching file size and name keywords, return ClientTorrentInfo objects.
+
+        This is a wrapper around db.search_torrent_by_file_match that processes the raw
+        database rows into ClientTorrentInfo objects.
+
+        Args:
+            target_file_size: Target file size to match.
+            fname_keywords: List of keywords that should appear in file path.
+
+        Returns:
+            List of ClientTorrentInfo objects.
+        """
+        database = db.get_database()
+        rows = database.search_torrent_by_file_match(target_file_size, fname_keywords)
+
+        # Group results by torrent hash and build ClientTorrentInfo directly
+        torrents_dict = {}
+        for row in rows:
+            torrent_hash = row["hash"]
+
+            # Initialize ClientTorrentInfo if first time seeing this hash
+            if torrent_hash not in torrents_dict:
+                torrents_dict[torrent_hash] = ClientTorrentInfo(
+                    hash=torrent_hash,
+                    name=row["name"],
+                    download_dir=row["download_dir"],
+                    total_size=row["total_size"],
+                    trackers=msgspec.json.decode(row["trackers"]) if row["trackers"] else [],
+                    files=[],
+                )
+
+            # Add file to this torrent's file list
+            torrents_dict[torrent_hash].files.append(
+                ClientTorrentFile(
+                    name=row["file_path"],
+                    size=row["file_size"],
+                    progress=1.0,  # Assume complete for cached torrents
+                )
+            )
+
+        return list(torrents_dict.values())
 
     def get_single_torrent(self, infohash: str, target_trackers: list[str]) -> ClientTorrentInfo | None:
         """Get single torrent by infohash with existing trackers information.

@@ -187,14 +187,11 @@ class NemorosaCore:
 
         return tid
 
-    def _search_torrent_by_filename_in_client(
-        self, torrent_fdict: dict, all_torrents: list[ClientTorrentInfo]
-    ) -> list[ClientTorrentInfo]:
-        """Search for matching torrents in client by filename.
+    def _search_torrent_by_filename_in_client(self, torrent_fdict: dict) -> list[ClientTorrentInfo]:
+        """Search for matching torrents in client by filename using database.
 
         Args:
             torrent_fdict (dict): File dictionary of the incoming torrent.
-            all_torrents (list): List of all ClientTorrentInfo objects from torrent client.
 
         Returns:
             list: List of matching ClientTorrentInfo objects.
@@ -228,38 +225,25 @@ class NemorosaCore:
 
                 fname_query_words = fname_query.split()
 
-                # Search for matching files in all torrents in client
-                for torrent in all_torrents:
-                    # Use client's file dictionary
-                    client_fdict = torrent.fdict
+                # Get matching torrents from client's database cache
+                candidate_torrents = self.torrent_client.get_file_matched_torrents(
+                    target_file_size=target_file_size, fname_keywords=fname_query_words
+                )
 
-                    # First check: does any file have the same size?
-                    if target_file_size not in client_fdict.values():
-                        continue
+                self.logger.debug(f"Found {len(candidate_torrents)} candidate torrents")
 
-                    self.logger.debug(f"Found matching file size in torrent: {torrent.name}")
+                # Verify each candidate for conflicts
+                for candidate in candidate_torrents:
+                    self.logger.debug(f"Verifying candidate torrent: {candidate.name}")
 
-                    # Second check: does the filename match after processing?
-                    size_and_name_match_found = False
-                    for client_file, client_file_size in client_fdict.items():
-                        # Check if size matches and all query words are in filename
-                        if client_file_size == target_file_size and all(
-                            word in client_file for word in fname_query_words
-                        ):
-                            size_and_name_match_found = True
-                            self.logger.success(f"Size match found! File: {client_file}, Size: {client_file_size}")
-                            break
-
-                    if size_and_name_match_found:
-                        # Further verification: check if all files can match
-                        # Skip conflict checking when linking is enabled
-                        if config.cfg.linking.enable_linking or not filecompare.check_conflicts(
-                            client_fdict, torrent_fdict
-                        ):
-                            self.logger.success(f"Complete torrent match found: {torrent.name}")
-                            matched_torrents.append(torrent)
-                        else:
-                            self.logger.debug(f"Partial match found but verification failed: {torrent.name}")
+                    # Database query already ensured size and name match, only check conflicts
+                    if config.cfg.linking.enable_linking or not filecompare.check_conflicts(
+                        candidate.fdict, torrent_fdict
+                    ):
+                        self.logger.success(f"Complete torrent match found: {candidate.name}")
+                        matched_torrents.append(candidate)
+                    else:
+                        self.logger.debug(f"Match found but has conflicts: {candidate.name}")
 
                 # If matching torrent found, can return early
                 if matched_torrents:
@@ -798,8 +782,8 @@ class NemorosaCore:
 
             self.logger.debug(f"Extracted torrent ID: {tid} from link: {torrent_link}")
 
-            # Get all torrent information from client_instance (not filtered)
-            all_torrents = self.torrent_client.get_torrents(["name", "files", "trackers", "download_dir"])
+            # Refresh client torrent cache
+            self.torrent_client.refresh_client_torrents_cache()
 
             # Parse incoming torrent data
             torrent_object = torf.Torrent.read_stream(torrent_data)
@@ -807,8 +791,8 @@ class NemorosaCore:
             for f in torrent_object.files:
                 fdict_torrent["/".join(f.parts[1:])] = f.size
 
-            # Search for matching torrents in existing client
-            matched_torrents = self._search_torrent_by_filename_in_client(fdict_torrent, all_torrents)
+            # Search for matching torrents using database (no need to load all torrents)
+            matched_torrents = self._search_torrent_by_filename_in_client(fdict_torrent)
 
             if not matched_torrents:
                 return {
@@ -843,7 +827,7 @@ class NemorosaCore:
                         }
 
             # Use the first matching torrent
-            matched_torrent = matched_torrents[0]
+            matched_torrent = max(matched_torrents, key=lambda x: len(x.files))
             self.logger.success(f"Found matching torrent in client: {matched_torrent.name}")
 
             # Use client's file dictionary
