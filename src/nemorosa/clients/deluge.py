@@ -85,9 +85,6 @@ class DelugeClient(TorrentClient):
 
         self.field_config = _DELUGE_FIELD_SPECS
 
-        # Initialize database cache on first connection
-        self._initialize_cache()
-
     # region Abstract Methods - Public Operations
 
     def get_torrents(

@@ -1,6 +1,6 @@
 """Scheduler module for nemorosa."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -97,7 +97,7 @@ class JobManager:
 
         try:
             # Record job start
-            start_time = int(datetime.now().timestamp())
+            start_time = datetime.now()
 
             # Get next run time from APScheduler
             next_run_time = None
@@ -106,16 +106,16 @@ class JobManager:
                 if is_manual_trigger:
                     # For manual trigger, get the time after the next scheduled run
                     # (skip the next scheduled run due to manual trigger flag)
-                    next_run_time = int(job.next_run_time.timestamp())
+                    next_run_time = job.next_run_time
                     # Add one more interval to get the run after the skipped one
                     if config.cfg.server.search_cadence_seconds:
                         cadence_seconds = config.cfg.server.search_cadence_seconds
-                        next_run_time += cadence_seconds
+                        next_run_time = next_run_time + timedelta(seconds=cadence_seconds)
                 else:
                     # For scheduled run, get the normal next run time
-                    next_run_time = int(job.next_run_time.timestamp())
+                    next_run_time = job.next_run_time
 
-            self.database.update_job_run(job_name, start_time, next_run_time)
+            await self.database.update_job_run(job_name, start_time, next_run_time)
 
             # Run the actual search process
             from .core import NemorosaCore
@@ -129,8 +129,9 @@ class JobManager:
                 await client.wait_for_monitoring_completion()
 
             # Record successful completion
-            end_time = int(datetime.now().timestamp())
-            self.logger.debug(f"Completed {job_name} job in {end_time - start_time} seconds")
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            self.logger.debug(f"Completed {job_name} job in {duration:.2f} seconds")
 
         except Exception as e:
             self.logger.error(f"Error in {job_name} job: {e}")
@@ -142,15 +143,15 @@ class JobManager:
 
         try:
             # Record job start
-            start_time = int(datetime.now().timestamp())
+            start_time = datetime.now()
 
             # Get next run time from APScheduler
             next_run_time = None
             job = self.scheduler.get_job(JobType.CLEANUP.value)
             if job and job.next_run_time:
-                next_run_time = int(job.next_run_time.timestamp())
+                next_run_time = job.next_run_time
 
-            self.database.update_job_run(job_name, start_time, next_run_time)
+            await self.database.update_job_run(job_name, start_time, next_run_time)
 
             # Run cleanup process
             from .core import NemorosaCore
@@ -159,11 +160,12 @@ class JobManager:
             await processor.retry_undownloaded_torrents()
 
             # Then post-process injected torrents
-            processor.post_process_injected_torrents()
+            await processor.post_process_injected_torrents()
 
             # Record successful completion
-            end_time = int(datetime.now().timestamp())
-            self.logger.debug(f"Completed {job_name} job in {end_time - start_time} seconds")
+            end_time = datetime.now()
+            duration = (end_time - start_time).total_seconds()
+            self.logger.debug(f"Completed {job_name} job in {duration:.2f} seconds")
 
         except Exception as e:
             self.logger.error(f"Error in {job_name} job: {e}")
@@ -214,7 +216,7 @@ class JobManager:
                 "job_name": job_name,
             }
 
-    def get_job_status(self, job_type: JobType) -> dict[str, Any]:
+    async def get_job_status(self, job_type: JobType) -> dict[str, Any]:
         """Get status of a job.
 
         Args:
@@ -234,10 +236,8 @@ class JobManager:
             }
 
         # Get last run time from database
-        last_run_timestamp = self.database.get_job_last_run(job_name)
-        last_run = None
-        if last_run_timestamp:
-            last_run = datetime.fromtimestamp(last_run_timestamp).isoformat()
+        last_run_dt = await self.database.get_job_last_run(job_name)
+        last_run = last_run_dt.isoformat() if last_run_dt else None
 
         return {
             "status": "active",

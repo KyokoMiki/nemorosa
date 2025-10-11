@@ -100,9 +100,6 @@ class TransmissionClient(TorrentClient):
         # Use the field specifications constant
         self.field_config = _TRANSMISSION_FIELD_SPECS
 
-        # Initialize database cache on first connection
-        self._initialize_cache()
-
     # region Abstract Methods - Public Operations
 
     def get_torrents(

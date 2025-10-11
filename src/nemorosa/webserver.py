@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from . import __version__, api, config, logger, scheduler
+from . import __version__, api, config, db, logger, scheduler
 from .core import NemorosaCore
 
 
@@ -67,6 +67,9 @@ async def lifespan(_: FastAPI):
     if job_manager:
         job_manager.stop_scheduler()
         app_logger.info("Scheduler stopped")
+
+    # Cleanup database
+    await db.cleanup_database()
 
 
 # Create FastAPI app
@@ -321,7 +324,7 @@ async def get_job_status(
         job_type_enum = scheduler.JobType(job_type)
 
         # Get job status
-        result = job_mgr.get_job_status(job_type_enum)
+        result = await job_mgr.get_job_status(job_type_enum)
 
         return JobResponse(
             status=result["status"],
