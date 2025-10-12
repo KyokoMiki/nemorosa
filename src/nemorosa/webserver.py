@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
-from . import __version__, api, config, logger, scheduler
+from . import __version__, api, config, db, logger, scheduler
 from .core import NemorosaCore
 
 
@@ -46,6 +46,15 @@ async def lifespan(_: FastAPI):
     # Get logger and job manager
     app_logger = logger.get_logger()
     job_manager = scheduler.get_job_manager()
+    await job_manager.start_scheduler()
+
+    # Initialize database tables
+    try:
+        await db.get_database().init_database()
+        app_logger.info("Database initialized successfully")
+    except Exception as e:
+        app_logger.error(f"Failed to initialize database: {str(e)}")
+        raise
 
     # Setup API connections
     try:
@@ -56,10 +65,10 @@ async def lifespan(_: FastAPI):
         app_logger.error(f"Failed to establish API connections: {str(e)}")
         app_logger.warning("Web server will start without API connections")
 
-    # Start scheduler if available
+    # Add scheduled jobs if available
     if job_manager and api.get_target_apis():
-        await job_manager.start_scheduler()
-        app_logger.info("Scheduler started with configured jobs")
+        job_manager.add_scheduled_jobs()
+        app_logger.info("Scheduled jobs configured and added")
 
     yield
 
@@ -67,6 +76,9 @@ async def lifespan(_: FastAPI):
     if job_manager:
         job_manager.stop_scheduler()
         app_logger.info("Scheduler stopped")
+
+    # Cleanup database
+    await db.cleanup_database()
 
 
 # Create FastAPI app
@@ -321,7 +333,7 @@ async def get_job_status(
         job_type_enum = scheduler.JobType(job_type)
 
         # Get job status
-        result = job_mgr.get_job_status(job_type_enum)
+        result = await job_mgr.get_job_status(job_type_enum)
 
         return JobResponse(
             status=result["status"],

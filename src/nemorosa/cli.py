@@ -1,13 +1,11 @@
 """Command line interface for nemorosa."""
 
 import argparse
-import atexit
-import signal
 import sys
 
 from colorama import init
 
-from . import api, client_instance, config, db, logger
+from . import api, client_instance, config, db, logger, scheduler
 from .core import NemorosaCore
 from .webserver import run_webserver
 
@@ -24,30 +22,6 @@ class CustomHelpFormatter(argparse.HelpFormatter):
         default = self._get_default_metavar_for_optional(action)
         args_string = self._format_args(action, default)
         return ", ".join(action.option_strings) + " " + args_string
-
-
-def cleanup_resources():
-    """Cleanup resources on program exit."""
-    try:
-        app_logger = logger.get_logger()
-        if app_logger:
-            app_logger.debug("Cleaning up resources...")
-
-        # Cleanup database
-        db.cleanup_database()
-
-        if app_logger:
-            app_logger.debug("Resource cleanup completed")
-    except Exception as e:
-        # Use print to avoid logger issues during cleanup
-        print(f"Warning: Error during cleanup: {e}")
-
-
-def signal_handler(signum, _):
-    """Handle interrupt signals."""
-    print(f"\nReceived signal {signum}, cleaning up...")
-    cleanup_resources()
-    sys.exit(0)
 
 
 def setup_argument_parser(config_defaults):
@@ -188,11 +162,6 @@ def main():
     # Initialize colorama
     init(autoreset=True)
 
-    # Register cleanup handlers
-    atexit.register(cleanup_resources)
-    signal.signal(signal.SIGINT, signal_handler)
-    signal.signal(signal.SIGTERM, signal_handler)
-
     # Step 1: Pre-parse configuration
     pre_parser, parser = setup_argument_parser({})
     pre_args, _ = pre_parser.parse_known_args()
@@ -268,9 +237,17 @@ async def _async_main(args):
     app_logger = logger.get_logger()
 
     try:
+        # Initialize database tables
+        await db.get_database().init_database()
+        app_logger.debug("Database tables initialized")
+
         # Establish API connections in async context
         target_apis = await api.setup_api_connections(config.cfg.target_sites)
         api.set_target_apis(target_apis)
+
+        # Start scheduler immediately so it's ready to accept jobs
+        await scheduler.get_job_manager().start_scheduler()
+        app_logger.debug("APScheduler initialized and started")
 
         # Create processor instance
         processor = NemorosaCore()
@@ -301,7 +278,7 @@ async def _async_main(args):
             await processor.retry_undownloaded_torrents()
         elif args.post_process:
             # Post-process injected torrents only
-            processor.post_process_injected_torrents()
+            await processor.post_process_injected_torrents()
         else:
             # Normal torrent processing flow
             await processor.process_torrents()
@@ -311,3 +288,5 @@ async def _async_main(args):
         if client and client.monitoring:
             app_logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
             await client.wait_for_monitoring_completion()
+
+        await db.cleanup_database()

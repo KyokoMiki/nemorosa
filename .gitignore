@@ -7,6 +7,7 @@ nemorosa.db
 results/
 .vscode/
 .cursor/
+.idea/
 config.yml
 test
 pyrightconfig.json

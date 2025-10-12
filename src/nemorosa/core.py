@@ -90,7 +90,7 @@ class NemorosaCore:
     async def filename_search(
         self,
         *,
-        fdict: dict,
+        fdict: dict[str, int],
         tsize: int,
         api: "GazelleJSONAPI | GazelleParser",
     ) -> int | None:
@@ -187,7 +187,7 @@ class NemorosaCore:
 
         return tid
 
-    def _search_torrent_by_filename_in_client(self, torrent_fdict: dict) -> list[ClientTorrentInfo]:
+    async def _search_torrent_by_filename_in_client(self, torrent_fdict: dict[str, int]) -> list[ClientTorrentInfo]:
         """Search for matching torrents in client by filename using database.
 
         Args:
@@ -226,7 +226,7 @@ class NemorosaCore:
                 fname_query_words = fname_query.split()
 
                 # Get matching torrents from client's database cache
-                candidate_torrents = self.torrent_client.get_file_matched_torrents(
+                candidate_torrents = await self.torrent_client.get_file_matched_torrents(
                     target_file_size=target_file_size, fname_keywords=fname_query_words
                 )
 
@@ -353,7 +353,7 @@ class NemorosaCore:
 
             # Record scan result: no matching torrent found
             if not search_error_occurred:
-                self.database.add_scan_result(
+                await self.database.add_scan_result(
                     local_torrent_hash=torrent_details.hash,
                     local_torrent_name=torrent_details.name,
                     matched_torrent_id=None,
@@ -429,7 +429,7 @@ class NemorosaCore:
                 # Torrent conflict - treat as no match found
                 self.logger.debug(f"Torrent conflict detected: {e}")
                 # Record scan result: no matching torrent found
-                self.database.add_scan_result(
+                await self.database.add_scan_result(
                     local_torrent_hash=torrent_details.hash,
                     local_torrent_name=torrent_details.name,
                     matched_torrent_id=None,
@@ -439,7 +439,7 @@ class NemorosaCore:
                 return None, False
 
         # Record scan result: matching torrent found
-        self.database.add_scan_result(
+        await self.database.add_scan_result(
             local_torrent_hash=torrent_details.hash,
             local_torrent_name=torrent_details.name,
             matched_torrent_id=str(tid),
@@ -452,7 +452,7 @@ class NemorosaCore:
                 "local_torrent_name": torrent_details.name,
                 "rename_map": rename_map,
             }
-            self.database.add_undownloaded_torrent(str(tid), torrent_info, site_host)
+            await self.database.add_undownloaded_torrent(str(tid), torrent_info, site_host)
 
         # Start tracking verification after database operations are complete
         if downloaded:
@@ -485,7 +485,7 @@ class NemorosaCore:
             site_host = urlparse(api_instance.server).netloc
 
             # Check if torrent has been scanned on this specific site
-            if self.database.is_hash_scanned(local_torrent_hash=torrent_details.hash, site_host=site_host):
+            if await self.database.is_hash_scanned(local_torrent_hash=torrent_details.hash, site_host=site_host):
                 self.logger.debug(
                     "Skipping already scanned torrent on %s: %s (%s)",
                     site_host,
@@ -530,7 +530,7 @@ class NemorosaCore:
 
         try:
             # Get filtered torrent list
-            torrents = self.torrent_client.get_filtered_torrents(target_trackers)
+            torrents = await self.torrent_client.get_filtered_torrents(target_trackers)
             self.logger.debug("Found %d torrents in client matching the criteria", len(torrents))
 
             for i, (torrent_name, torrent_details) in enumerate(torrents.items()):
@@ -575,7 +575,7 @@ class NemorosaCore:
                 self.logger.debug(f"Processing undownloaded torrents for site: {api_instance.server}")
 
                 # Get undownloaded torrents for this site
-                undownloaded_torrents = self.database.load_undownloaded_torrents(site_host)
+                undownloaded_torrents = await self.database.load_undownloaded_torrents(site_host)
 
                 if not undownloaded_torrents:
                     self.logger.debug(f"No undownloaded torrents found for site: {api_instance.server}")
@@ -613,7 +613,7 @@ class NemorosaCore:
                             retry_stats["removed"] += 1
 
                             # Injection successful, remove from undownloaded table
-                            self.database.remove_undownloaded_torrent(torrent_id, site_host)
+                            await self.database.remove_undownloaded_torrent(torrent_id, site_host)
                             self.logger.success(f"Successfully downloaded and injected torrent {torrent_id}")
                             self.logger.success(f"Removed torrent {torrent_id} from undownloaded list")
                         else:
@@ -636,7 +636,7 @@ class NemorosaCore:
             self.logger.success("Removed from undownloaded list: %d", retry_stats["removed"])
             self.logger.section("===== Retry Undownloaded Torrents Complete =====")
 
-    def post_process_injected_torrents(self):
+    async def post_process_injected_torrents(self):
         """Post-process previously injected torrents to start downloading completed torrents.
 
         This function checks previously found cross-seed matches in scan_results,
@@ -657,7 +657,7 @@ class NemorosaCore:
 
         try:
             # Get all matched scan results
-            matched_results = self.database.get_matched_scan_results()
+            matched_results = await self.database.get_matched_scan_results()
             if not matched_results:
                 self.logger.debug("No matched torrents found")
                 return
@@ -669,7 +669,7 @@ class NemorosaCore:
                 stats["matches_checked"] += 1
 
                 # Process single torrent
-                result = self.torrent_client.post_process_single_injected_torrent(matched_torrent_hash)
+                result = await self.torrent_client.post_process_single_injected_torrent(matched_torrent_hash)
 
                 # Update stats based on result
                 if result["status"] == "completed":
@@ -783,7 +783,7 @@ class NemorosaCore:
             self.logger.debug(f"Extracted torrent ID: {tid} from link: {torrent_link}")
 
             # Refresh client torrent cache
-            self.torrent_client.refresh_client_torrents_cache()
+            await self.torrent_client.refresh_client_torrents_cache()
 
             # Parse incoming torrent data
             torrent_object = torf.Torrent.read_stream(torrent_data)
@@ -792,7 +792,7 @@ class NemorosaCore:
                 fdict_torrent["/".join(f.parts[1:])] = f.size
 
             # Search for matching torrents using database (no need to load all torrents)
-            matched_torrents = self._search_torrent_by_filename_in_client(fdict_torrent)
+            matched_torrents = await self._search_torrent_by_filename_in_client(fdict_torrent)
 
             if not matched_torrents:
                 return {
@@ -869,7 +869,7 @@ class NemorosaCore:
                     "local_torrent_name": matched_torrent.name,
                     "rename_map": rename_map,
                 }
-                self.database.add_undownloaded_torrent(str(tid), torrent_info, site_host)
+                await self.database.add_undownloaded_torrent(str(tid), torrent_info, site_host)
 
             return {
                 "status": "success",
