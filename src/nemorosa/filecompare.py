@@ -5,7 +5,7 @@ from collections import defaultdict
 from itertools import groupby
 from typing import TYPE_CHECKING
 
-from . import config, logger
+from . import logger
 
 if TYPE_CHECKING:
     from .clients import ClientTorrentInfo
@@ -315,14 +315,6 @@ def generate_link_map(fdict_local: dict, fdict_torrent: dict) -> dict:
     # Step 1: Create remaining file dictionary (remove same-name files)
     remaining_local = fdict_local.copy()
     remaining_torrent = fdict_torrent.copy()
-
-    # When using reflink, allow same-name files with different sizes to be treated as matches
-    if config.cfg.linking.link_type in ["reflink", "reflink_or_copy"]:
-        for name in fdict_torrent:
-            if name in fdict_local:
-                link_map[name] = name
-                del remaining_local[name]
-                del remaining_torrent[name]
 
     # Group remote files by file size
     size_map_remote = defaultdict(list)
