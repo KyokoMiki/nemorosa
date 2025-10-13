@@ -525,7 +525,7 @@ def get_api_instance(server: str, cookies: dict | None = None, api_key: str | No
 
 
 # Global target_apis instance
-_target_apis_instance: list[GazelleJSONAPI | GazelleParser] | None = None
+_target_apis_instance: list[GazelleJSONAPI | GazelleParser] = []
 _target_apis_lock = threading.Lock()
 
 
@@ -535,11 +535,7 @@ def get_target_apis() -> list[GazelleJSONAPI | GazelleParser]:
     Returns:
         list[GazelleJSONAPI | GazelleParser]: Target APIs instance.
     """
-    global _target_apis_instance
-    with _target_apis_lock:
-        if _target_apis_instance is None:
-            _target_apis_instance = []
-        return _target_apis_instance
+    return _target_apis_instance
 
 
 def set_target_apis(target_apis: list[GazelleJSONAPI | GazelleParser]) -> None:

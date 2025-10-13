@@ -4,7 +4,7 @@ import threading
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 from urllib.parse import parse_qsl, urlparse
@@ -267,7 +267,7 @@ class TorrentClient(ABC):
 
     # region Torrent Retrieval
 
-    async def _rebuild_client_torrents_cache(self, torrents: list[ClientTorrentInfo]):
+    async def rebuild_client_torrents_cache(self, torrents: list[ClientTorrentInfo]):
         """Clear and rebuild database cache with provided torrents.
 
         This method clears all existing cache entries and repopulates the database cache
@@ -290,6 +290,45 @@ class TorrentClient(ABC):
 
         except Exception as e:
             self.logger.warning(f"Failed to rebuild cache: {e}")
+
+    async def rebuild_client_torrents_cache_incremental(self, torrents: list[ClientTorrentInfo]):
+        """Rebuild database cache with provided torrents incrementally (one by one).
+
+        This method provides the same functionality as rebuild_client_torrents_cache,
+        but is designed for background execution with better async performance.
+        It first batch deletes torrents that no longer exist, then updates/inserts
+        torrents one by one to allow other async operations to interleave.
+
+        Args:
+            torrents (list[ClientTorrentInfo]): List of torrents to rebuild cache with.
+        """
+        try:
+            database = db.get_database()
+
+            if not torrents:
+                self.logger.debug("No torrents provided for cache sync")
+                # Clear all cached torrents if the new list is empty
+                await database.clear_client_torrents_cache()
+                return
+
+            # Get current cached torrent hashes
+            cached_hashes = await database.get_all_cached_torrent_hashes()
+            new_hashes = {torrent.hash for torrent in torrents}
+
+            # Step 1: Batch delete torrents that no longer exist in client
+            torrents_to_delete = cached_hashes - new_hashes
+            if torrents_to_delete:
+                await database.delete_client_torrents(torrents_to_delete)
+                self.logger.debug(f"Deleted {len(torrents_to_delete)} torrents from cache")
+
+            # Step 2: Update/insert torrents one by one
+            for torrent in torrents:
+                await database.save_client_torrent_info(torrent)
+
+            self.logger.success(f"Synced {len(torrents)} torrents to database cache")
+
+        except Exception as e:
+            self.logger.warning(f"Failed to sync cache: {e}")
 
     async def refresh_client_torrents_cache(self) -> None:
         """Refresh local client_torrents database cache with incremental updates.
@@ -322,7 +361,7 @@ class TorrentClient(ABC):
             ]
 
             # Find torrents that exist in cache but not in client
-            torrents_to_delete = list(cached_torrents.keys() - {torrent.hash for torrent in basic_torrents})
+            torrents_to_delete = cached_torrents.keys() - {torrent.hash for torrent in basic_torrents}
 
             # Step 4: Fetch modified/new torrents from client API
             if torrents_to_fetch:
@@ -495,6 +534,16 @@ class TorrentClient(ABC):
             # Get all torrents with required fields
             torrents = list(
                 self.get_torrents(fields=["hash", "name", "total_size", "files", "trackers", "download_dir"])
+            )
+
+            # Rebuild cache with all torrents (run in background)
+            self.job_manager.scheduler.add_job(
+                self.rebuild_client_torrents_cache_incremental,
+                trigger=DateTrigger(),
+                args=[torrents],
+                id="rebuild_cache",
+                replace_existing=True,
+                max_instances=1,
             )
 
             # Step 1: Group by content name, collect which trackers each content exists on
@@ -952,7 +1001,7 @@ class TorrentClient(ABC):
         # Start a background task to add torrent after 5 seconds delay
         self.job_manager.scheduler.add_job(
             self._delayed_add_torrent,
-            trigger=DateTrigger(run_date=datetime.now() + timedelta(seconds=5)),
+            trigger=DateTrigger(run_date=datetime.now(UTC) + timedelta(seconds=5)),
             args=[torrent_hash],
             id=f"delayed_add_{torrent_hash}",
             replace_existing=True,

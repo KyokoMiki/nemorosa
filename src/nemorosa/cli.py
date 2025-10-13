@@ -10,144 +10,98 @@ from .core import NemorosaCore
 from .webserver import run_webserver
 
 
-class CustomHelpFormatter(argparse.HelpFormatter):
-    """Custom help formatter."""
-
-    def __init__(self, prog):
-        super().__init__(prog, max_help_position=40, width=80)
-
-    def _format_action_invocation(self, action):
-        if not action.option_strings or action.nargs == 0:
-            return super()._format_action_invocation(action)
-        default = self._get_default_metavar_for_optional(action)
-        args_string = self._format_args(action, default)
-        return ", ".join(action.option_strings) + " " + args_string
-
-
-def setup_argument_parser(config_defaults):
+def setup_argument_parser():
     """Set up command line argument parser.
 
-    Args:
-        config_defaults (dict): Default configuration values.
-
     Returns:
-        tuple: A tuple containing (pre_parser, parser).
+        argparse.ArgumentParser: Configured argument parser.
     """
-    # Step 1: Pre-parse to get config file path
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument(
-        "--config",
-        default=None,  # Let config module auto-find configuration file
-        help="Path to YAML configuration file",
-    )
-
-    # Main parser
     parser = argparse.ArgumentParser(
-        description="Music torrent cross-seeding tool with automatic file mapping and seamless injection",
-        formatter_class=CustomHelpFormatter,
-        parents=[pre_parser],  # Include pre-parser arguments
+        description="Music torrent cross-seeding tool with automatic file mapping and seamless injection"
     )
 
-    # torrent client option
-    client_group = parser.add_argument_group("Torrent client options")
-    client_group.add_argument(
-        "--client",
-        required=not config_defaults.get("client"),
-        help="Torrent client URL (e.g. transmission+http://user:pass@localhost:9091)",
-        default=config_defaults.get("client"),
-    )
-
-    # no download option
-    parser.add_argument(
-        "--no-download",
-        action="store_true",
-        default=config_defaults.get("no_download", False),
-        help="if set, don't download .torrent files, only save URLs",
-    )
-
-    # retry undownloaded option
-    parser.add_argument(
-        "-r",
-        "--retry-undownloaded",
-        action="store_true",
-        default=False,
-        help="retry downloading torrents from undownloaded_torrents table",
-    )
-
-    # post-process injected torrents option
-    parser.add_argument(
-        "-p",
-        "--post-process",
-        action="store_true",
-        default=False,
-        help="post-process injected torrents",
-    )
-
-    # server mode option
-    parser.add_argument(
+    # Operation modes
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "-s",
         "--server",
         action="store_true",
-        default=False,
         help="start nemorosa in server mode",
     )
-
-    # single torrent option
-    parser.add_argument(
+    mode_group.add_argument(
         "-t",
         "--torrent",
         type=str,
         help="process a single torrent by infohash",
     )
+    mode_group.add_argument(
+        "-r",
+        "--retry-undownloaded",
+        action="store_true",
+        help="retry downloading torrents from undownloaded_torrents table",
+    )
+    mode_group.add_argument(
+        "-p",
+        "--post-process",
+        action="store_true",
+        help="post-process injected torrents",
+    )
 
-    # server options
+    # Global options
+    global_group = parser.add_argument_group("Global options")
+    global_group.add_argument(
+        "-l",
+        "--loglevel",
+        metavar="LOGLEVEL",
+        choices=["debug", "info", "warning", "error", "critical"],
+        help="loglevel for log file",
+    )
+    global_group.add_argument(
+        "--config",
+        help="Path to YAML configuration file",
+    )
+    global_group.add_argument(
+        "--no-download",
+        action="store_true",
+        help="if set, don't download .torrent files, only save URLs",
+    )
+
+    # Torrent client options
+    client_group = parser.add_argument_group("Torrent client options")
+    client_group.add_argument(
+        "--client",
+        help="Torrent client URL (e.g. transmission+http://user:pass@localhost:9091)",
+    )
+
+    # Server options
     server_group = parser.add_argument_group("Server options")
     server_group.add_argument(
         "--host",
-        default=config_defaults.get("server_host", None),
-        help=f"server host (default: {config_defaults.get('server_host', None)})",
+        help="server host",
     )
     server_group.add_argument(
         "--port",
         type=int,
-        default=config_defaults.get("server_port", 8256),
-        help=f"server port (default: {config_defaults.get('server_port', 8256)})",
+        help="server port",
     )
 
-    # log level
-    parser.add_argument(
-        "-l",
-        "--loglevel",
-        metavar="LOGLEVEL",
-        default=config_defaults.get("loglevel", "info"),
-        choices=["debug", "info", "warning", "error", "critical"],
-        help="loglevel for log file (default: %(default)s)",
-    )
-
-    return pre_parser, parser
+    return parser
 
 
-def setup_logger_and_config(pre_args):
+def setup_logger_and_config(config_path):
     """Set up logger and configuration.
 
     Args:
-        pre_args: Pre-parsed arguments containing config file path.
+        config_path: Path to configuration file (or None for auto-detection).
 
     Returns:
         logger: Application logger instance.
     """
     app_logger = logger.get_logger()
 
-    # Initialize database
-    try:
-        db.get_database()
-        app_logger.info("Database initialized successfully")
-    except Exception as e:
-        app_logger.warning(f"Database initialization failed: {e}")
-
     # Use new configuration processing module to initialize global config
     try:
-        config.init_config(pre_args.config)
+        config.init_config(config_path)
         app_logger.info("Configuration loaded successfully")
     except ValueError as e:
         app_logger.error(f"Configuration error: {e}")
@@ -157,41 +111,110 @@ def setup_logger_and_config(pre_args):
     return app_logger
 
 
+def override_config_with_args(args):
+    """Override configuration with command line arguments.
+
+    Args:
+        args: Parsed command line arguments.
+    """
+    # Override loglevel if specified
+    if args.loglevel is not None:
+        config.cfg.global_config.loglevel = args.loglevel
+
+    # Override no_download if specified
+    if args.no_download:
+        config.cfg.global_config.no_download = True
+
+    # Override client if specified
+    if args.client is not None:
+        config.cfg.downloader.client = args.client
+
+    # Override server host if specified
+    if args.host is not None:
+        config.cfg.server.host = args.host
+
+    # Override server port if specified
+    if args.port is not None:
+        config.cfg.server.port = args.port
+
+
+async def async_init():
+    """Initialize core components asynchronously (database, API connections, scheduler, torrent client).
+
+    This function is used by both CLI and webserver modes to set up the application.
+    """
+    app_logger = logger.get_logger()
+
+    # Initialize database tables
+    database = db.get_database()
+    await database.init_database()
+    app_logger.info("Database initialized successfully")
+
+    # Connect to torrent client
+    app_logger.debug("Connecting to torrent client at %s...", config.cfg.downloader.client)
+    app_torrent_client = client_instance.create_torrent_client(config.cfg.downloader.client)
+    client_instance.set_torrent_client(app_torrent_client)
+    app_logger.info("Successfully connected to torrent client")
+
+    # Check if client URL has changed and rebuild cache if needed
+    current_client_url = config.cfg.downloader.client
+    cached_client_url = await database.get_metadata("client_url")
+
+    if cached_client_url != current_client_url:
+        app_logger.info(f"Client URL changed from {cached_client_url or 'none'} to {current_client_url}")
+        app_logger.info("Rebuilding client torrents cache...")
+
+        # Get all torrents from the new client
+        all_torrents = app_torrent_client.get_torrents(
+            fields=["hash", "name", "total_size", "files", "trackers", "download_dir"]
+        )
+
+        # Validate that the new client has torrents
+        if not all_torrents:
+            raise RuntimeError(f"New client at {current_client_url} has no torrents.")
+
+        # Rebuild cache
+        await app_torrent_client.rebuild_client_torrents_cache(all_torrents)
+        app_logger.success(f"Rebuilt cache with {len(all_torrents)} torrents from new client")
+
+        # Update cached client URL
+        await database.set_metadata("client_url", current_client_url)
+
+    # Setup API connections
+    target_apis = await api.setup_api_connections(config.cfg.target_sites)
+    api.set_target_apis(target_apis)
+    app_logger.info(f"API connections established for {len(target_apis)} target sites")
+
+    # Start scheduler
+    job_manager = scheduler.get_job_manager()
+    await job_manager.start_scheduler()
+
+
 def main():
     """Main function."""
     # Initialize colorama
     init(autoreset=True)
 
-    # Step 1: Pre-parse configuration
-    pre_parser, parser = setup_argument_parser({})
-    pre_args, _ = pre_parser.parse_known_args()
-
-    # Set up logger and configuration
-    setup_logger_and_config(pre_args)
-
-    # Merge configuration (command line arguments will override config file)
-    config_defaults = {
-        "loglevel": config.cfg.global_config.loglevel,
-        "no_download": config.cfg.global_config.no_download,
-        "client": config.cfg.downloader.client,
-        "server_host": config.cfg.server.host,
-        "server_port": config.cfg.server.port,
-    }
-
-    # Re-setup parser with configuration default values
-    pre_parser, parser = setup_argument_parser(config_defaults)
+    # Step 1: Parse command line arguments
+    parser = setup_argument_parser()
     args = parser.parse_args()
 
-    # Set up global logger
-    app_logger = logger.generate_logger(args.loglevel)
+    # Step 2: Load configuration
+    setup_logger_and_config(args.config)
+
+    # Step 3: Override configuration with command line arguments
+    override_config_with_args(args)
+
+    # Step 4: Set up global logger with final loglevel from config
+    app_logger = logger.generate_logger(config.cfg.global_config.loglevel)
     logger.set_logger(app_logger)
 
     # Log configuration summary
     app_logger.section("===== Configuration Summary =====")
-    app_logger.debug(f"Config file: {pre_args.config or 'auto-detected'}")
-    app_logger.debug(f"No download: {args.no_download}")
-    app_logger.debug(f"Log level: {args.loglevel}")
-    app_logger.debug(f"Client URL: {args.client}")
+    app_logger.debug(f"Config file: {args.config or 'auto-detected'}")
+    app_logger.debug(f"No download: {config.cfg.global_config.no_download}")
+    app_logger.debug(f"Log level: {config.cfg.global_config.loglevel}")
+    app_logger.debug(f"Client URL: {config.cfg.downloader.client}")
     check_trackers = config.cfg.global_config.check_trackers
     app_logger.debug(f"CHECK_TRACKERS: {check_trackers if check_trackers else 'All trackers allowed'}")
 
@@ -203,22 +226,18 @@ def main():
     app_logger.section("===== Nemorosa Starting =====")
 
     try:
-        app_logger.section("===== Connecting to Torrent Client =====")
-        app_logger.debug("Connecting to torrent client at %s...", args.client)
-        app_torrent_client = client_instance.create_torrent_client(args.client)
-        client_instance.set_torrent_client(app_torrent_client)
-        app_logger.success("Successfully connected to torrent client")
-
         # Decide operation based on command line arguments
         if args.server:
             # Server mode
-            display_host = args.host if args.host is not None else "all interfaces (IPv4/IPv6)"
-            app_logger.info(f"Starting server mode on {display_host}:{args.port}")
+            display_host = (
+                config.cfg.server.host if config.cfg.server.host is not None else "all interfaces (IPv4/IPv6)"
+            )
+            app_logger.info(f"Starting server mode on {display_host}:{config.cfg.server.port}")
 
             run_webserver(
-                host=args.host,
-                port=args.port,
-                log_level=args.loglevel,
+                host=config.cfg.server.host,
+                port=config.cfg.server.port,
+                log_level=config.cfg.global_config.loglevel,
             )
         else:
             # Non-server modes - use asyncio
@@ -226,7 +245,7 @@ def main():
 
             asyncio.run(_async_main(args))
     except Exception as e:
-        app_logger.critical("Error connecting to torrent client: %s", e)
+        app_logger.critical("Error during initialization: %s", e)
         sys.exit(1)
 
     app_logger.section("===== Nemorosa Finished =====")
@@ -237,17 +256,8 @@ async def _async_main(args):
     app_logger = logger.get_logger()
 
     try:
-        # Initialize database tables
-        await db.get_database().init_database()
-        app_logger.debug("Database tables initialized")
-
-        # Establish API connections in async context
-        target_apis = await api.setup_api_connections(config.cfg.target_sites)
-        api.set_target_apis(target_apis)
-
-        # Start scheduler immediately so it's ready to accept jobs
-        await scheduler.get_job_manager().start_scheduler()
-        app_logger.debug("APScheduler initialized and started")
+        # Initialize core components (database, API connections, scheduler)
+        await async_init()
 
         # Create processor instance
         processor = NemorosaCore()

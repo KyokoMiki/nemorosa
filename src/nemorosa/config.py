@@ -1,8 +1,8 @@
 """Nemorosa configuration processing module."""
 
+import os
 import secrets
 import sys
-from pathlib import Path
 
 import humanfriendly
 import msgspec
@@ -11,9 +11,6 @@ from platformdirs import user_config_dir
 from . import logger
 
 APPNAME = "nemorosa"
-
-# Get project root directory
-root_path = Path(__file__).parent.parent
 
 
 class LinkingConfig(msgspec.Struct):
@@ -170,17 +167,7 @@ def get_user_config_path() -> str:
         str: Configuration file path.
     """
     config_dir = user_config_dir(APPNAME)
-    return str(Path(config_dir) / "config.yml")
-
-
-def get_config_dir() -> str:
-    """Get configuration file directory path.
-
-    Returns:
-        str: Configuration file directory path.
-    """
-    config_file_path = get_user_config_path()
-    return str(Path(config_file_path).parent)
+    return os.path.join(config_dir, "config.yml")
 
 
 def find_config_path(config_path: str | None = None) -> str:
@@ -195,27 +182,32 @@ def find_config_path(config_path: str | None = None) -> str:
     Raises:
         FileNotFoundError: Raised when configuration file is not found.
     """
-    if config_path:
-        # Use specified configuration file path
-        config_path_obj = Path(config_path)
-        if config_path_obj.exists():
-            return str(config_path_obj.absolute())
-        else:
-            raise FileNotFoundError(f"Specified config file not found: {config_path_obj}")
+    # Determine the path to check
+    path_to_check = os.path.abspath(config_path) if config_path else get_user_config_path()
 
-    # Only use user configuration directory
-    user_config_path = Path(get_user_config_path())
-    if user_config_path.exists():
-        return str(user_config_path.absolute())
+    # Check if the path exists and return absolute path
+    if os.path.exists(path_to_check):
+        return path_to_check
+    else:
+        log = logger.get_logger()
 
-    raise FileNotFoundError(f"Config file not found at: {user_config_path}")
+        log.warning("Configuration file not found. Creating default configuration...")
+
+        # Create default configuration file
+        created_path = create_default_config(path_to_check)
+        log.success(f"Default configuration created at: {created_path}")
+        log.info("Please edit the configuration file with your settings and run nemorosa again.")
+        log.info("You can also specify a custom config path with: nemorosa --config /path/to/config.yml")
+
+        # Exit program
+        sys.exit(0)
 
 
-def setup_config(config_path: str | None = None) -> NemorosaConfig:
+def setup_config(config_path: str) -> NemorosaConfig:
     """Set up and load configuration.
 
     Args:
-        config_path: Configuration file path, if None auto-detect.
+        config_path: Configuration file path.
 
     Returns:
         NemorosaConfig instance.
@@ -223,39 +215,32 @@ def setup_config(config_path: str | None = None) -> NemorosaConfig:
     Raises:
         ValueError: Raised when configuration loading or validation fails.
     """
-    actual_config_path = None
     try:
-        # Find configuration file
-        actual_config_path = find_config_path(config_path)
-
         # Parse configuration file directly to NemorosaConfig using msgspec
-        with open(actual_config_path, "rb") as f:
+        with open(config_path, "rb") as f:
             config = msgspec.yaml.decode(f.read(), type=NemorosaConfig)
+
+        logger.get_logger().info(f"Configuration loaded successfully from: {config_path}")
 
         return config
 
-    except FileNotFoundError as e:
-        raise ValueError(f"Configuration file not found: {e}") from e
     except msgspec.ValidationError as e:
-        raise ValueError(f"Configuration validation error in '{actual_config_path}': {e}") from e
+        raise ValueError(f"Configuration validation error in '{config_path}': {e}") from e
     except Exception as e:
-        raise ValueError(f"Error reading config file '{actual_config_path}': {e}") from e
+        raise ValueError(f"Error reading config file '{config_path}': {e}") from e
 
 
-def create_default_config(target_path: str | None = None) -> str:
+def create_default_config(target_path: str) -> str:
     """Create default configuration file.
 
     Args:
-        target_path: Target path, if None create in user config directory.
+        target_path: Target path for the configuration file.
 
     Returns:
         Created configuration file path.
     """
-    if target_path is None:
-        target_path = get_user_config_path()
-
-    target_path_obj = Path(target_path)
-    target_path_obj.parent.mkdir(parents=True, exist_ok=True)
+    # Create parent directory if it doesn't exist
+    os.makedirs(os.path.dirname(target_path), exist_ok=True)
 
     # Default configuration content
     default_config = f"""# Nemorosa Configuration File
@@ -312,10 +297,10 @@ target_site:
     cookie: "your_cookie_here" # For sites that don't support API, use cookie instead
 """
 
-    with open(target_path_obj, "w", encoding="utf-8") as f:
+    with open(target_path, "w", encoding="utf-8") as f:
         f.write(default_config)
 
-    return str(target_path_obj)
+    return target_path
 
 
 # Global configuration object
@@ -333,29 +318,5 @@ def init_config(config_path: str | None = None) -> None:
     """
     global cfg
 
-    try:
-        cfg = setup_config(config_path)
-        # Log successful configuration loading
-        log = logger.get_logger()
-        actual_config_path = find_config_path(config_path)
-        log.info(f"Configuration loaded successfully from: {actual_config_path}")
-    except ValueError as e:
-        if "Configuration file not found" in str(e):
-            # Configuration file doesn't exist, create default configuration file
-            log = logger.get_logger()
-            log.warning("Configuration file not found. Creating default configuration...")
-
-            # Determine configuration file path
-            default_config_path = config_path or get_user_config_path()
-
-            # Create default configuration file
-            created_path = create_default_config(default_config_path)
-            log.success(f"Default configuration created at: {created_path}")
-            log.info("Please edit the configuration file with your settings and run nemorosa again.")
-            log.info("You can also specify a custom config path with: nemorosa --config /path/to/config.yml")
-
-            # Exit program
-            sys.exit(0)
-        else:
-            # Other configuration errors, re-raise
-            raise
+    actual_config_path = find_config_path(config_path)
+    cfg = setup_config(actual_config_path)

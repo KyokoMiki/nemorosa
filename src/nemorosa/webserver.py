@@ -46,24 +46,11 @@ async def lifespan(_: FastAPI):
     # Get logger and job manager
     app_logger = logger.get_logger()
     job_manager = scheduler.get_job_manager()
-    await job_manager.start_scheduler()
 
-    # Initialize database tables
-    try:
-        await db.get_database().init_database()
-        app_logger.info("Database initialized successfully")
-    except Exception as e:
-        app_logger.error(f"Failed to initialize database: {str(e)}")
-        raise
+    # Initialize core components (torrent client, database, API connections, scheduler)
+    from .cli import async_init
 
-    # Setup API connections
-    try:
-        target_apis = await api.setup_api_connections(config.cfg.target_sites)
-        api.set_target_apis(target_apis)
-        app_logger.info(f"API connections established for {len(target_apis)} target sites")
-    except Exception as e:
-        app_logger.error(f"Failed to establish API connections: {str(e)}")
-        app_logger.warning("Web server will start without API connections")
+    await async_init()
 
     # Add scheduled jobs if available
     if job_manager and api.get_target_apis():

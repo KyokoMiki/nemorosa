@@ -9,6 +9,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import msgspec
+from platformdirs import user_config_dir
 from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, delete, func, select, text, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -136,18 +137,16 @@ class TorrentDatabase:
         Args:
             db_path: Database file path, if None uses config directory.
         """
-        if db_path is None:
-            config_dir = config.get_config_dir()
-            db_path = os.path.join(config_dir, "nemorosa.db")
-
-        self.db_path = db_path
+        self.db_path = (
+            os.path.abspath(db_path) if db_path else os.path.join(user_config_dir(config.APPNAME), "nemorosa.db")
+        )
 
         # Ensure database directory exists
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
 
         # Create async engine with SQLAlchemy 2.0 style
         self.engine: AsyncEngine = create_async_engine(
-            f"sqlite+aiosqlite:///{db_path}",
+            f"sqlite+aiosqlite:///{self.db_path}",
             echo=False,
             future=True,
         )
@@ -166,6 +165,10 @@ class TorrentDatabase:
             await conn.execute(text("PRAGMA journal_mode=WAL"))
             # Create all tables defined in Base metadata
             await conn.run_sync(Base.metadata.create_all)
+
+        async with self.engine.connect() as conn:
+            await conn.execute(text("VACUUM"))
+            await conn.commit()
 
     # region Scan results
 
@@ -281,7 +284,7 @@ class TorrentDatabase:
         async with self.async_session_maker() as session:
             stmt = select(ScanResult).where(
                 ScanResult.matched_torrent_hash.is_not(None),
-                ScanResult.checked == False,  # noqa: E712
+                ScanResult.checked.is_(False),
             )
             result_set = await session.execute(stmt)
             scan_results = result_set.scalars().all()
@@ -411,11 +414,11 @@ class TorrentDatabase:
             result = await session.execute(stmt)
             return {hash_val for (hash_val,) in result.all()}
 
-    async def delete_client_torrents(self, torrent_hashes: str | list[str]):
+    async def delete_client_torrents(self, torrent_hashes: str | list[str] | set[str]):
         """Delete torrent(s) and their files from cache.
 
         Args:
-            torrent_hashes: Single torrent hash or list of torrent hashes to delete.
+            torrent_hashes: Single torrent hash, list of torrent hashes, or set of torrent hashes to delete.
         """
         if isinstance(torrent_hashes, str):
             condition = ClientTorrent.hash == torrent_hashes
@@ -614,6 +617,12 @@ class TorrentDatabase:
 
     async def close(self):
         """Close database connection."""
+        # Execute checkpoint to merge WAL file into main database
+        async with self.engine.connect() as conn:
+            # TRUNCATE mode: checkpoint all frames and truncate the WAL file
+            await conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+            await conn.commit()
+
         await self.engine.dispose()
 
 
@@ -626,9 +635,11 @@ async def cleanup_database():
     """Cleanup global database instance."""
     global _db_instance
     with _db_lock:
-        if _db_instance is not None:
-            await _db_instance.close()
-            _db_instance = None
+        db_to_close = _db_instance
+        _db_instance = None
+
+    if db_to_close is not None:
+        await db_to_close.close()
 
 
 def get_database(db_path: str | None = None) -> TorrentDatabase:
@@ -643,9 +654,5 @@ def get_database(db_path: str | None = None) -> TorrentDatabase:
     global _db_instance
     with _db_lock:
         if _db_instance is None:
-            if db_path is None:
-                # Use database file in config directory
-                config_dir = config.get_config_dir()
-                db_path = os.path.join(config_dir, "nemorosa.db")
             _db_instance = TorrentDatabase(db_path)
         return _db_instance
