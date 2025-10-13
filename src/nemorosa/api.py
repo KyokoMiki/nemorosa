@@ -58,6 +58,10 @@ class GazelleBase(ABC):
     def announce(self):
         return f"{self.tracker_url}/{self.passkey}/announce"
 
+    @property
+    def site_host(self):
+        return str(urlparse(self.server).hostname)
+
     async def torrent(self, torrent_id):
         """Get torrent object - subclasses need to implement specific request logic.
 
@@ -107,22 +111,23 @@ class GazelleBase(ABC):
         Returns:
             dict: Dictionary mapping filename to file size.
         """
-        file_list = {}
-        if file_list_str:
-            self.logger.debug("Parsing file list")
-            # split the string into individual entries
-            entries = file_list_str.split("|||")
-            for entry in entries:
-                # split filename and filesize
-                parts = entry.split("{{{")
-                if len(parts) == 2:
-                    filename = html.unescape(parts[0].strip())
-                    filesize = parts[1].removesuffix("}}}").strip()
-                    file_list[filename] = int(filesize)
-                else:
-                    self.logger.warning(f"Malformed entry in file list: {entry}")
-        else:
+        if not file_list_str:
             self.logger.warning("File list is empty or None")
+            return {}
+
+        self.logger.debug("Parsing file list")
+        # split the string into individual entries
+        entries = file_list_str.split("|||")
+        file_list = {}
+        for entry in entries:
+            # split filename and filesize
+            parts = entry.split("{{{")
+            if len(parts) == 2:
+                filename = html.unescape(parts[0].strip())
+                filesize = parts[1].removesuffix("}}}").strip()
+                file_list[filename] = int(filesize)
+            else:
+                self.logger.warning(f"Malformed entry in file list: {entry}")
 
         return file_list
 
@@ -323,10 +328,12 @@ class GazelleJSONAPI(GazelleBase):
                 self.logger.debug(f"API search successful for file '{filename}'")
 
             # Process search results
-            torrents = []
-            for group in response["response"]["results"]:
-                if "torrents" in group:
-                    torrents.extend(group["torrents"])
+            torrents = [
+                torrent
+                for group in response["response"]["results"]
+                if "torrents" in group
+                for torrent in group["torrents"]
+            ]
 
             return torrents
         except Exception as e:
@@ -564,10 +571,7 @@ async def setup_api_connections(target_sites: list[TargetSiteConfig]):
 
     for i, site in enumerate(target_sites):
         # Convert cookie string to dict if present
-        site_cookies = None
-        if site.cookie:
-            simple_cookie = SimpleCookie(site.cookie)
-            site_cookies = {key: morsel.value for key, morsel in simple_cookie.items()}
+        site_cookies = {key: morsel.value for key, morsel in SimpleCookie(site.cookie).items()} if site.cookie else None
 
         app_logger.debug(f"Connecting to target site {i + 1}/{len(target_sites)}: {site.server}")
         try:

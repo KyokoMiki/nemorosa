@@ -148,25 +148,17 @@ def extract_match_key_by_diff(diff: DiffResult | None, filename: str) -> str:
 
 def calculate_file_keys(files: list[str]) -> dict:
     """Calculate match keys for file list."""
-    result = {}
-
     # Get filenames without extensions
-    filenames = []
-    for file in files:
-        name = file.rsplit(".", 1)[0] if "." in file else file
-        if name:
-            filenames.append(name)
+    filenames = [name for file in files if (name := (file.rsplit(".", 1)[0] if "." in file else file))]
 
     if not filenames:
-        return result
+        return {}
 
     # Analyze filename differences
     diff = get_diff_result(filenames)
 
     # Extract match key for each file
-    for file in files:
-        name = file.rsplit(".", 1)[0] if "." in file else file
-        result[file] = extract_match_key_by_diff(diff, name)
+    result = {file: extract_match_key_by_diff(diff, file.rsplit(".", 1)[0] if "." in file else file) for file in files}
 
     return result
 

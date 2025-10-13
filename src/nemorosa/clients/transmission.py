@@ -283,7 +283,6 @@ class TransmissionClient(TorrentClient):
 
     def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
         """Process rename mapping to adapt to Transmission."""
-        transmission_map = {}
         temp_map = {}
         for torrent_name, local_name in rename_map.items():
             torrent_name_list = torrent_name.split("/")
@@ -294,8 +293,10 @@ class TransmissionClient(TorrentClient):
                     if torrent_name_list[i] != local_name_list[i]:
                         temp_map[("/".join(torrent_name_list[: i + 1]), local_name_list[i])] = i
 
-        for (key, value), _priority in sorted(temp_map.items(), key=lambda item: item[1], reverse=True):
-            transmission_map[posixpath.join(base_path, key)] = value
+        transmission_map = {
+            posixpath.join(base_path, key): value
+            for (key, value), _priority in sorted(temp_map.items(), key=lambda item: item[1], reverse=True)
+        }
 
         return transmission_map
 

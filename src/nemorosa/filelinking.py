@@ -16,6 +16,14 @@ from reflink_copy import reflink, reflink_or_copy
 from . import config, logger
 
 
+def _safe_stat_dev(path: str) -> int | None:
+    """Safely get st_dev for a path, return None on error."""
+    try:
+        return os.stat(path).st_dev
+    except OSError:
+        return None
+
+
 class LinkType(Enum):
     """File linking types."""
 
@@ -51,21 +59,19 @@ def get_link_directory(source_path: str) -> str | None:
         # Strategy 1: Try device-based matching (like cross-seed)
         # On Windows, st_dev always returns 0, so this will be skipped
         if source_dev != 0:
-            # Get device IDs for all link directories
-            link_devs = []
+            # Build device to directory mapping, abort if duplicates found
+            dev_to_dir = {}
             for link_dir in config.cfg.linking.link_dirs:
-                try:
-                    link_stat = os.stat(link_dir)
-                    link_devs.append((link_dir, link_stat.st_dev))
-                except OSError:
-                    continue
+                if st_dev := _safe_stat_dev(link_dir):
+                    if st_dev in dev_to_dir:
+                        # Duplicate device found, cannot use device matching
+                        dev_to_dir = {}
+                        break
+                    dev_to_dir[st_dev] = link_dir
 
-            # Check if all link directories are on different devices
-            if len(set(dev for _, dev in link_devs)) == len(link_devs):
-                # All link directories are on different devices, try device matching
-                for link_dir, link_dev in link_devs:
-                    if link_dev == source_dev:
-                        return link_dir
+            # Try to find matching device
+            if source_dev in dev_to_dir:
+                return dev_to_dir[source_dev]
 
         # Strategy 2: Test actual linking capability in each directory
         # This works for Docker mounts, Windows, and other cases where st_dev is not reliable

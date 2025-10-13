@@ -4,6 +4,7 @@ import traceback
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
+import msgspec
 import torf
 
 from . import client_instance, config, db, filecompare, filelinking, logger
@@ -14,23 +15,39 @@ if TYPE_CHECKING:
     from .api import GazelleJSONAPI, GazelleParser
 
 
+class ProcessorStats(msgspec.Struct, frozen=False):
+    """Statistics for torrent processing session."""
+
+    found: int = 0
+    downloaded: int = 0
+    scanned: int = 0
+    cnt_dl_fail: int = 0
+    attempted: int = 0
+    successful: int = 0
+    failed: int = 0
+    removed: int = 0
+
+
+class PostProcessStats(msgspec.Struct, frozen=False):
+    """Statistics for post-processing injected torrents."""
+
+    matches_checked: int = 0
+    matches_completed: int = 0
+    matches_started_downloading: int = 0
+    matches_already_downloading: int = 0
+    matches_failed: int = 0
+
+
 class NemorosaCore:
     """Main class for processing torrents and cross-seeding operations."""
+
+    stats: ProcessorStats
 
     def __init__(self):
         """Initialize the torrent processor."""
         self.torrent_client = client_instance.get_torrent_client()
         self.database = db.get_database()
-        self.stats = {
-            "found": 0,
-            "downloaded": 0,
-            "scanned": 0,
-            "cnt_dl_fail": 0,
-            "attempted": 0,
-            "successful": 0,
-            "failed": 0,
-            "removed": 0,
-        }
+        self.stats = ProcessorStats()
         self.logger = logger.get_logger()
 
     async def hash_based_search(
@@ -319,13 +336,10 @@ class NemorosaCore:
         Returns:
             tuple[int | None, bool]: (torrent_id, downloaded) - torrent ID and download success status.
         """
-        self.stats["scanned"] += 1
+        self.stats.scanned += 1
 
         tid = None
         hash_match = True
-
-        # Get site hostname
-        site_host = urlparse(api.server).netloc
 
         # Track if any search method failed with an error
         search_error_occurred = False
@@ -357,13 +371,13 @@ class NemorosaCore:
                     local_torrent_hash=torrent_details.hash,
                     local_torrent_name=torrent_details.name,
                     matched_torrent_id=None,
-                    site_host=site_host,
+                    site_host=api.site_host,
                     matched_torrent_hash=None,
                 )
             return None, False
 
         # Found a match
-        self.stats["found"] += 1
+        self.stats.found += 1
         self.logger.success(f"Found match! Torrent ID: {tid}")
 
         # If found via hash search, modify the existing torrent for the new tracker
@@ -380,9 +394,7 @@ class NemorosaCore:
             torrent_object = torf.Torrent.read_stream(torrent_data)
 
         # Generate file dictionary and rename map
-        fdict_torrent = {}
-        for f in torrent_object.files:
-            fdict_torrent["/".join(f.parts[1:])] = f.size
+        fdict_torrent = {"/".join(f.parts[1:]): f.size for f in torrent_object.files}
 
         rename_map = filecompare.generate_rename_map(torrent_details.fdict, fdict_torrent)
 
@@ -410,12 +422,12 @@ class NemorosaCore:
                 )
                 if success:
                     downloaded = True
-                    self.stats["downloaded"] += 1
+                    self.stats.downloaded += 1
                     self.logger.success("Torrent injected successfully")
                 else:
                     self.logger.error(f"Failed to inject torrent: {tid}")
-                    self.stats["cnt_dl_fail"] += 1
-                    if self.stats["cnt_dl_fail"] <= 10:
+                    self.stats.cnt_dl_fail += 1
+                    if self.stats.cnt_dl_fail <= 10:
                         self.logger.error(traceback.format_exc())
                         self.logger.error(
                             f"It might because the torrent id {tid} has reached the "
@@ -423,7 +435,7 @@ class NemorosaCore:
                             f"The failed download info will be saved to database. "
                             "You can download it from your own browser."
                         )
-                        if self.stats["cnt_dl_fail"] == 10:
+                        if self.stats.cnt_dl_fail == 10:
                             self.logger.debug("Suppressing further hinting for .torrent file downloading failures")
             except TorrentConflictError as e:
                 # Torrent conflict - treat as no match found
@@ -433,7 +445,7 @@ class NemorosaCore:
                     local_torrent_hash=torrent_details.hash,
                     local_torrent_name=torrent_details.name,
                     matched_torrent_id=None,
-                    site_host=site_host,
+                    site_host=api.site_host,
                     matched_torrent_hash=None,
                 )
                 return None, False
@@ -443,7 +455,7 @@ class NemorosaCore:
             local_torrent_hash=torrent_details.hash,
             local_torrent_name=torrent_details.name,
             matched_torrent_id=str(tid),
-            site_host=site_host,
+            site_host=api.site_host,
             matched_torrent_hash=torrent_object.infohash,
         )
         if not downloaded:
@@ -452,7 +464,7 @@ class NemorosaCore:
                 "local_torrent_name": torrent_details.name,
                 "rename_map": rename_map,
             }
-            await self.database.add_undownloaded_torrent(str(tid), torrent_info, site_host)
+            await self.database.add_undownloaded_torrent(str(tid), torrent_info, api.site_host)
 
         # Start tracking verification after database operations are complete
         if downloaded:
@@ -481,14 +493,13 @@ class NemorosaCore:
         existing_target_trackers = set(torrent_details.existing_target_trackers)
 
         for api_instance in get_target_apis():
-            # Get site hostname for this API instance
-            site_host = urlparse(api_instance.server).netloc
-
             # Check if torrent has been scanned on this specific site
-            if await self.database.is_hash_scanned(local_torrent_hash=torrent_details.hash, site_host=site_host):
+            if await self.database.is_hash_scanned(
+                local_torrent_hash=torrent_details.hash, site_host=api_instance.site_host
+            ):
                 self.logger.debug(
                     "Skipping already scanned torrent on %s: %s (%s)",
-                    site_host,
+                    api_instance.site_host,
                     torrent_details.name,
                     torrent_details.hash,
                 )
@@ -526,7 +537,7 @@ class NemorosaCore:
         target_trackers = [api_instance.tracker_query for api_instance in get_target_apis()]
 
         # Reset stats for this processing session
-        self.stats = {"found": 0, "downloaded": 0, "scanned": 0, "cnt_dl_fail": 0}
+        self.stats = ProcessorStats()
 
         try:
             # Get filtered torrent list
@@ -556,9 +567,9 @@ class NemorosaCore:
             self.logger.error(traceback.format_exc())
         finally:
             self.logger.success("Torrent processing summary:")
-            self.logger.success("Torrents scanned: %d", self.stats["scanned"])
-            self.logger.success("Matches found: %d", self.stats["found"])
-            self.logger.success(".torrent files downloaded: %d", self.stats["downloaded"])
+            self.logger.success("Torrents scanned: %d", self.stats.scanned)
+            self.logger.success("Matches found: %d", self.stats.found)
+            self.logger.success(".torrent files downloaded: %d", self.stats.downloaded)
             self.logger.section("===== Torrent Processing Complete =====")
 
     async def retry_undownloaded_torrents(self):
@@ -566,16 +577,15 @@ class NemorosaCore:
         self.logger.section("===== Retrying Undownloaded Torrents =====")
 
         # Reset retry stats
-        retry_stats = {"attempted": 0, "successful": 0, "failed": 0, "removed": 0}
+        retry_stats = ProcessorStats()
 
         try:
             # Process undownloaded torrents for each target site
             for api_instance in get_target_apis():
-                site_host = urlparse(api_instance.server).netloc
                 self.logger.debug(f"Processing undownloaded torrents for site: {api_instance.server}")
 
                 # Get undownloaded torrents for this site
-                undownloaded_torrents = await self.database.load_undownloaded_torrents(site_host)
+                undownloaded_torrents = await self.database.load_undownloaded_torrents(api_instance.site_host)
 
                 if not undownloaded_torrents:
                     self.logger.debug(f"No undownloaded torrents found for site: {api_instance.server}")
@@ -586,9 +596,9 @@ class NemorosaCore:
                 )
 
                 for torrent_id, torrent_info in undownloaded_torrents.items():
-                    retry_stats["attempted"] += 1
+                    retry_stats.attempted += 1
                     self.logger.header(
-                        f"Retrying torrent ID: {torrent_id} ({retry_stats['attempted']}/{len(undownloaded_torrents)})"
+                        f"Retrying torrent ID: {torrent_id} ({retry_stats.attempted}/{len(undownloaded_torrents)})"
                     )
 
                     try:
@@ -609,19 +619,19 @@ class NemorosaCore:
                             torrent_data, download_dir, local_torrent_name, rename_map, False
                         )
                         if success:
-                            retry_stats["successful"] += 1
-                            retry_stats["removed"] += 1
+                            retry_stats.successful += 1
+                            retry_stats.removed += 1
 
                             # Injection successful, remove from undownloaded table
-                            await self.database.remove_undownloaded_torrent(torrent_id, site_host)
+                            await self.database.remove_undownloaded_torrent(torrent_id, api_instance.site_host)
                             self.logger.success(f"Successfully downloaded and injected torrent {torrent_id}")
                             self.logger.success(f"Removed torrent {torrent_id} from undownloaded list")
                         else:
-                            retry_stats["failed"] += 1
+                            retry_stats.failed += 1
                             self.logger.error(f"Failed to inject torrent {torrent_id}")
 
                     except Exception as e:
-                        retry_stats["failed"] += 1
+                        retry_stats.failed += 1
                         self.logger.error(f"Error processing torrent {torrent_id}: {e}")
                         continue
 
@@ -630,10 +640,10 @@ class NemorosaCore:
             self.logger.error(traceback.format_exc())
         finally:
             self.logger.success("Retry undownloaded torrents summary:")
-            self.logger.success("Torrents attempted: %d", retry_stats["attempted"])
-            self.logger.success("Successfully downloaded: %d", retry_stats["successful"])
-            self.logger.success("Failed downloads: %d", retry_stats["failed"])
-            self.logger.success("Removed from undownloaded list: %d", retry_stats["removed"])
+            self.logger.success("Torrents attempted: %d", retry_stats.attempted)
+            self.logger.success("Successfully downloaded: %d", retry_stats.successful)
+            self.logger.success("Failed downloads: %d", retry_stats.failed)
+            self.logger.success("Removed from undownloaded list: %d", retry_stats.removed)
             self.logger.section("===== Retry Undownloaded Torrents Complete =====")
 
     async def post_process_injected_torrents(self):
@@ -647,13 +657,7 @@ class NemorosaCore:
         self.logger.section("===== Post-Processing Injected Torrents =====")
 
         # Reset stats for injected torrents processing
-        stats = {
-            "matches_checked": 0,
-            "matches_completed": 0,
-            "matches_started_downloading": 0,
-            "matches_already_downloading": 0,
-            "matches_failed": 0,
-        }
+        stats = PostProcessStats()
 
         try:
             # Get all matched scan results
@@ -666,21 +670,21 @@ class NemorosaCore:
 
             # Process all matched results
             for matched_torrent_hash in matched_results:
-                stats["matches_checked"] += 1
+                stats.matches_checked += 1
 
                 # Process single torrent
                 result = await self.torrent_client.post_process_single_injected_torrent(matched_torrent_hash)
 
                 # Update stats based on result
-                if result["status"] == "completed":
-                    stats["matches_completed"] += 1
-                    if result["started_downloading"]:
-                        stats["matches_started_downloading"] += 1
-                elif result["status"] == "partial_kept":
+                if result.status == "completed":
+                    stats.matches_completed += 1
+                    if result.started_downloading:
+                        stats.matches_started_downloading += 1
+                elif result.status == "partial_kept":
                     # Partial torrent kept, no action needed
                     pass
-                elif result["status"] in ("partial_removed", "error"):
-                    stats["matches_failed"] += 1
+                elif result.status in ("partial_removed", "error"):
+                    stats.matches_failed += 1
                 # For "not_found" and "checking" status, no stats update needed
 
         except Exception as e:
@@ -688,11 +692,11 @@ class NemorosaCore:
             self.logger.error(traceback.format_exc())
         finally:
             self.logger.success("Injected torrents post-processing summary:")
-            self.logger.success("Matches checked: %d", stats["matches_checked"])
-            self.logger.success("Matches completed: %d", stats["matches_completed"])
-            self.logger.success("Matches started downloading: %d", stats["matches_started_downloading"])
-            self.logger.success("Matches already downloading: %d", stats["matches_already_downloading"])
-            self.logger.success("Matches failed: %d", stats["matches_failed"])
+            self.logger.success("Matches checked: %d", stats.matches_checked)
+            self.logger.success("Matches completed: %d", stats.matches_completed)
+            self.logger.success("Matches started downloading: %d", stats.matches_started_downloading)
+            self.logger.success("Matches already downloading: %d", stats.matches_already_downloading)
+            self.logger.success("Matches failed: %d", stats.matches_failed)
             self.logger.section("===== Injected Torrents Post-Processing Complete =====")
 
     async def process_single_torrent(
@@ -736,7 +740,7 @@ class NemorosaCore:
                 }
 
             # Reset stats for this processing session
-            self.stats = {"found": 0, "downloaded": 0, "scanned": 0, "cnt_dl_fail": 0}
+            self.stats = ProcessorStats()
 
             # Process the torrent using the same logic as process_single_torrent_from_client
             any_success = await self.process_single_torrent_from_client(
@@ -778,7 +782,6 @@ class NemorosaCore:
             parsed_link = urlparse(torrent_link)
             query_params = parse_qs(parsed_link.query)
             tid = query_params["id"][0]
-            site_host = parsed_link.netloc
 
             self.logger.debug(f"Extracted torrent ID: {tid} from link: {torrent_link}")
 
@@ -787,9 +790,7 @@ class NemorosaCore:
 
             # Parse incoming torrent data
             torrent_object = torf.Torrent.read_stream(torrent_data)
-            fdict_torrent = {}
-            for f in torrent_object.files:
-                fdict_torrent["/".join(f.parts[1:])] = f.size
+            fdict_torrent = {"/".join(f.parts[1:]): f.size for f in torrent_object.files}
 
             # Search for matching torrents using database (no need to load all torrents)
             matched_torrents = await self._search_torrent_by_filename_in_client(fdict_torrent)
@@ -856,7 +857,7 @@ class NemorosaCore:
                 )
                 if success:
                     downloaded = True
-                    self.stats["downloaded"] += 1
+                    self.stats.downloaded += 1
                     self.logger.success("Torrent injected successfully")
                 else:
                     self.logger.error(f"Failed to inject torrent: {tid}")
@@ -869,7 +870,7 @@ class NemorosaCore:
                     "local_torrent_name": matched_torrent.name,
                     "rename_map": rename_map,
                 }
-                await self.database.add_undownloaded_torrent(str(tid), torrent_info, site_host)
+                await self.database.add_undownloaded_torrent(str(tid), torrent_info, str(parsed_link.hostname))
 
             return {
                 "status": "success",

@@ -128,8 +128,8 @@ class Metadata(Base):
     value: Mapped[str | None] = mapped_column(String)
 
 
-class TorrentDatabase:
-    """Torrent database management class using SQLAlchemy async API."""
+class NemorosaDatabase:
+    """Nemorosa database management class using SQLAlchemy async API."""
 
     def __init__(self, db_path: str | None = None):
         """Initialize database connection.
@@ -235,13 +235,14 @@ class TorrentDatabase:
             result_set = await session.execute(stmt)
             torrents = result_set.scalars().all()
 
-            result = {}
-            for torrent in torrents:
-                result[torrent.torrent_id] = {
+            result = {
+                torrent.torrent_id: {
                     "download_dir": torrent.download_dir,
                     "local_torrent_name": torrent.local_torrent_name,
                     "rename_map": msgspec.json.decode(torrent.rename_map) if torrent.rename_map else {},
                 }
+                for torrent in torrents
+            }
             return result
 
     async def add_undownloaded_torrent(self, torrent_id: str, torrent_info: dict, site_host: str = "default"):
@@ -289,15 +290,16 @@ class TorrentDatabase:
             result_set = await session.execute(stmt)
             scan_results = result_set.scalars().all()
 
-            result = {}
-            for scan_result in scan_results:
-                if scan_result.matched_torrent_hash:
-                    result[scan_result.matched_torrent_hash] = {
-                        "local_torrent_hash": scan_result.local_torrent_hash,
-                        "local_torrent_name": scan_result.local_torrent_name,
-                        "matched_torrent_id": scan_result.matched_torrent_id,
-                        "site_host": scan_result.site_host,
-                    }
+            result = {
+                scan_result.matched_torrent_hash: {
+                    "local_torrent_hash": scan_result.local_torrent_hash,
+                    "local_torrent_name": scan_result.local_torrent_name,
+                    "matched_torrent_id": scan_result.matched_torrent_id,
+                    "site_host": scan_result.site_host,
+                }
+                for scan_result in scan_results
+                if scan_result.matched_torrent_hash
+            }
             return result
 
     async def update_scan_result_checked(self, matched_torrent_hash: str, checked: bool):
@@ -397,10 +399,11 @@ class TorrentDatabase:
 
             # Insert file records
             if torrent_info.files:
-                for file_obj in torrent_info.files:
-                    torrent_file = TorrentFile(
-                        torrent_hash=torrent_info.hash, file_path=file_obj.name, file_size=file_obj.size
-                    )
+                torrent_files = [
+                    TorrentFile(torrent_hash=torrent_info.hash, file_path=file_obj.name, file_size=file_obj.size)
+                    for file_obj in torrent_info.files
+                ]
+                for torrent_file in torrent_files:
                     session.add(torrent_file)
 
     async def get_all_cached_torrent_hashes(self) -> set[str]:
@@ -627,7 +630,7 @@ class TorrentDatabase:
 
 
 # Global database instance
-_db_instance: TorrentDatabase | None = None
+_db_instance: NemorosaDatabase | None = None
 _db_lock = threading.Lock()
 
 
@@ -642,17 +645,17 @@ async def cleanup_database():
         await db_to_close.close()
 
 
-def get_database(db_path: str | None = None) -> TorrentDatabase:
+def get_database(db_path: str | None = None) -> NemorosaDatabase:
     """Get global database instance.
 
     Args:
         db_path (str, optional): Database file path, if None uses nemorosa.db in config directory.
 
     Returns:
-        TorrentDatabase: Database instance.
+        NemorosaDatabase: Database instance.
     """
     global _db_instance
     with _db_lock:
         if _db_instance is None:
-            _db_instance = TorrentDatabase(db_path)
+            _db_instance = NemorosaDatabase(db_path)
         return _db_instance

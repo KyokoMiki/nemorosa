@@ -41,11 +41,7 @@ _DELUGE_FIELD_SPECS = {
     "files": FieldSpec(
         _request_arguments={"files", "file_progress"},
         extractor=lambda t: [
-            ClientTorrentFile(
-                name=f["path"],
-                size=f["size"],
-                progress=t["file_progress"][f["index"]],
-            )
+            ClientTorrentFile(name=f["path"], size=f["size"], progress=t["file_progress"][f["index"]])
             for f in t["files"]
         ],
     ),
@@ -268,15 +264,15 @@ class DelugeClient(TorrentClient):
         """
         Deluge needs to use index to rename files
         """
-        new_rename_map = {}
         torrent_info = self.client.call("core.get_torrent_status", torrent_hash, ["files"])
         if torrent_info is None:
             return {}
         files = torrent_info.get("files", [])
-        for file in files:
-            relpath = posixpath.relpath(file["path"], base_path)
-            if relpath in rename_map:
-                new_rename_map[file["index"]] = posixpath.join(base_path, rename_map[relpath])
+        new_rename_map = {
+            file["index"]: posixpath.join(base_path, rename_map[relpath])
+            for file in files
+            if (relpath := posixpath.relpath(file["path"], base_path)) in rename_map
+        }
         return new_rename_map
 
     def _get_torrent_data(self, torrent_hash: str) -> bytes | None:

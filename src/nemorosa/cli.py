@@ -279,9 +279,7 @@ async def _async_main(args):
             if result.get("stats"):
                 stats = result["stats"]
                 app_logger.debug(
-                    f"Stats - Found: {stats.get('found', 0)}, "
-                    f"Downloaded: {stats.get('downloaded', 0)}, "
-                    f"Scanned: {stats.get('scanned', 0)}"
+                    f"Stats - Found: {stats.found}, Downloaded: {stats.downloaded}, Scanned: {stats.scanned}"
                 )
         elif args.retry_undownloaded:
             # Re-download undownloaded torrents

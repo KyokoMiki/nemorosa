@@ -17,6 +17,14 @@ from apscheduler.triggers.interval import IntervalTrigger
 from .. import config, db, filecompare, logger, scheduler
 
 
+class PostProcessResult(msgspec.Struct, frozen=False):
+    """Result of processing a single injected torrent."""
+
+    status: str = "not_found"  # 'completed', 'partial_kept', 'partial_removed', 'not_found', 'checking', 'error'
+    started_downloading: bool = False
+    error_message: str | None = None
+
+
 class FieldSpec(msgspec.Struct):
     """Base field specification for torrent client field extraction."""
 
@@ -795,19 +803,16 @@ class TorrentClient(ABC):
 
     # region Post-Processing
 
-    async def post_process_single_injected_torrent(self, matched_torrent_hash: str) -> dict:
+    async def post_process_single_injected_torrent(self, matched_torrent_hash: str) -> PostProcessResult:
         """Post-process a single injected torrent to determine its status and take appropriate action.
 
         Args:
             matched_torrent_hash: The hash of the matched torrent to process
 
         Returns:
-            dict: Statistics about the processing result with keys:
-                - status: 'completed', 'partial_kept', 'partial_removed', 'not_found', 'checking', 'error'
-                - started_downloading: bool indicating if download was started
-                - error_message: str containing error details if status is 'error'
+            PostProcessResult: Processing result with status, started_downloading flag, and error_message
         """
-        stats = {"status": "not_found", "started_downloading": False, "error_message": None}
+        result = PostProcessResult()
 
         try:
             database = db.get_database()
@@ -820,14 +825,14 @@ class TorrentClient(ABC):
             )
             if not matched_torrent:
                 self.logger.debug(f"Matched torrent {matched_torrent_hash} not found in client, skipping")
-                stats["status"] = "not_found"
-                return stats
+                result.status = "not_found"
+                return result
 
             # Skip if matched torrent is checking
             if matched_torrent.state == TorrentState.CHECKING:
                 self.logger.debug(f"Matched torrent {matched_torrent.name} is checking, skipping")
-                stats["status"] = "checking"
-                return stats
+                result.status = "checking"
+                return result
 
             # If matched torrent is 100% complete, start downloading
             if matched_torrent.progress == 1.0:
@@ -837,13 +842,13 @@ class TorrentClient(ABC):
                     # Start downloading the matched torrent
                     self._resume_torrent(matched_torrent.hash)
                     self.logger.success(f"Started downloading matched torrent: {matched_torrent.name}")
-                    stats["started_downloading"] = True
+                    result.started_downloading = True
                 else:
                     self.logger.info("Auto-start disabled, torrent will remain paused")
-                    stats["started_downloading"] = False
+                    result.started_downloading = False
                 # Mark as checked since it's 100% complete
                 await database.update_scan_result_checked(matched_torrent_hash, True)
-                stats["status"] = "completed"
+                result.status = "completed"
             # If matched torrent is not 100% complete, check file progress patterns
             else:
                 self.logger.debug(
@@ -856,7 +861,7 @@ class TorrentClient(ABC):
                     self.logger.debug(f"Keeping partial torrent {matched_torrent.name} - valid pattern")
                     # Mark as checked since we're keeping the partial torrent
                     await database.update_scan_result_checked(matched_torrent_hash, True)
-                    stats["status"] = "partial_kept"
+                    result.status = "partial_kept"
                 else:
                     if config.cfg.linking.link_type in ["reflink", "reflink_or_copy"]:
                         # Keep partial torrent explicitly due to reflink being enabled
@@ -864,20 +869,20 @@ class TorrentClient(ABC):
                             f"Keeping partial torrent {matched_torrent.name} - kept due to reflink enabled"
                         )
                         await database.update_scan_result_checked(matched_torrent_hash, True)
-                        stats["status"] = "partial_kept"
+                        result.status = "partial_kept"
                     else:
                         self.logger.warning(f"Removing torrent {matched_torrent.name} - failed validation")
                         self._remove_torrent(matched_torrent.hash)
                         # Clear matched torrent information from database
                         await database.clear_matched_torrent_info(matched_torrent_hash)
-                        stats["status"] = "partial_removed"
+                        result.status = "partial_removed"
 
         except Exception as e:
             self.logger.error(f"Error processing torrent {matched_torrent_hash}: {e}")
-            stats["status"] = "error"
-            stats["error_message"] = str(e)
+            result.status = "error"
+            result.error_message = str(e)
 
-        return stats
+        return result
 
     # endregion
 
