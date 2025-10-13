@@ -1,11 +1,13 @@
 """Core processing functions for nemorosa."""
 
 import traceback
-from typing import TYPE_CHECKING, Any
+from enum import Enum
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 import msgspec
 import torf
+from pydantic import BaseModel, Field
 
 from . import client_instance, config, db, filecompare, filelinking, logger
 from .api import get_target_apis
@@ -15,7 +17,17 @@ if TYPE_CHECKING:
     from .api import GazelleJSONAPI, GazelleParser
 
 
-class ProcessorStats(msgspec.Struct, frozen=False):
+class ProcessStatus(Enum):
+    """Status enumeration for process operations."""
+
+    SUCCESS = "success"
+    NOT_FOUND = "not_found"
+    ERROR = "error"
+    SKIPPED = "skipped"
+    SKIPPED_POTENTIAL_TRUMP = "skipped_potential_trump"
+
+
+class ProcessorStats(msgspec.Struct):
     """Statistics for torrent processing session."""
 
     found: int = 0
@@ -28,7 +40,7 @@ class ProcessorStats(msgspec.Struct, frozen=False):
     removed: int = 0
 
 
-class PostProcessStats(msgspec.Struct, frozen=False):
+class PostProcessStats(msgspec.Struct):
     """Statistics for post-processing injected torrents."""
 
     matches_checked: int = 0
@@ -36,6 +48,28 @@ class PostProcessStats(msgspec.Struct, frozen=False):
     matches_started_downloading: int = 0
     matches_already_downloading: int = 0
     matches_failed: int = 0
+
+
+class ProcessResponse(BaseModel):
+    """Response model for process operations."""
+
+    status: ProcessStatus = Field(..., description="Processing status")
+    message: str = Field(..., description="Status message")
+
+    model_config = {
+        "json_schema_extra": {
+            "examples": [
+                {
+                    "status": "success",
+                    "message": "Successfully processed torrent: name (infohash)",
+                },
+                {
+                    "status": "skipped",
+                    "message": "Torrent already exists on all target trackers: [tracker1, tracker2]",
+                },
+            ]
+        }
+    }
 
 
 class NemorosaCore:
@@ -702,14 +736,14 @@ class NemorosaCore:
     async def process_single_torrent(
         self,
         infohash: str,
-    ) -> dict[str, Any]:
+    ) -> ProcessResponse:
         """Process a single torrent by infohash from torrent client.
 
         Args:
             infohash (str): Infohash of the torrent to process.
 
         Returns:
-            dict: Processing result with status and details.
+            ProcessResponse: Processing result with status and details.
         """
 
         try:
@@ -720,53 +754,47 @@ class NemorosaCore:
             torrent_info = self.torrent_client.get_single_torrent(infohash, target_trackers)
 
             if not torrent_info:
-                return {
-                    "status": "error",
-                    "message": f"Torrent with infohash {infohash} not found in client or was filtered out",
-                    "infohash": infohash,
-                }
+                return ProcessResponse(
+                    status=ProcessStatus.ERROR,
+                    message=f"Torrent with infohash {infohash} not found in client or was filtered out",
+                )
 
             # Check if torrent already exists on all target trackers
             existing_trackers = set(torrent_info.existing_target_trackers)
             target_tracker_set = set(target_trackers)
 
             if target_tracker_set.issubset(existing_trackers):
-                return {
-                    "status": "skipped",
-                    "message": f"Torrent already exists on all target trackers: {list(existing_trackers)}",
-                    "infohash": infohash,
-                    "torrent_name": torrent_info.name,
-                    "existing_trackers": list(existing_trackers),
-                }
-
-            # Reset stats for this processing session
-            self.stats = ProcessorStats()
+                return ProcessResponse(
+                    status=ProcessStatus.SKIPPED,
+                    message=f"Torrent already exists on all target trackers: {list(existing_trackers)}",
+                )
 
             # Process the torrent using the same logic as process_single_torrent_from_client
             any_success = await self.process_single_torrent_from_client(
                 torrent_details=torrent_info,
             )
 
-            return {
-                "status": "success" if any_success else "not_found",
-                "message": f"Processed torrent: {torrent_info.name} ({infohash})",
-                "infohash": infohash,
-                "torrent_name": torrent_info.name,
-                "any_success": any_success,
-                "stats": self.stats,
-                "existing_trackers": list(existing_trackers),
-            }
+            if any_success:
+                return ProcessResponse(
+                    status=ProcessStatus.SUCCESS,
+                    message=f"Successfully processed torrent: {torrent_info.name} ({infohash})",
+                )
+            else:
+                return ProcessResponse(
+                    status=ProcessStatus.NOT_FOUND,
+                    message=f"No matching torrents found for: {torrent_info.name} ({infohash})",
+                )
 
         except Exception as e:
             self.logger.error(f"Error processing single torrent {infohash}: {str(e)}")
-            return {"status": "error", "message": f"Error processing torrent: {str(e)}", "infohash": infohash}
+            return ProcessResponse(status=ProcessStatus.ERROR, message=f"Error processing torrent: {str(e)}")
 
     async def process_reverse_announce_torrent(
         self,
         torrent_name: str,
         torrent_link: str,
         torrent_data: bytes,
-    ) -> dict[str, Any]:
+    ) -> ProcessResponse:
         """Process a single announce torrent for cross-seeding.
 
         Args:
@@ -775,7 +803,7 @@ class NemorosaCore:
             torrent_data (bytes): Torrent file data.
 
         Returns:
-            dict[str, Any]: Processing result with status and details.
+            ProcessResponse: Processing result with status and details.
         """
         try:
             # Extract torrent ID from torrent_link
@@ -796,12 +824,10 @@ class NemorosaCore:
             matched_torrents = await self._search_torrent_by_filename_in_client(fdict_torrent)
 
             if not matched_torrents:
-                return {
-                    "status": "not_found",
-                    "message": f"No matching torrent found in client for: {torrent_name}",
-                    "torrent_name": torrent_name,
-                    "torrent_id": tid,
-                }
+                return ProcessResponse(
+                    status=ProcessStatus.NOT_FOUND,
+                    message=f"No matching torrent found in client for: {torrent_name}",
+                )
 
             # Check if incoming torrent may trump local torrent
             for matched_torrent in matched_torrents:
@@ -819,13 +845,10 @@ class NemorosaCore:
                             f"Incoming torrent {tid} may trump local torrent {matched_torrent.hash}, "
                             "skipping processing"
                         )
-                        return {
-                            "status": "skipped_potential_trump",
-                            "message": f"Local torrent {matched_torrent.hash} may be trumped, skipping processing",
-                            "torrent_name": torrent_name,
-                            "torrent_id": tid,
-                            "matched_torrents": [t.hash for t in matched_torrents],
-                        }
+                        return ProcessResponse(
+                            status=ProcessStatus.SKIPPED_POTENTIAL_TRUMP,
+                            message=f"Local torrent {matched_torrent.hash} may be trumped, skipping processing",
+                        )
 
             # Use the first matching torrent
             matched_torrent = max(matched_torrents, key=lambda x: len(x.files))
@@ -872,16 +895,11 @@ class NemorosaCore:
                 }
                 await self.database.add_undownloaded_torrent(str(tid), torrent_info, str(parsed_link.hostname))
 
-            return {
-                "status": "success",
-                "message": f"Successfully processed reverse announce torrent: {torrent_name}",
-                "torrent_name": torrent_name,
-                "torrent_id": tid,
-                "matched_torrent": matched_torrent.hash,
-                "downloaded": downloaded,
-                "rename_map": rename_map,
-            }
+            return ProcessResponse(
+                status=ProcessStatus.SUCCESS,
+                message=f"Successfully processed reverse announce torrent: {torrent_name}",
+            )
 
         except Exception as e:
             self.logger.error(f"Error processing reverse announce torrent {torrent_name}: {str(e)}")
-            return {"status": "error", "message": f"Error processing torrent: {str(e)}", "torrent_name": torrent_name}
+            return ProcessResponse(status=ProcessStatus.ERROR, message=f"Error processing torrent: {str(e)}")

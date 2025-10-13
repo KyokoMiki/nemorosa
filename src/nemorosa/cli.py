@@ -225,28 +225,15 @@ def main():
 
     app_logger.section("===== Nemorosa Starting =====")
 
-    try:
-        # Decide operation based on command line arguments
-        if args.server:
-            # Server mode
-            display_host = (
-                config.cfg.server.host if config.cfg.server.host is not None else "all interfaces (IPv4/IPv6)"
-            )
-            app_logger.info(f"Starting server mode on {display_host}:{config.cfg.server.port}")
+    # Decide operation based on command line arguments
+    if args.server:
+        # Server mode
+        run_webserver()
+    else:
+        # Non-server modes - use asyncio
+        import asyncio
 
-            run_webserver(
-                host=config.cfg.server.host,
-                port=config.cfg.server.port,
-                log_level=config.cfg.global_config.loglevel,
-            )
-        else:
-            # Non-server modes - use asyncio
-            import asyncio
-
-            asyncio.run(_async_main(args))
-    except Exception as e:
-        app_logger.critical("Error during initialization: %s", e)
-        sys.exit(1)
+        asyncio.run(_async_main(args))
 
     app_logger.section("===== Nemorosa Finished =====")
 
@@ -268,19 +255,8 @@ async def _async_main(args):
             result = await processor.process_single_torrent(args.torrent)
 
             # Print result
-            app_logger.debug(f"Processing result: {result['status']}")
-            app_logger.debug(f"Message: {result['message']}")
-            if result.get("torrent_name"):
-                app_logger.debug(f"Torrent name: {result['torrent_name']}")
-            if result.get("infohash"):
-                app_logger.debug(f"Torrent infohash: {result['infohash']}")
-            if result.get("existing_trackers"):
-                app_logger.debug(f"Existing trackers: {result['existing_trackers']}")
-            if result.get("stats"):
-                stats = result["stats"]
-                app_logger.debug(
-                    f"Stats - Found: {stats.found}, Downloaded: {stats.downloaded}, Scanned: {stats.scanned}"
-                )
+            app_logger.debug(f"Processing result: {result.status}")
+            app_logger.debug(f"Message: {result.message}")
         elif args.retry_undownloaded:
             # Re-download undownloaded torrents
             await processor.retry_undownloaded_torrents()

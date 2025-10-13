@@ -72,14 +72,6 @@ select = [
     "I",
 ]
 
-[tool.ruff.lint.flake8-bugbear]
-extend-immutable-calls = [
-    "fastapi.Depends",
-    "fastapi.params.Depends",
-    "fastapi.Query",
-    "fastapi.params.Query",
-]
-
 [tool.pyright]
 include = ["src"]
 typeCheckingMode = "standard"

@@ -1,13 +1,29 @@
 """Scheduler module for nemorosa."""
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from pydantic import BaseModel, Field
 
 from . import config, db, logger
+
+
+class JobResponse(BaseModel):
+    """Job response model."""
+
+    status: str = Field(..., description="Job status")
+    message: str = Field(..., description="Job message")
+    job_name: str | None = Field(default=None, description="Job name")
+    next_run: str | None = Field(default=None, description="Next scheduled run time")
+    last_run: str | None = Field(default=None, description="Last run time")
+
+    model_config = {
+        "json_schema_extra": {
+            "example": {"status": "success", "message": "Job triggered successfully", "job_name": "search"}
+        }
+    }
 
 
 class JobType(Enum):
@@ -25,8 +41,8 @@ class JobManager:
         self.scheduler = AsyncIOScheduler()
         self.logger = logger.get_logger()
         self.database = db.get_database()
-        # Flag to track if search job was manually triggered
-        self.search_job_manually_triggered = False
+        # Track running jobs
+        self._running_jobs = set()
 
     async def start_scheduler(self):
         """Start the scheduler and add configured periodic jobs.
@@ -88,41 +104,24 @@ class JobManager:
         except Exception as e:
             self.logger.error(f"Failed to add cleanup job: {e}")
 
-    async def _run_search_job(self, is_manual_trigger: bool = False):
-        """Run search job.
-
-        Args:
-            is_manual_trigger: True if triggered manually, False if triggered by scheduler
-        """
+    async def _run_search_job(self):
+        """Run search job."""
         job_name = JobType.SEARCH.value
-
-        # Check if job should be skipped due to recent manual trigger (only for scheduled runs)
-        if not is_manual_trigger and self.search_job_manually_triggered:
-            self.logger.debug(f"Skipping {job_name} job - job was manually triggered recently")
-            self.search_job_manually_triggered = False
-            return
 
         self.logger.debug(f"Starting {job_name} job")
 
+        # Mark job as running
+        self._running_jobs.add(job_name)
+
         try:
             # Record job start
-            start_time = datetime.now()
+            start_time = datetime.now(UTC)
 
             # Get next run time from APScheduler
             next_run_time = None
             job = self.scheduler.get_job(JobType.SEARCH.value)
             if job and job.next_run_time:
-                if is_manual_trigger:
-                    # For manual trigger, get the time after the next scheduled run
-                    # (skip the next scheduled run due to manual trigger flag)
-                    next_run_time = job.next_run_time
-                    # Add one more interval to get the run after the skipped one
-                    if config.cfg.server.search_cadence_seconds:
-                        cadence_seconds = config.cfg.server.search_cadence_seconds
-                        next_run_time = next_run_time + timedelta(seconds=cadence_seconds)
-                else:
-                    # For scheduled run, get the normal next run time
-                    next_run_time = job.next_run_time
+                next_run_time = job.next_run_time
 
             await self.database.update_job_run(job_name, start_time, next_run_time)
 
@@ -138,21 +137,27 @@ class JobManager:
                 await client.wait_for_monitoring_completion()
 
             # Record successful completion
-            end_time = datetime.now()
+            end_time = datetime.now(UTC)
             duration = (end_time - start_time).total_seconds()
             self.logger.debug(f"Completed {job_name} job in {duration:.2f} seconds")
 
         except Exception as e:
             self.logger.error(f"Error in {job_name} job: {e}")
+        finally:
+            # Mark job as not running
+            self._running_jobs.discard(job_name)
 
     async def _run_cleanup_job(self):
         """Run cleanup job."""
         job_name = JobType.CLEANUP.value
         self.logger.debug(f"Starting {job_name} job")
 
+        # Mark job as running
+        self._running_jobs.add(job_name)
+
         try:
             # Record job start
-            start_time = datetime.now()
+            start_time = datetime.now(UTC)
 
             # Get next run time from APScheduler
             next_run_time = None
@@ -172,21 +177,24 @@ class JobManager:
             await processor.post_process_injected_torrents()
 
             # Record successful completion
-            end_time = datetime.now()
+            end_time = datetime.now(UTC)
             duration = (end_time - start_time).total_seconds()
             self.logger.debug(f"Completed {job_name} job in {duration:.2f} seconds")
 
         except Exception as e:
             self.logger.error(f"Error in {job_name} job: {e}")
+        finally:
+            # Mark job as not running
+            self._running_jobs.discard(job_name)
 
-    async def trigger_job_early(self, job_type: JobType) -> dict[str, Any]:
+    async def trigger_job_early(self, job_type: JobType) -> JobResponse:
         """Trigger a job to run early.
 
         Args:
             job_type: Type of job to trigger.
 
         Returns:
-            Dictionary with trigger result.
+            JobResponse: Job trigger result.
         """
         job_name = job_type.value
         self.logger.debug(f"Triggering {job_name} job early")
@@ -196,64 +204,81 @@ class JobManager:
             job = self.scheduler.get_job(job_name)
             if not job:
                 self.logger.warning(f"Job {job_name} not found or not enabled")
-                return {
-                    "status": "not_found",
-                    "message": f"Job {job_name} not found or not enabled",
-                    "job_name": job_name,
-                }
+                return JobResponse(
+                    status="not_found",
+                    message=f"Job {job_name} not found or not enabled",
+                    job_name=job_name,
+                )
 
-            # Trigger the job directly
-            if job_type == JobType.SEARCH:
-                # Set flag to skip next scheduled run
-                self.search_job_manually_triggered = True
-                await self._run_search_job(is_manual_trigger=True)
-            elif job_type == JobType.CLEANUP:
-                await self._run_cleanup_job()
+            # Check if job is already running
+            if job_name in self._running_jobs:
+                self.logger.warning(f"Job {job_name} is already running")
+                return JobResponse(
+                    status="conflict",
+                    message=f"Job {job_name} is currently running",
+                    job_name=job_name,
+                )
+
+            self.scheduler.modify_job(job_name, next_run_time=datetime.now(UTC))
 
             self.logger.debug(f"Successfully triggered {job_name} job")
-            return {
-                "status": "success",
-                "message": f"Job {job_name} triggered successfully",
-                "job_name": job_name,
-            }
+            result = JobResponse(
+                status="success",
+                message=f"Job {job_name} triggered successfully",
+                job_name=job_name,
+            )
+
+            return result
 
         except Exception as e:
             self.logger.error(f"Error triggering {job_name} job: {e}")
-            return {
-                "status": "error",
-                "message": f"Error triggering job: {str(e)}",
-                "job_name": job_name,
-            }
+            return JobResponse(
+                status="error",
+                message=f"Error triggering job: {str(e)}",
+                job_name=job_name,
+            )
 
-    async def get_job_status(self, job_type: JobType) -> dict[str, Any]:
+    async def get_job_status(self, job_type: JobType) -> JobResponse:
         """Get status of a job.
 
         Args:
             job_type: Type of job to get status for.
 
         Returns:
-            Dictionary with job status.
+            JobResponse: Job status information.
         """
         job_name = job_type.value
         job = self.scheduler.get_job(job_name)
 
         if not job:
-            return {
-                "status": "not_found",
-                "message": f"Job {job_name} not found",
-                "job_name": job_name,
-            }
+            return JobResponse(
+                status="not_found",
+                message=f"Job {job_name} not found",
+                job_name=job_name,
+            )
+
+        # Check if job is currently running
+        is_running = job_name in self._running_jobs
 
         # Get last run time from database
         last_run_dt = await self.database.get_job_last_run(job_name)
         last_run = last_run_dt.isoformat() if last_run_dt else None
 
-        return {
-            "status": "active",
-            "job_name": job_name,
-            "next_run": job.next_run_time.isoformat() if job.next_run_time else None,
-            "last_run": last_run,
-        }
+        # Determine status based on running state
+        if is_running:
+            status = "running"
+            message = f"Job {job_name} is currently running"
+        else:
+            status = "active"
+            message = f"Job {job_name} is active"
+
+        return JobResponse(
+            status=status,
+            message=message,
+            job_name=job_name,
+            next_run=job.next_run_time.isoformat() if job.next_run_time else None,
+            last_run=last_run,
+        )
 
     def stop_scheduler(self):
         """Stop the scheduler."""
