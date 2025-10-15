@@ -36,8 +36,6 @@ class AnnounceRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Lifespan event handler for FastAPI app."""
-    # Get logger and job manager
-    app_logger = logger.get_logger()
     job_manager = scheduler.get_job_manager()
 
     # Initialize core components (torrent client, database, API connections, scheduler)
@@ -48,14 +46,14 @@ async def lifespan(_: FastAPI):
     # Add scheduled jobs if available
     if job_manager and api.get_target_apis():
         job_manager.add_scheduled_jobs()
-        app_logger.info("Scheduled jobs configured and added")
+        logger.info("Scheduled jobs configured and added")
 
     yield
 
     # Shutdown
     if job_manager:
         job_manager.stop_scheduler()
-        app_logger.info("Scheduler stopped")
+        logger.info("Scheduler stopped")
 
     # Cleanup database
     await db.cleanup_database()
@@ -93,13 +91,9 @@ ApiKeyDep = Annotated[bool, Depends(verify_api_key)]
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Log all requests."""
-    app_logger = logger.get_logger()
-    app_logger.debug(f"Incoming request: {request.method} {request.url}")
-
+    logger.debug(f"Incoming request: {request.method} {request.url}")
     response = await call_next(request)
-
-    app_logger.debug(f"Response: {response.status_code}")
-
+    logger.debug(f"Response: {response.status_code}")
     return response
 
 
@@ -159,8 +153,6 @@ async def webhook(
         WebhookResponse: Processing result with detailed information
     """
 
-    app_logger = logger.get_logger()
-
     try:
         # Process the torrent
         processor = NemorosaCore()
@@ -169,17 +161,17 @@ async def webhook(
         if result.status == ProcessStatus.NOT_FOUND:
             # No matches found
             response.status_code = status.HTTP_204_NO_CONTENT
-            app_logger.info(f"No matches found for webhook: {infohash}")
+            logger.info(f"No matches found for webhook: {infohash}")
         elif result.status == ProcessStatus.ERROR:
             # Processing error
-            app_logger.error(f"Error processing webhook: {infohash} - {result.message}")
+            logger.error(f"Error processing webhook: {infohash} - {result.message}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Processing error: {result.message}"
             )
         else:
             # Successfully processed (SUCCESS, SKIPPED, etc.)
             response.status_code = status.HTTP_200_OK
-            app_logger.info(f"Processed webhook: {infohash} (status: 200)")
+            logger.info(f"Processed webhook: {infohash} (status: 200)")
 
         # Return the result directly
         return result
@@ -187,8 +179,7 @@ async def webhook(
     except HTTPException:
         raise
     except Exception as e:
-        app_logger.error(f"Error processing torrent {infohash}: {str(e)}")
-
+        logger.error(f"Error processing torrent {infohash}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}"
         ) from e
@@ -237,8 +228,7 @@ async def announce(
             ) from e
 
         # Log the announce
-        app_logger = logger.get_logger()
-        app_logger.info(f"Received announce for torrent: {request.name} from {request.link}")
+        logger.info(f"Received announce for torrent: {request.name} from {request.link}")
 
         # Process the torrent for cross-seeding using the reverse announce function
         processor = NemorosaCore()
@@ -251,17 +241,17 @@ async def announce(
         if result.status == ProcessStatus.NOT_FOUND:
             # No matches found
             response.status_code = status.HTTP_204_NO_CONTENT
-            app_logger.info(f"No matches found for announce: {request.name}")
+            logger.info(f"No matches found for announce: {request.name}")
         elif result.status == ProcessStatus.ERROR:
             # Processing error
-            app_logger.error(f"Error processing announce: {request.name} - {result.message}")
+            logger.error(f"Error processing announce: {request.name} - {result.message}")
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Processing error: {result.message}"
             )
         elif result.status == ProcessStatus.SUCCESS:
             # Successfully processed
             response.status_code = status.HTTP_200_OK
-            app_logger.info(f"Successfully processed announce: {request.name} (status: 200)")
+            logger.info(f"Successfully processed announce: {request.name} (status: 200)")
         else:
             # Default case - no specific action was taken (SKIPPED, etc.)
             response.status_code = status.HTTP_204_NO_CONTENT
@@ -272,9 +262,7 @@ async def announce(
     except HTTPException:
         raise
     except Exception as e:
-        app_logger = logger.get_logger()
-        app_logger.error(f"Error processing torrent announce {request.name}: {str(e)}")
-
+        logger.error(f"Error processing torrent announce {request.name}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}"
         ) from e
@@ -340,8 +328,7 @@ async def trigger_job(
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
-        app_logger = logger.get_logger()
-        app_logger.error(f"Error triggering job {job_type}: {str(e)}")
+        logger.error(f"Error triggering job {job_type}: {str(e)}")
         # Let FastAPI handle the 500 error automatically
         raise
 
@@ -394,9 +381,7 @@ async def get_job_status(
         return result
 
     except Exception as e:
-        app_logger = logger.get_logger()
-        app_logger.error(f"Error getting job status for {job_type}: {str(e)}")
-
+        logger.error(f"Error getting job status for {job_type}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}"
         ) from e
@@ -409,22 +394,17 @@ def run_webserver():
     port = config.cfg.server.port
     log_level = config.cfg.global_config.loglevel
 
-    # Get logger
-    app_logger = logger.get_logger()
-
     # Log server startup
-    app_logger.info(
-        f"Starting Nemorosa web server on {host if host is not None else 'all interfaces (IPv4/IPv6)'}:{port}"
-    )
-    app_logger.info(f"Using torrent client: {config.cfg.downloader.client}")
-    app_logger.info(f"Target sites: {len(config.cfg.target_sites)}")
+    logger.info(f"Starting Nemorosa web server on {host if host is not None else 'all interfaces (IPv4/IPv6)'}:{port}")
+    logger.info(f"Using torrent client: {config.cfg.downloader.client}")
+    logger.info(f"Target sites: {len(config.cfg.target_sites)}")
 
     # Check if API key is configured
     api_key = config.cfg.server.api_key
     if api_key:
-        app_logger.info("API key authentication enabled")
+        logger.info("API key authentication enabled")
     else:
-        app_logger.info("API key authentication disabled")
+        logger.info("API key authentication disabled")
 
     # Check if scheduler should be initialized
     if any(
@@ -433,9 +413,9 @@ def run_webserver():
             config.cfg.server.cleanup_cadence,
         ]
     ):
-        app_logger.info("Scheduler will be started with configured jobs")
+        logger.info("Scheduler will be started with configured jobs")
     else:
-        app_logger.info("No scheduled jobs configured")
+        logger.info("No scheduled jobs configured")
 
     # Import uvicorn here to avoid import issues
     import uvicorn

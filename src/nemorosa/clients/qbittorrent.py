@@ -4,7 +4,7 @@ import time
 import qbittorrentapi
 import torf
 
-from .. import config
+from .. import config, logger
 from .client_common import (
     ClientTorrentFile,
     ClientTorrentInfo,
@@ -115,7 +115,7 @@ class QBittorrentClient(TorrentClient):
             return result
 
         except Exception as e:
-            self.logger.error("Error retrieving torrents from qBittorrent: %s", e)
+            logger.error("Error retrieving torrents from qBittorrent: %s", e)
             return []
 
     def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
@@ -139,7 +139,7 @@ class QBittorrentClient(TorrentClient):
                 **{field_name: extractor(torrent) for field_name, extractor in field_config.items()}
             )
         except Exception as e:
-            self.logger.error("Error retrieving torrent info from qBittorrent: %s", e)
+            logger.error("Error retrieving torrent info from qBittorrent: %s", e)
             return None
 
     def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
@@ -173,7 +173,7 @@ class QBittorrentClient(TorrentClient):
 
             # Ensure torrents_data is a dictionary
             if not isinstance(torrents_data, dict):
-                self.logger.warning("Unexpected torrents data format from qBittorrent sync API")
+                logger.warning("Unexpected torrents data format from qBittorrent sync API")
                 return {}
 
             # Update cache with new data from torrents_data
@@ -188,7 +188,7 @@ class QBittorrentClient(TorrentClient):
             return self._torrent_states_cache
 
         except Exception as e:
-            self.logger.error(f"Error getting torrent states for monitoring from qBittorrent: {e}")
+            logger.error(f"Error getting torrent states for monitoring from qBittorrent: {e}")
             # On error, fall back to cached states for requested torrents
             return self._torrent_states_cache
 
@@ -233,7 +233,7 @@ class QBittorrentClient(TorrentClient):
 
             except TorrentConflictError as e:
                 error_msg = f"The torrent to be injected cannot coexist with local torrent {e}"
-                self.logger.error(error_msg)
+                logger.error(error_msg)
                 raise TorrentConflictError(error_msg) from e
             except Exception as e:
                 raise ValueError(f"Failed to add torrent to qBittorrent: {e}") from e
@@ -276,7 +276,7 @@ class QBittorrentClient(TorrentClient):
                     return f.read()
             return torrent_data
         except Exception as e:
-            self.logger.error(f"Error getting torrent data from qBittorrent: {e}")
+            logger.error(f"Error getting torrent data from qBittorrent: {e}")
             return None
 
     def _resume_torrent(self, torrent_hash: str) -> bool:
@@ -285,7 +285,7 @@ class QBittorrentClient(TorrentClient):
             self.client.torrents_resume(torrent_hashes=torrent_hash)
             return True
         except Exception as e:
-            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
+            logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
             return False
 
     # endregion
@@ -300,6 +300,6 @@ class QBittorrentClient(TorrentClient):
         """
         self._last_rid = 0
         self._torrent_states_cache.clear()
-        self.logger.debug("Reset qBittorrent sync state")
+        logger.debug("Reset qBittorrent sync state")
 
     # endregion

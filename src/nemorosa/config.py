@@ -189,15 +189,13 @@ def find_config_path(config_path: str | None = None) -> str:
     if os.path.exists(path_to_check):
         return path_to_check
     else:
-        log = logger.get_logger()
-
-        log.warning("Configuration file not found. Creating default configuration...")
+        logger.warning("Configuration file not found. Creating default configuration...")
 
         # Create default configuration file
         created_path = create_default_config(path_to_check)
-        log.success(f"Default configuration created at: {created_path}")
-        log.info("Please edit the configuration file with your settings and run nemorosa again.")
-        log.info("You can also specify a custom config path with: nemorosa --config /path/to/config.yml")
+        logger.success(f"Default configuration created at: {created_path}")
+        logger.info("Please edit the configuration file with your settings and run nemorosa again.")
+        logger.info("You can also specify a custom config path with: nemorosa --config /path/to/config.yml")
 
         # Exit program
         sys.exit(0)
@@ -220,7 +218,7 @@ def setup_config(config_path: str) -> NemorosaConfig:
         with open(config_path, "rb") as f:
             config = msgspec.yaml.decode(f.read(), type=NemorosaConfig)
 
-        logger.get_logger().info(f"Configuration loaded successfully from: {config_path}")
+        logger.info(f"Configuration loaded successfully from: {config_path}")
 
         return config
 

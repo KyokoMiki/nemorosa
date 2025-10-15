@@ -209,9 +209,7 @@ def check_conflicts(fdict_local, fdict_torrent):
     """
     for name, size in fdict_torrent.items():
         if name in fdict_local and fdict_local[name] != size:
-            logger.get_logger().error(
-                f"File conflict detected! File: {name}, Local size: {fdict_local[name]}, Torrent size: {size}"
-            )
+            logger.error(f"File conflict detected! File: {name}, Local size: {fdict_local[name]}, Torrent size: {size}")
             return True
     return False
 

@@ -50,8 +50,6 @@ def get_link_directory(source_path: str) -> str | None:
     if not config.cfg.linking.enable_linking:
         return None
 
-    log = logger.get_logger()
-
     try:
         source_stat = os.stat(source_path)
         source_dev = source_stat.st_dev
@@ -83,13 +81,13 @@ def get_link_directory(source_path: str) -> str | None:
         if config.cfg.linking.link_type == LinkType.SYMLINK.value:
             return config.cfg.linking.link_dirs[0]
 
-        log.warning(
+        logger.warning(
             f"No suitable link directory found for {source_path}. Linking may fail for {config.cfg.linking.link_type}"
         )
         return None
 
     except OSError as e:
-        log.error(f"Error determining link directory for {source_path}: {e}")
+        logger.error(f"Error determining link directory for {source_path}: {e}")
         return None
 
 
@@ -131,7 +129,6 @@ def create_file_link(source_path: str, dest_path: str, link_type: LinkType | Non
     if link_type is None:
         link_type = LinkType(config.cfg.linking.link_type)
 
-    log = logger.get_logger()
     try:
         # Ensure destination directory exists
         dest_dir = os.path.dirname(dest_path)
@@ -139,7 +136,7 @@ def create_file_link(source_path: str, dest_path: str, link_type: LinkType | Non
 
         # Check if destination already exists
         if os.path.exists(dest_path):
-            log.debug(f"Link already exists: {dest_path}")
+            logger.debug(f"Link already exists: {dest_path}")
             return True
 
         # Resolve source path (unwind symlinks)
@@ -158,16 +155,16 @@ def create_file_link(source_path: str, dest_path: str, link_type: LinkType | Non
             # Reflink with fallback to copy
             reflink_or_copy(resolved_source, dest_path)
 
-        log.debug(f"Created {link_type.value} link: {source_path} -> {dest_path}")
+        logger.debug(f"Created {link_type.value} link: {source_path} -> {dest_path}")
         return True
 
     except OSError as e:
         if e.errno == errno.EEXIST:
             return True  # File already exists
-        log.error(f"Failed to create {link_type.value} link {source_path} -> {dest_path}: {e}")
+        logger.error(f"Failed to create {link_type.value} link {source_path} -> {dest_path}: {e}")
         return False
     except Exception as e:
-        log.error(f"Unexpected error creating link {source_path} -> {dest_path}: {e}")
+        logger.error(f"Unexpected error creating link {source_path} -> {dest_path}: {e}")
         return False
 
 
@@ -182,7 +179,6 @@ def create_directory_links(source_dir: str, dest_dir: str, file_mapping: dict[st
     Returns:
         Dictionary mapping file paths to success status
     """
-    log = logger.get_logger()
     results = {}
 
     for rel_path, new_name in file_mapping.items():
@@ -193,7 +189,7 @@ def create_directory_links(source_dir: str, dest_dir: str, file_mapping: dict[st
             success = create_file_link(source_path, dest_path)
             results[rel_path] = success
         else:
-            log.warning(f"Source file not found: {source_path}")
+            logger.warning(f"Source file not found: {source_path}")
             results[rel_path] = False
 
     return results
@@ -209,7 +205,6 @@ def remove_links(link_dir: str, torrent_name: str) -> bool:
     Returns:
         True if removal was successful, False otherwise
     """
-    log = logger.get_logger()
     try:
         torrent_link_path = os.path.join(link_dir, torrent_name)
         if os.path.exists(torrent_link_path):
@@ -217,11 +212,11 @@ def remove_links(link_dir: str, torrent_name: str) -> bool:
                 shutil.rmtree(torrent_link_path)
             else:
                 os.unlink(torrent_link_path)
-            log.debug(f"Removed links for torrent: {torrent_name}")
+            logger.debug(f"Removed links for torrent: {torrent_name}")
             return True
         return False
     except OSError as e:
-        log.error(f"Failed to remove links for {torrent_name}: {e}")
+        logger.error(f"Failed to remove links for {torrent_name}: {e}")
         return False
 
 
@@ -238,7 +233,6 @@ def test_linking_capability(test_dir: str) -> bool:
     if not config.cfg.linking.enable_linking:
         return False
 
-    log = logger.get_logger()
     try:
         # Create a test file
         test_file = os.path.join(test_dir, "test_linking.tmp")
@@ -263,7 +257,7 @@ def test_linking_capability(test_dir: str) -> bool:
         return False
 
     except Exception as e:
-        log.error(f"Error testing linking capability: {e}")
+        logger.error(f"Error testing linking capability: {e}")
         return False
 
 
@@ -281,11 +275,10 @@ def create_file_links_for_torrent(
     Returns:
         str | None: Path to the linked directory, or None if failed
     """
-    log = logger.get_logger()
     try:
         # Extract tracker name from torrent data
         if not torrent_object.trackers or not torrent_object.trackers.flat:
-            log.warning("No trackers found in torrent")
+            logger.warning("No trackers found in torrent")
             return None
         tracker = torrent_object.trackers.flat[0]
         tracker_name = urlparse(tracker).hostname or "unknown"
@@ -295,11 +288,11 @@ def create_file_links_for_torrent(
         # Get the link directory
         link_dir = get_link_directory(original_download_dir)
         if not link_dir:
-            log.warning(f"No suitable link directory found for {original_download_dir}")
+            logger.warning(f"No suitable link directory found for {original_download_dir}")
             return None
 
         if torrent_object.name is None:
-            log.warning("No torrent name found")
+            logger.warning("No torrent name found")
             return None
 
         # Create torrent-specific directory (following cross-seed structure)
@@ -314,15 +307,15 @@ def create_file_links_for_torrent(
         total_files = len(results)
 
         if successful_links == total_files:
-            log.info(f"Successfully created all {total_files} file links for {local_torrent_name}")
+            logger.info(f"Successfully created all {total_files} file links for {local_torrent_name}")
             return final_download_dir  # Return the linked directory path
         elif successful_links > 0:
-            log.warning(f"Partially created file links: {successful_links}/{total_files} for {local_torrent_name}")
+            logger.warning(f"Partially created file links: {successful_links}/{total_files} for {local_torrent_name}")
             return final_download_dir  # Return the linked directory path even if partial
         else:
-            log.error(f"Failed to create any file links for {local_torrent_name}")
+            logger.error(f"Failed to create any file links for {local_torrent_name}")
             return None
 
     except Exception as e:
-        log.error(f"Error creating file links for {local_torrent_name}: {e}")
+        logger.error(f"Error creating file links for {local_torrent_name}: {e}")
         return None

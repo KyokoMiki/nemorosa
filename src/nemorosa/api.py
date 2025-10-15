@@ -38,7 +38,6 @@ class GazelleBase(ABC):
         self.authkey = None
         self.passkey = None
         self.auth_method = "cookies"  # Default authentication method
-        self.logger = logger.get_logger()
 
         spec = TRACKER_SPECS[server]
         self._rate_limiter = None
@@ -72,20 +71,20 @@ class GazelleBase(ABC):
             dict: Torrent object data, empty dict on error.
         """
         torrent_object = {}
-        self.logger.debug(f"Getting torrent by id: {torrent_id}")
+        logger.debug(f"Getting torrent by id: {torrent_id}")
         try:
             torrent_lookup = await self._get_torrent_data(torrent_id)
         except Exception as e:
-            self.logger.error(f"Failed to get torrent by id {torrent_id}. Error: {e}")
+            logger.error(f"Failed to get torrent by id {torrent_id}. Error: {e}")
             return torrent_object  # return empty dict on error
 
         torrent_lookup_status = torrent_lookup.get("status", None)
         if torrent_lookup_status == "success":
-            self.logger.debug(f"Torrent lookup successful for id: {torrent_id}")
+            logger.debug(f"Torrent lookup successful for id: {torrent_id}")
             torrent_object = torrent_lookup["response"]["torrent"]
             torrent_object["fileList"] = self.parse_file_list(torrent_object.get("fileList", ""))
         else:
-            self.logger.error(f"Torrent lookup failed for id: {torrent_id}. Status: {torrent_lookup_status}")
+            logger.error(f"Torrent lookup failed for id: {torrent_id}. Status: {torrent_lookup_status}")
         return torrent_object
 
     async def _get_torrent_data(self, torrent_id):
@@ -112,10 +111,10 @@ class GazelleBase(ABC):
             dict: Dictionary mapping filename to file size.
         """
         if not file_list_str:
-            self.logger.warning("File list is empty or None")
+            logger.warning("File list is empty or None")
             return {}
 
-        self.logger.debug("Parsing file list")
+        logger.debug("Parsing file list")
         # split the string into individual entries
         entries = file_list_str.split("|||")
         file_list = {}
@@ -127,7 +126,7 @@ class GazelleBase(ABC):
                 filesize = parts[1].removesuffix("}}}").strip()
                 file_list[filename] = int(filesize)
             else:
-                self.logger.warning(f"Malformed entry in file list: {entry}")
+                logger.warning(f"Malformed entry in file list: {entry}")
 
         return file_list
 
@@ -148,11 +147,11 @@ class GazelleBase(ABC):
             response = await self.request(torrent_link)
 
         if response.status_code != 200:
-            self.logger.error(f"Status of request is {response.status_code}. Aborting...")
-            self.logger.error(f"Response content: {response.content}")
+            logger.error(f"Status of request is {response.status_code}. Aborting...")
+            logger.error(f"Response content: {response.content}")
             raise RequestException(f"HTTP {response.status_code}: {response.content}")
 
-        self.logger.debug(f"Torrent {torrent_id} downloaded successfully")
+        logger.debug(f"Torrent {torrent_id} downloaded successfully")
         return response.content
 
     def get_torrent_url(self, torrent_id):
@@ -206,19 +205,19 @@ class GazelleBase(ABC):
         try:
             response = await self.ajax("torrent", hash=torrent_hash)
             if response.get("status") == "success":
-                self.logger.debug(f"Hash search successful for hash '{torrent_hash}'")
+                logger.debug(f"Hash search successful for hash '{torrent_hash}'")
                 return response
             else:
                 if response.get("error") in ["bad parameters", "bad hash parameter"]:
-                    self.logger.debug(f"No torrent found matching hash '{torrent_hash}'")
+                    logger.debug(f"No torrent found matching hash '{torrent_hash}'")
                     return None
                 else:
-                    self.logger.error(f"Error searching for torrent by hash '{torrent_hash}': {response.get('error')}")
+                    logger.error(f"Error searching for torrent by hash '{torrent_hash}': {response.get('error')}")
                     raise RequestException(
                         f"Error searching for torrent by hash '{torrent_hash}': {response.get('error')}"
                     )
         except Exception as e:
-            self.logger.error(f"Error searching for torrent by hash '{torrent_hash}': {e}")
+            logger.error(f"Error searching for torrent by hash '{torrent_hash}': {e}")
             raise
 
     async def ajax(self, action, **kwargs):
@@ -307,7 +306,7 @@ class GazelleJSONAPI(GazelleBase):
             self.authkey = accountinfo["response"]["authkey"]
             self.passkey = accountinfo["response"]["passkey"]
         except Exception as e:
-            self.logger.error(f"Authentication failed: {e}")
+            logger.error(f"Authentication failed: {e}")
             raise
 
     async def logout(self):
@@ -322,10 +321,10 @@ class GazelleJSONAPI(GazelleBase):
             response = await self.ajax("browse", **params)
             # Log API response status
             if response.get("status") != "success":
-                self.logger.warning(f"API failure for file '{filename}': {msgspec.json.encode(response).decode()}")
+                logger.warning(f"API failure for file '{filename}': {msgspec.json.encode(response).decode()}")
                 return []
             else:
-                self.logger.debug(f"API search successful for file '{filename}'")
+                logger.debug(f"API search successful for file '{filename}'")
 
             # Process search results
             torrents = [
@@ -337,7 +336,7 @@ class GazelleJSONAPI(GazelleBase):
 
             return torrents
         except Exception as e:
-            self.logger.error(f"Error searching for torrent by filename '{filename}': {e}")
+            logger.error(f"Error searching for torrent by filename '{filename}': {e}")
             raise
 
 
@@ -348,9 +347,9 @@ class GazelleParser(GazelleBase):
         if cookies:
             for name, value in cookies.items():
                 self.client.cookies.set(name, value)
-            self.logger.debug("Using provided cookies")
+            logger.debug("Using provided cookies")
         else:
-            self.logger.warning("No cookies provided")
+            logger.warning("No cookies provided")
 
     async def auth(self):
         """Get authkey and passkey from server by performing a blank search.
@@ -361,7 +360,7 @@ class GazelleParser(GazelleBase):
         try:
             await self.search_torrent_by_filename("")
         except RequestException as e:
-            self.logger.error(f"Failed to authenticate: {e}")
+            logger.error(f"Failed to authenticate: {e}")
             raise
 
     async def search_torrent_by_filename(self, filename):
@@ -456,7 +455,7 @@ class GazelleParser(GazelleBase):
                 "info": info_text,
             }
         except Exception as e:
-            self.logger.error(f"Error parsing torrent row: {e}")
+            logger.error(f"Error parsing torrent row: {e}")
             return None
 
 
@@ -565,29 +564,28 @@ async def setup_api_connections(target_sites: list[TargetSiteConfig]):
     Returns:
         list: List of established API connections.
     """
-    app_logger = logger.get_logger()
-    app_logger.section("===== Establishing API Connections =====")
+    logger.section("===== Establishing API Connections =====")
     target_apis = []
 
     for i, site in enumerate(target_sites):
         # Convert cookie string to dict if present
         site_cookies = {key: morsel.value for key, morsel in SimpleCookie(site.cookie).items()} if site.cookie else None
 
-        app_logger.debug(f"Connecting to target site {i + 1}/{len(target_sites)}: {site.server}")
+        logger.debug(f"Connecting to target site {i + 1}/{len(target_sites)}: {site.server}")
         try:
             api_instance = get_api_instance(server=site.server, api_key=site.api_key, cookies=site_cookies)
             await api_instance.auth()
             target_apis.append(api_instance)
-            app_logger.success(f"API connection established for {site.server}")
+            logger.success(f"API connection established for {site.server}")
         except Exception as e:
-            app_logger.error(f"API connection failed for {site.server}: {str(e)}")
+            logger.error(f"API connection failed for {site.server}: {str(e)}")
             # Continue processing other sites, don't exit program
 
     if not target_apis:
-        app_logger.critical("No API connections were successful. Exiting.")
+        logger.critical("No API connections were successful. Exiting.")
         import sys
 
         sys.exit(1)
 
-    app_logger.success(f"Successfully connected to {len(target_apis)} target site(s)")
+    logger.success(f"Successfully connected to {len(target_apis)} target site(s)")
     return target_apis

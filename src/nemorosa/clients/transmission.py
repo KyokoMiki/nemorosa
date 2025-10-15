@@ -5,7 +5,7 @@ import msgspec
 import transmission_rpc
 from transmission_rpc.constants import RpcMethod
 
-from .. import config
+from .. import config, logger
 from .client_common import (
     ClientTorrentFile,
     ClientTorrentInfo,
@@ -140,7 +140,7 @@ class TransmissionClient(TorrentClient):
             return result
 
         except Exception as e:
-            self.logger.error("Error retrieving torrents from Transmission: %s", e)
+            logger.error("Error retrieving torrents from Transmission: %s", e)
             return []
 
     def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
@@ -163,7 +163,7 @@ class TransmissionClient(TorrentClient):
                 **{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()}
             )
         except Exception as e:
-            self.logger.error("Error retrieving torrent info from Transmission: %s", e)
+            logger.error("Error retrieving torrent info from Transmission: %s", e)
             return None
 
     def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
@@ -196,7 +196,7 @@ class TransmissionClient(TorrentClient):
             return result
 
         except Exception as e:
-            self.logger.error(f"Error getting torrent states for monitoring from Transmission: {e}")
+            logger.error(f"Error getting torrent states for monitoring from Transmission: {e}")
             return {}
 
     # endregion
@@ -253,7 +253,7 @@ class TransmissionClient(TorrentClient):
         elif "torrent-duplicate" in res:
             torrent_info = res["torrent-duplicate"]
             error_msg = f"The torrent to be injected cannot coexist with local torrent {torrent_info['hashString']}"
-            self.logger.error(error_msg)
+            logger.error(error_msg)
             raise TorrentConflictError(error_msg)
 
         if not torrent_info:
@@ -307,7 +307,7 @@ class TransmissionClient(TorrentClient):
             with open(torrent_path, "rb") as f:
                 return f.read()
         except Exception as e:
-            self.logger.error(f"Error getting torrent data from Transmission: {e}")
+            logger.error(f"Error getting torrent data from Transmission: {e}")
             return None
 
     def _resume_torrent(self, torrent_hash: str) -> bool:
@@ -316,7 +316,7 @@ class TransmissionClient(TorrentClient):
             self.client.start_torrent(torrent_hash)
             return True
         except Exception as e:
-            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
+            logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
             return False
 
     # endregion

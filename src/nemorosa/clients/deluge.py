@@ -5,7 +5,7 @@ import re
 
 import deluge_client
 
-from .. import config
+from .. import config, logger
 from .client_common import (
     ClientTorrentFile,
     ClientTorrentInfo,
@@ -126,7 +126,7 @@ class DelugeClient(TorrentClient):
             return result
 
         except Exception as e:
-            self.logger.error("Error retrieving torrents from Deluge: %s", e)
+            logger.error("Error retrieving torrents from Deluge: %s", e)
             return []
 
     def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
@@ -162,7 +162,7 @@ class DelugeClient(TorrentClient):
             return result
 
         except Exception as e:
-            self.logger.error(f"Error getting torrent states for monitoring from Deluge: {e}")
+            logger.error(f"Error getting torrent states for monitoring from Deluge: {e}")
             return {}
 
     def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
@@ -192,7 +192,7 @@ class DelugeClient(TorrentClient):
                 **{field_name: spec.extractor(torrent_info) for field_name, spec in field_config.items()}
             )
         except Exception as e:
-            self.logger.error("Error retrieving torrent info from Deluge: %s", e)
+            logger.error("Error retrieving torrent info from Deluge: %s", e)
             return None
 
     # endregion
@@ -220,7 +220,7 @@ class DelugeClient(TorrentClient):
                 if match:
                     torrent_hash = match.group(1)
                     error_msg = f"The torrent to be injected cannot coexist with local torrent {torrent_hash}"
-                    self.logger.error(error_msg)
+                    logger.error(error_msg)
                     raise TorrentConflictError(error_msg) from e
                 else:
                     raise TorrentConflictError(str(e)) from e
@@ -254,7 +254,7 @@ class DelugeClient(TorrentClient):
         try:
             self.client.call("core.rename_files", torrent_hash, [(old_path, new_name)])
         except Exception as e:
-            self.logger.warning(f"Failed to rename file in Deluge: {e}")
+            logger.warning(f"Failed to rename file in Deluge: {e}")
 
     def _verify_torrent(self, torrent_hash: str):
         """Verify torrent integrity."""
@@ -282,7 +282,7 @@ class DelugeClient(TorrentClient):
             with open(torrent_path, "rb") as f:
                 return f.read()
         except Exception as e:
-            self.logger.error(f"Error getting torrent data from Deluge: {e}")
+            logger.error(f"Error getting torrent data from Deluge: {e}")
             return None
 
     def _resume_torrent(self, torrent_hash: str) -> bool:
@@ -291,7 +291,7 @@ class DelugeClient(TorrentClient):
             self.client.call("core.resume_torrent", [torrent_hash])
             return True
         except Exception as e:
-            self.logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
+            logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
             return False
 
     # endregion

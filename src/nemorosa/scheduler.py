@@ -39,7 +39,7 @@ class JobManager:
     def __init__(self):
         """Initialize job manager."""
         self.scheduler = AsyncIOScheduler()
-        self.logger = logger.get_logger()
+
         self.database = db.get_database()
         # Track running jobs
         self._running_jobs = set()
@@ -63,8 +63,7 @@ class JobManager:
 
         # Add cleanup job
         self._add_cleanup_job()
-
-        self.logger.info("Scheduled jobs added successfully")
+        logger.info("Scheduled jobs added successfully")
 
     def _add_search_job(self):
         """Add search job to scheduler."""
@@ -81,9 +80,9 @@ class JobManager:
                 coalesce=True,
                 replace_existing=True,
             )
-            self.logger.debug(f"Added search job with cadence: {config.cfg.server.search_cadence}")
+            logger.debug(f"Added search job with cadence: {config.cfg.server.search_cadence}")
         except Exception as e:
-            self.logger.error(f"Failed to add search job: {e}")
+            logger.error(f"Failed to add search job: {e}")
 
     def _add_cleanup_job(self):
         """Add cleanup job to scheduler."""
@@ -100,16 +99,14 @@ class JobManager:
                 coalesce=True,
                 replace_existing=True,
             )
-            self.logger.debug(f"Added cleanup job with cadence: {config.cfg.server.cleanup_cadence}")
+            logger.debug(f"Added cleanup job with cadence: {config.cfg.server.cleanup_cadence}")
         except Exception as e:
-            self.logger.error(f"Failed to add cleanup job: {e}")
+            logger.error(f"Failed to add cleanup job: {e}")
 
     async def _run_search_job(self):
         """Run search job."""
         job_name = JobType.SEARCH.value
-
-        self.logger.debug(f"Starting {job_name} job")
-
+        logger.debug(f"Starting {job_name} job")
         # Mark job as running
         self._running_jobs.add(job_name)
 
@@ -133,16 +130,16 @@ class JobManager:
 
             client = processor.torrent_client
             if client and client.monitoring:
-                self.logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
+                logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
                 await client.wait_for_monitoring_completion()
 
             # Record successful completion
             end_time = datetime.now(UTC)
             duration = (end_time - start_time).total_seconds()
-            self.logger.debug(f"Completed {job_name} job in {duration:.2f} seconds")
+            logger.debug(f"Completed {job_name} job in {duration:.2f} seconds")
 
         except Exception as e:
-            self.logger.error(f"Error in {job_name} job: {e}")
+            logger.error(f"Error in {job_name} job: {e}")
         finally:
             # Mark job as not running
             self._running_jobs.discard(job_name)
@@ -150,8 +147,7 @@ class JobManager:
     async def _run_cleanup_job(self):
         """Run cleanup job."""
         job_name = JobType.CLEANUP.value
-        self.logger.debug(f"Starting {job_name} job")
-
+        logger.debug(f"Starting {job_name} job")
         # Mark job as running
         self._running_jobs.add(job_name)
 
@@ -179,10 +175,10 @@ class JobManager:
             # Record successful completion
             end_time = datetime.now(UTC)
             duration = (end_time - start_time).total_seconds()
-            self.logger.debug(f"Completed {job_name} job in {duration:.2f} seconds")
+            logger.debug(f"Completed {job_name} job in {duration:.2f} seconds")
 
         except Exception as e:
-            self.logger.error(f"Error in {job_name} job: {e}")
+            logger.error(f"Error in {job_name} job: {e}")
         finally:
             # Mark job as not running
             self._running_jobs.discard(job_name)
@@ -197,13 +193,13 @@ class JobManager:
             JobResponse: Job trigger result.
         """
         job_name = job_type.value
-        self.logger.debug(f"Triggering {job_name} job early")
+        logger.debug(f"Triggering {job_name} job early")
 
         try:
             # Check if job exists and is enabled
             job = self.scheduler.get_job(job_name)
             if not job:
-                self.logger.warning(f"Job {job_name} not found or not enabled")
+                logger.warning(f"Job {job_name} not found or not enabled")
                 return JobResponse(
                     status="not_found",
                     message=f"Job {job_name} not found or not enabled",
@@ -212,7 +208,7 @@ class JobManager:
 
             # Check if job is already running
             if job_name in self._running_jobs:
-                self.logger.warning(f"Job {job_name} is already running")
+                logger.warning(f"Job {job_name} is already running")
                 return JobResponse(
                     status="conflict",
                     message=f"Job {job_name} is currently running",
@@ -221,7 +217,7 @@ class JobManager:
 
             self.scheduler.modify_job(job_name, next_run_time=datetime.now(UTC))
 
-            self.logger.debug(f"Successfully triggered {job_name} job")
+            logger.debug(f"Successfully triggered {job_name} job")
             result = JobResponse(
                 status="success",
                 message=f"Job {job_name} triggered successfully",
@@ -231,7 +227,7 @@ class JobManager:
             return result
 
         except Exception as e:
-            self.logger.error(f"Error triggering {job_name} job: {e}")
+            logger.error(f"Error triggering {job_name} job: {e}")
             return JobResponse(
                 status="error",
                 message=f"Error triggering job: {str(e)}",
@@ -283,7 +279,7 @@ class JobManager:
     def stop_scheduler(self):
         """Stop the scheduler."""
         self.scheduler.shutdown()
-        self.logger.info("Scheduler stopped")
+        logger.info("Scheduler stopped")
 
 
 # Global job manager instance

@@ -166,10 +166,6 @@ class NemorosaDatabase:
             # Create all tables defined in Base metadata
             await conn.run_sync(Base.metadata.create_all)
 
-        async with self.engine.connect() as conn:
-            await conn.execute(text("VACUUM"))
-            await conn.commit()
-
     # region Scan results
 
     async def add_scan_result(
