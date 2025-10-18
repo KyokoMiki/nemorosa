@@ -41,7 +41,7 @@ Unlike traditional music torrent cross-seeding tools that can only match torrent
   - **Deluge**
   - **rTorrent**
 
-  **Note**: If using Transmission, Deluge, rTorrent, or qBittorrent versions prior to 4.5.0, `nemorosa` needs access to the client's torrents directory. When running in Docker, ensure you map the torrents directory to the `nemorosa` container.
+  **Note**: If using qBittorrent < 4.5.0, Transmission, Deluge, or rTorrent, `nemorosa` needs access to the client's torrents directory. When running in Docker, ensure you map the torrents directory to the `nemorosa` container.
 - Access to Gazelle-based target trackers for cross-seeding (**source sites can be ANY type**):
   - **GazelleJSONAPI**: RED, OPS, DIC
   - **Gazelle (Legacy)**: LZTR, Libble
