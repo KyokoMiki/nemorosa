@@ -75,6 +75,7 @@ class DelugeClient(TorrentClient):
             username=client_config.username or "",
             password=client_config.password or "",
             decode_utf8=True,
+            timeout=60,
         )
         # Connect to Deluge daemon
         self.client.connect()
