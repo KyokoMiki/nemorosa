@@ -10,6 +10,7 @@ from .client_common import (
 )
 from .deluge import DelugeClient
 from .qbittorrent import QBittorrentClient
+from .rtorrent import RTorrentClient
 from .transmission import TransmissionClient
 
 __all__ = [
@@ -21,5 +22,6 @@ __all__ = [
     "TorrentState",
     "DelugeClient",
     "QBittorrentClient",
+    "RTorrentClient",
     "TransmissionClient",
 ]

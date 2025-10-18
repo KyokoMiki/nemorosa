@@ -68,7 +68,7 @@ class DownloaderConfig(msgspec.Struct):
             raise ValueError("Downloader client URL is required")
 
         # Validate client URL format
-        if not self.client.startswith(("deluge://", "transmission+", "qbittorrent+")):
+        if not self.client.startswith(("deluge://", "transmission+", "qbittorrent+", "rtorrent+")):
             raise ValueError(f"Invalid client URL format: {self.client}")
 
         # Validate label cannot be empty
@@ -158,6 +158,10 @@ class NemorosaConfig(msgspec.Struct):
         for i, site in enumerate(self.target_sites):
             if not isinstance(site, TargetSiteConfig):
                 raise ValueError(f"Error in target_site[{i}]: must be TargetSiteConfig instance")
+
+        # Validate rtorrent client requires enable_linking
+        if self.downloader.client.startswith("rtorrent+") and not self.linking.enable_linking:
+            raise ValueError("rtorrent client requires enable linking")
 
 
 def get_user_config_path() -> str:

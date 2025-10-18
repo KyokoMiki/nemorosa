@@ -1,5 +1,6 @@
 import asyncio
 import posixpath
+import shutil
 import threading
 import time
 from abc import ABC, abstractmethod
@@ -7,7 +8,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
-from urllib.parse import parse_qsl, urlparse
+from urllib.parse import parse_qs, urlparse
 
 import msgspec
 import torf
@@ -15,6 +16,33 @@ from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 
 from .. import config, db, filecompare, logger, scheduler
+
+
+def decode_bitfield_bytes(bitfield_data: bytes, piece_count: int) -> list[bool]:
+    """Decode bitfield bytes data to get piece download status.
+
+    This is a common utility function used by different torrent clients to decode
+    bitfield data where each bit represents whether a piece has been downloaded.
+
+    Args:
+        bitfield_data: Raw bytes representing the bitfield
+        piece_count: Total number of pieces in the torrent
+
+    Returns:
+        List of boolean values indicating piece download status
+    """
+    piece_progress = [False] * piece_count
+
+    for byte_index in range(min(len(bitfield_data), (piece_count + 7) // 8)):
+        byte_value = bitfield_data[byte_index]
+        start_piece = byte_index * 8
+        end_piece = min(start_piece + 8, piece_count)
+
+        for bit_offset in range(end_piece - start_piece):
+            bit_index = 7 - bit_offset
+            piece_progress[start_piece + bit_offset] = bool(byte_value & (1 << bit_index))
+
+    return piece_progress
 
 
 class PostProcessResult(msgspec.Struct, frozen=False):
@@ -667,6 +695,24 @@ class TorrentClient(ABC):
         # Flag to track if rename map has been processed
         rename_map_processed = False
 
+        current_name = str(torf.Torrent.read_stream(torrent_data).name)
+        name_differs = current_name != local_torrent_name
+
+        if self.__class__.__name__ == "RTorrentClient":
+            # rTorrent supports specifying the final directory level when adding torrents
+            final_download_dir = posixpath.join(download_dir, local_torrent_name)
+            if name_differs:
+                original_download_dir = posixpath.join(download_dir, current_name)
+                try:
+                    shutil.move(original_download_dir, final_download_dir)
+                except FileExistsError as e:
+                    logger.warning(f"Download directory already exists, skipping rename: {e}")
+                except OSError as e:
+                    logger.error(f"Failed to rename directory from {current_name} to {local_torrent_name}: {e}")
+                    raise
+                current_name = local_torrent_name
+            download_dir = final_download_dir
+
         # Add torrent to client
         try:
             torrent_hash = self._add_torrent(torrent_data, download_dir, hash_match)
@@ -681,13 +727,6 @@ class TorrentClient(ABC):
         max_retries = 8
         for attempt in range(max_retries):
             try:
-                # Get current torrent name
-                torrent_info = self.get_torrent_info(torrent_hash, ["name"])
-                if torrent_info is None or torrent_info.name is None:
-                    logger.warning(f"Failed to get torrent info for {torrent_hash}, skipping")
-                    continue
-                current_name = torrent_info.name
-
                 # Rename entire torrent
                 if current_name != local_torrent_name:
                     self._rename_torrent(torrent_hash, current_name, local_torrent_name)
@@ -713,7 +752,7 @@ class TorrentClient(ABC):
 
                 # Verify torrent (if renaming was performed or not hash match for non-Transmission clients)
                 should_verify = (
-                    current_name != local_torrent_name
+                    name_differs
                     or bool(rename_map)
                     or (not hash_match and self.__class__.__name__ != "TransmissionClient")
                 )
@@ -951,6 +990,7 @@ class TorrentClient(ABC):
                 if current_state in [
                     TorrentState.PAUSED,
                     TorrentState.COMPLETED,
+                    TorrentState.SEEDING,
                 ]:
                     logger.info(f"Verification completed for torrent {torrent_hash}")
 
@@ -1058,7 +1098,7 @@ def parse_libtc_url(url: str) -> TorrentClientConfig:
 
     Supported URL formats:
     - transmission+http://127.0.0.1:9091/?torrents_dir=/path
-    - rutorrent+http://RUTORRENT_ADDRESS:9380/plugins/rpc/rpc.php
+    - rtorrent+http://RUTORRENT_ADDRESS:9380/plugins/rpc/rpc.php
     - deluge://username:password@127.0.0.1:58664
     - qbittorrent+http://username:password@127.0.0.1:8080
 
@@ -1079,44 +1119,37 @@ def parse_libtc_url(url: str) -> TorrentClientConfig:
         raise ValueError("URL must have a scheme")
 
     scheme = parsed.scheme.split("+")
-    netloc = parsed.netloc
-
-    # Extract username and password if present
-    username = None
-    password = None
-    if "@" in netloc:
-        auth, netloc = netloc.rsplit("@", 1)
-        username, password = auth.split(":", 1)
 
     client = scheme[0]
+    torrents_dir = parse_qs(parsed.query).get("torrents_dir", [None])[0]
 
     # Validate supported client types
-    supported_clients = ["transmission", "qbittorrent", "deluge", "rutorrent"]
+    supported_clients = ["transmission", "qbittorrent", "deluge", "rtorrent"]
     if client not in supported_clients:
         raise ValueError(f"Unsupported client type: {client}. Supported clients: {', '.join(supported_clients)}")
 
-    if client in ["qbittorrent", "rutorrent"]:
-        # For qBittorrent and rutorrent, use URL format
-        client_url = f"{scheme[1]}://{netloc}{parsed.path}"
+    if client == "qbittorrent":
+        # qBittorrent: separate auth from URL (uses hostname:port only)
+        client_url = f"{scheme[-1]}://{parsed.hostname}:{parsed.port}{parsed.path}"
         return TorrentClientConfig(
-            username=username,
-            password=password,
+            username=parsed.username,
+            password=parsed.password,
             url=client_url,
-            torrents_dir=dict(parse_qsl(parsed.query)).get("torrents_dir"),
+            torrents_dir=torrents_dir,
+        )
+    elif client == "rtorrent":
+        # rTorrent: include auth in URL via netloc (user:pass@host:port format)
+        client_url = f"{scheme[-1]}://{parsed.netloc}{parsed.path}"
+        return TorrentClientConfig(
+            url=client_url,
+            torrents_dir=torrents_dir,
         )
     else:
-        # For Transmission and Deluge, use host:port format
-        host, port_str = netloc.split(":")
-        port = int(port_str)
-
-        # Extract additional query parameters
-        query_params = dict(parse_qsl(parsed.query))
-
         return TorrentClientConfig(
-            username=username,
-            password=password,
+            username=parsed.username,
+            password=parsed.password,
             scheme=scheme[-1],
-            host=host,
-            port=port,
-            torrents_dir=query_params.get("torrents_dir"),
+            host=parsed.hostname,
+            port=parsed.port,
+            torrents_dir=torrents_dir,
         )

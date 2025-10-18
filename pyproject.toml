@@ -37,6 +37,7 @@ dependencies = [
     "winloop>=0.1.0; sys_platform == 'win32'",
     "reflink-copy>=0.3.2",
     "sqlalchemy[aiosqlite]>=2.0.44",
+    "defusedxml>=0.7.1",
 ]
 
 [project.urls]

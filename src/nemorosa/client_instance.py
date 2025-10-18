@@ -2,7 +2,7 @@
 Torrent Client Instance Module
 
 This module manages the global torrent client instance and provides a unified
-interface for different torrent clients including Transmission, qBittorrent, and Deluge.
+interface for different torrent clients including Transmission, qBittorrent, Deluge, and rTorrent.
 It handles singleton pattern for the torrent client to ensure consistent access
 across the application.
 """
@@ -11,13 +11,14 @@ import threading
 from urllib.parse import urlparse
 
 from . import config
-from .clients import DelugeClient, QBittorrentClient, TorrentClient, TransmissionClient
+from .clients import DelugeClient, QBittorrentClient, RTorrentClient, TorrentClient, TransmissionClient
 
 # Torrent client factory mapping
 TORRENT_CLIENT_MAPPING = {
     "transmission": TransmissionClient,
     "qbittorrent": QBittorrentClient,
     "deluge": DelugeClient,
+    "rtorrent": RTorrentClient,
 }
 
 

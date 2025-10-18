@@ -13,6 +13,7 @@ from .client_common import (
     TorrentClient,
     TorrentConflictError,
     TorrentState,
+    decode_bitfield_bytes,
     parse_libtc_url,
 )
 
@@ -52,34 +53,9 @@ _TRANSMISSION_FIELD_SPECS = {
     ),
     "piece_progress": FieldSpec(
         _request_arguments={"pieces", "pieceCount"},
-        extractor=lambda t: _decode_piece_progress(t.pieces, t.piece_count),
+        extractor=lambda t: decode_bitfield_bytes(base64.b64decode(t.pieces), t.piece_count),
     ),
 }
-
-
-def _decode_piece_progress(pieces_b64: str, piece_count: int) -> list[bool]:
-    """Decode base64 pieces data to get piece download status.
-
-    Args:
-        pieces_b64: Base64 encoded pieces data from Transmission
-        piece_count: Total number of pieces in the torrent
-
-    Returns:
-        List of boolean values indicating piece download status
-    """
-    pieces_data = base64.b64decode(pieces_b64)
-    piece_progress = [False] * piece_count
-
-    for byte_index in range(min(len(pieces_data), (piece_count + 7) // 8)):
-        byte_value = pieces_data[byte_index]
-        start_piece = byte_index * 8
-        end_piece = min(start_piece + 8, piece_count)
-
-        for bit_offset in range(end_piece - start_piece):
-            bit_index = 7 - bit_offset
-            piece_progress[start_piece + bit_offset] = bool(byte_value & (1 << bit_index))
-
-    return piece_progress
 
 
 class TransmissionClient(TorrentClient):
