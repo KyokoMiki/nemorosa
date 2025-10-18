@@ -202,8 +202,13 @@ class TransmissionClient(TorrentClient):
             "download-dir": download_dir,
             "paused": True,
             "metainfo": torrent_data_b64,
-            "labels": [config.cfg.downloader.label],
         }
+
+        # Prepare labels: use tags if provided, otherwise use [label] if label is not None
+        if config.cfg.downloader.tags:
+            kwargs["labels"] = config.cfg.downloader.tags
+        elif config.cfg.downloader.label:
+            kwargs["labels"] = [config.cfg.downloader.label]
 
         # Make direct RPC call to get raw response
         query = {"method": RpcMethod.TorrentAdd, "arguments": kwargs}

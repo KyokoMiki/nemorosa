@@ -210,6 +210,7 @@ class QBittorrentClient(TorrentClient):
             save_path=download_dir,
             is_paused=True,
             category=config.cfg.downloader.label,
+            tags=config.cfg.downloader.tags,
             use_auto_torrent_management=False,
             is_skip_checking=hash_match,  # Skip hash checking if hash match
         )

@@ -51,17 +51,19 @@ class GlobalConfig(msgspec.Struct):
 
         # Validate check_trackers is a non-empty list or None
         if self.check_trackers is not None:
-            if not isinstance(self.check_trackers, list):
-                raise ValueError("check_trackers must be a list or None")
             if len(self.check_trackers) == 0:
                 raise ValueError("check_trackers must be a non-empty list or None")
+            for tracker in self.check_trackers:
+                if not tracker.strip():
+                    raise ValueError("check_trackers cannot contain empty strings")
 
 
 class DownloaderConfig(msgspec.Struct):
     """Downloader configuration."""
 
     client: str = ""
-    label: str = "nemorosa"
+    label: str | None = "nemorosa"
+    tags: list[str] | None = None
 
     def __post_init__(self):
         if not self.client:
@@ -71,9 +73,17 @@ class DownloaderConfig(msgspec.Struct):
         if not self.client.startswith(("deluge://", "transmission+", "qbittorrent+", "rtorrent+")):
             raise ValueError(f"Invalid client URL format: {self.client}")
 
-        # Validate label cannot be empty
-        if not self.label or not self.label.strip():
-            raise ValueError("Downloader label cannot be empty")
+        # Validate label cannot be empty string
+        if self.label is not None and not self.label.strip():
+            raise ValueError("label cannot be empty string, use null instead")
+
+        # Validate tags content
+        if self.tags is not None:
+            if len(self.tags) == 0:
+                raise ValueError("tags cannot be an empty list")
+            for tag in self.tags:
+                if not tag.strip():
+                    raise ValueError("tags cannot contain empty strings")
 
 
 class ServerConfig(msgspec.Struct):
@@ -287,7 +297,11 @@ downloader:
   # Example: ?torrents_dir=C:/Users/username/AppData/Local/qBittorrent/BT_backup
 
   client: null
-  label: "nemorosa"  # Download label (cannot be empty)
+  label: "nemorosa"  # Download label
+  # Optional tags list, only for qBittorrent and Transmission.
+  # For qBittorrent, tags work with label
+  # For Transmission, default to use tags, if tags is null, use [label] as fallback
+  tags: null
 
 target_site:
   # Target site settings
