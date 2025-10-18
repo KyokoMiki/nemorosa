@@ -20,9 +20,6 @@ from .client_common import (
 )
 from .scgitransport import SCGITransport
 
-# Monkey-patch xmlrpc.client to mitigate XML vulnerabilities
-defusedxml.xmlrpc.monkey_patch()
-
 
 def _get_rtorrent_state(is_active, is_open, complete, hashing) -> TorrentState:
     """Get torrent state from rTorrent status flags.
@@ -131,6 +128,9 @@ class RTorrentClient(TorrentClient):
         super().__init__()
         config = parse_libtc_url(url)
         self.torrents_dir = config.torrents_dir or ""
+
+        # Monkey-patch xmlrpc.client to mitigate XML vulnerabilities
+        defusedxml.xmlrpc.monkey_patch()
 
         # rTorrent uses XML-RPC with optional SCGI support
         self.client = create_proxy(config.url or "http://localhost:80/RPC2")

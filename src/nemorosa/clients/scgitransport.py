@@ -12,9 +12,6 @@ from xmlrpc.client import Transport  # nosec B411
 
 import defusedxml.xmlrpc
 
-# Monkey-patch xmlrpc.client to mitigate XML vulnerabilities
-defusedxml.xmlrpc.monkey_patch()
-
 
 def encode_netstring(input_data: bytes) -> bytes:
     """Encode data as netstring format."""
@@ -30,6 +27,9 @@ class SCGITransport(Transport):
     """SCGI transport for XML-RPC."""
 
     def __init__(self, *args, **kwargs):
+        # Monkey-patch xmlrpc.client to mitigate XML vulnerabilities
+        defusedxml.xmlrpc.monkey_patch()
+
         self.socket_path = kwargs.pop("socket_path", "")
         Transport.__init__(self, *args, **kwargs)
 
