@@ -7,15 +7,15 @@
 [![PyPI version](https://badgen.net/pypi/v/nemorosa)](https://pypi.org/project/nemorosa/)
 [![PyPI - Python Version](https://badgen.net/pypi/python/nemorosa)](https://pypi.org/project/nemorosa/)
 [![CI](https://github.com/KyokoMiki/nemorosa/actions/workflows/release.yml/badge.svg)](https://github.com/KyokoMiki/nemorosa/actions/workflows/release.yml)
-[![License](https://badgen.net/github/license/KyokoMiki/nemorosa)](https://github.com/KyokoMiki/nemorosa/blob/main/LICENSE)
+[![License](https://badgen.net/static/license/GPL-3.0/blue)](https://github.com/KyokoMiki/nemorosa/blob/main/LICENSE)
 
 </div>
 
 `nemorosa` is a specialized cross-seeding tool designed specifically for music torrents, designed to work alongside [cross-seed](https://github.com/cross-seed/cross-seed).
 
-Compared to existing music torrent cross-seeding tools, nemorosa offers the strongest matching capabilities and the widest range of supported trackers, and the most natural and human-friendly user experience.
+Compared to existing music torrent cross-seeding tools, `nemorosa` offers the strongest matching capabilities and the widest range of supported trackers, and the most natural and human-friendly user experience.
 
-Unlike traditional music torrent cross-seeding tools that can only match torrents with identical hashes, nemorosa excels at partial matching and automatic file mapping, enabling cross-seeding from **any source site** to Gazelle-based trackers.
+Unlike traditional music torrent cross-seeding tools that can only match torrents with identical hashes, `nemorosa` excels at partial matching and automatic file mapping, enabling cross-seeding from **any source site** to Gazelle-based trackers.
 
 ## Features
 
@@ -28,9 +28,9 @@ Unlike traditional music torrent cross-seeding tools that can only match torrent
 - **Web Server Mode**: HTTP API and webhook support for integration with other tools and automation
   - **Scheduled Jobs**: Automated search and cleanup tasks with configurable intervals
   - **Announce Matching**: Automatically matches cross-seeds from IRC announces or RSS feeds by processing torrent announces from autobrr.
-  - **Triggering Searches**: Enables immediate cross-seed searches when torrents finish downloading by adding on-completion scripts to your torrent client that call nemorosa's HTTP API.
+  - **Triggering Searches**: Enables immediate cross-seed searches when torrents finish downloading by adding on-completion scripts to your torrent client that call `nemorosa`'s HTTP API.
 - **Smart Retry System**: Automatically retry failed downloads and track undownloaded torrents
-- **Multi-Client Support**: Works with Transmission, qBittorrent, and Deluge
+- **Multi-Client Support**: Works with Transmission, qBittorrent, Deluge, and rTorrent
 
 ## Prerequisites
 
@@ -39,8 +39,9 @@ Unlike traditional music torrent cross-seeding tools that can only match torrent
   - **Transmission**
   - **qBittorrent**
   - **Deluge**
+  - **rTorrent**
 
-  **Note**: If using Transmission, Deluge, or qBittorrent versions prior to 4.5.0, nemorosa needs access to the client's torrents directory. When running in Docker, ensure you map the torrents directory to the nemorosa container.
+  **Note**: If using qBittorrent < 4.5.0, Transmission, Deluge, or rTorrent, `nemorosa` needs access to the client's torrents directory. When running in Docker, ensure you map the torrents directory to the `nemorosa` container.
 - Access to Gazelle-based target trackers for cross-seeding (**source sites can be ANY type**):
   - **GazelleJSONAPI**: RED, OPS, DIC
   - **Gazelle (Legacy)**: LZTR, Libble
