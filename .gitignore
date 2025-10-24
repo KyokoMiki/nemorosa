@@ -1,6 +1,6 @@
 *.log
 *.torrent
-.codacy
+.codacy/
 .venv
 **/__pycache__/
 nemorosa.db
@@ -9,6 +9,6 @@ results/
 .cursor/
 .idea/
 config.yml
-test
+test/
 pyrightconfig.json
-temp
+temp/
