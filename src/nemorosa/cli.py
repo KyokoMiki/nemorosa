@@ -1,11 +1,29 @@
 """Command line interface for nemorosa."""
 
 import argparse
+import asyncio
 import sys
 
 from . import api, client_instance, config, db, logger, scheduler
-from .core import NemorosaCore
+from .core import get_core, init_core
 from .webserver import run_webserver
+
+
+def setup_event_loop():
+    """Setup the best available event loop for the current platform."""
+    try:
+        if sys.platform == "win32":
+            import winloop  # type: ignore[import]
+
+            winloop.install()
+        else:
+            import uvloop  # type: ignore[import]
+
+            uvloop.install()
+    except ImportError as e:
+        logger.warning(f"Event loop library not available: {e}, using default asyncio")
+    except Exception as e:
+        logger.warning(f"Event loop setup failed: {e}, using default asyncio")
 
 
 def setup_argument_parser():
@@ -111,7 +129,7 @@ def override_config_with_args(args):
     """
     # Override loglevel if specified
     if args.loglevel is not None:
-        config.cfg.global_config.loglevel = args.loglevel
+        config.cfg.global_config.loglevel = config.LogLevel(args.loglevel)
 
     # Override no_download if specified
     if args.no_download:
@@ -136,32 +154,33 @@ async def async_init():
     This function is used by both CLI and webserver modes to set up the application.
     """
     logger.debug("Initializing database...")
-    # Initialize database tables
-    database = db.get_database()
-    await database.init_database()
+    # Initialize database
+    await db.init_database()
     logger.info("Database initialized successfully")
 
-    # Connect to torrent client
+    # Initialize torrent client
     logger.debug("Connecting to torrent client at %s...", config.cfg.downloader.client)
-    app_torrent_client = client_instance.create_torrent_client(config.cfg.downloader.client)
-    client_instance.set_torrent_client(app_torrent_client)
+    await client_instance.init_torrent_client(config.cfg.downloader.client)
     logger.info("Successfully connected to torrent client")
 
     # Check if client URL has changed and rebuild cache if needed
     current_client_url = config.cfg.downloader.client
+    database = db.get_database()
     cached_client_url = await database.get_metadata("client_url")
 
     if cached_client_url != current_client_url:
-        logger.info(f"Client URL changed from {cached_client_url or 'none'} to {current_client_url}")
+        logger.info(f"Client URL changed from {cached_client_url} to {current_client_url}")
         logger.info("Rebuilding client torrents cache...")
 
         # Get all torrents from the new client
+        app_torrent_client = client_instance.get_torrent_client()
         all_torrents = app_torrent_client.get_torrents(
             fields=["hash", "name", "total_size", "files", "trackers", "download_dir"]
         )
 
         # Validate that the new client has torrents
         if not all_torrents:
+            # Note: Client must have torrents for nemorosa to work properly
             raise RuntimeError(f"New client at {current_client_url} has no torrents.")
 
         # Rebuild cache
@@ -171,37 +190,42 @@ async def async_init():
         # Update cached client URL
         await database.set_metadata("client_url", current_client_url)
 
-    # Setup API connections
-    target_apis = await api.setup_api_connections(config.cfg.target_sites)
-    api.set_target_apis(target_apis)
-    logger.info(f"API connections established for {len(target_apis)} target sites")
+    # Initialize API connections
+    await api.init_api(config.cfg.target_sites)
+    logger.info(f"API connections established for {len(api.get_target_apis())} target sites")
 
-    # Start scheduler
-    job_manager = scheduler.get_job_manager()
-    await job_manager.start_scheduler()
+    # Initialize core processor
+    await init_core()
+    logger.debug("Core processor initialized")
+
+    # Initialize and start scheduler
+    await scheduler.init_job_manager()
 
 
 def main():
     """Main function."""
-    # Step 1: Parse command line arguments
-    logger.setup_logger("info")
+    # Step 1: Setup event loop
+    logger.init_logger()
+    setup_event_loop()
+
+    # Step 2: Parse command line arguments
     parser = setup_argument_parser()
     args = parser.parse_args()
 
-    # Step 2: Load configuration
+    # Step 3: Load configuration
     setup_config(args.config)
 
-    # Step 3: Override configuration with command line arguments
+    # Step 4: Override configuration with command line arguments
     override_config_with_args(args)
 
-    # Step 4: Set up global logger with final loglevel from config
-    logger.setup_logger(config.cfg.global_config.loglevel)
+    # Step 5: Update log level with final loglevel from config
+    logger.set_log_level(config.cfg.global_config.loglevel)
 
     # Log configuration summary
     logger.section("===== Configuration Summary =====")
     logger.debug(f"Config file: {args.config or 'auto-detected'}")
     logger.debug(f"No download: {config.cfg.global_config.no_download}")
-    logger.debug(f"Log level: {config.cfg.global_config.loglevel}")
+    logger.debug(f"Log level: {config.cfg.global_config.loglevel.value}")
     logger.debug(f"Client URL: {config.cfg.downloader.client}")
     check_trackers = config.cfg.global_config.check_trackers
     logger.debug(f"CHECK_TRACKERS: {check_trackers if check_trackers else 'All trackers allowed'}")
@@ -218,9 +242,6 @@ def main():
         # Server mode
         run_webserver()
     else:
-        # Non-server modes - use asyncio
-        import asyncio
-
         asyncio.run(_async_main(args))
 
     logger.section("===== Nemorosa Finished =====")
@@ -233,8 +254,8 @@ async def _async_main(args):
         # Initialize core components (database, API connections, scheduler)
         await async_init()
 
-        # Create processor instance
-        processor = NemorosaCore()
+        # Get processor instance
+        processor = get_core()
 
         if args.torrent:
             # Single torrent mode
