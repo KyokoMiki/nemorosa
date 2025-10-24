@@ -1,7 +1,13 @@
+"""
+File comparison and matching module for nemorosa.
+Provides functionality to compare torrent files and find matches between client torrents and tracker torrents.
+"""
+
 import difflib
 import posixpath
 import re
 from collections import defaultdict
+from collections.abc import Collection
 from itertools import groupby
 from typing import TYPE_CHECKING
 
@@ -20,7 +26,31 @@ def is_music_file(filename: str) -> bool:
     Returns:
         bool: True if the file is a music file, False otherwise.
     """
-    return posixpath.splitext(filename)[1].lower() in [".flac", ".mp3", ".dsf", ".dff", ".m4a"]
+    return posixpath.splitext(filename)[1].lower() in (".flac", ".mp3", ".dsf", ".dff", ".m4a")
+
+
+def select_search_filenames(filenames: Collection[str], max_count: int = 5) -> list[str]:
+    """Select top filenames for search queries.
+
+    Selects the longest filenames, prioritizing the first file and any music files.
+
+    Args:
+        filenames: Collection of filenames to select from.
+        max_count: Maximum number of filenames to select.
+
+    Returns:
+        List of selected filenames for search queries, sorted by length (longest first).
+    """
+    # Sort filenames by length (longest first)
+    sorted_filenames = sorted(filenames, key=len, reverse=True)
+
+    selected = []
+    for index, fname in enumerate(sorted_filenames):
+        if len(selected) >= max_count:
+            break
+        if index == 0 or is_music_file(fname):
+            selected.append(fname)
+    return selected
 
 
 def make_filename_query(filename: str) -> str:
@@ -87,24 +117,22 @@ def find_common_prefix(a: str, b: str) -> str:
 
 def find_common_suffix(a: str, b: str) -> str:
     """Find common suffix of two strings, skipping ASCII letters and digits."""
-    i = 0
-    j = 0
+    i = len(a) - 1
+    j = len(b) - 1
 
-    while i < len(a) and j < len(b):
-        # Skip ASCII letters and digits
-        while i < len(a) and a[i].isascii() and (a[i].isalpha() or a[i].isdigit()):
-            i += 1
-        while j < len(b) and b[j].isascii() and (b[j].isalpha() or b[j].isdigit()):
-            j += 1
+    # Skip trailing ASCII letters and digits
+    while i >= 0 and a[i].isascii() and (a[i].isalpha() or a[i].isdigit()):
+        i -= 1
+    while j >= 0 and b[j].isascii() and (b[j].isalpha() or b[j].isdigit()):
+        j -= 1
 
-        # If both are still in valid range, compare current character
-        if i < len(a) and j < len(b) and a[i].lower() == b[j].lower():
-            return a[i]
+    # Find common suffix from the end
+    suffix_end = i + 1
+    while i >= 0 and j >= 0 and a[i].lower() == b[j].lower():
+        i -= 1
+        j -= 1
 
-        i += 1
-        j += 1
-
-    return ""
+    return a[i + 1 : suffix_end] if i + 1 < suffix_end else ""
 
 
 def get_diff_result(names: list[str]) -> DiffResult | None:
@@ -288,9 +316,11 @@ def should_keep_partial_torrent(torrent: "ClientTorrentInfo") -> bool:
         return False
 
     # Count continuous blocks of undownloaded pieces (False values)
+    # Note: piece_progress maintains the sequential order of pieces in the torrent
     undownloaded_blocks_count = sum(1 for value, _ in groupby(torrent.piece_progress) if not value)
 
     # Count continuous blocks of files with zero progress (completely undownloaded)
+    # Note: torrent.files maintains the sequential order as defined in the torrent structure
     zero_progress_count = sum(1 for value, _ in groupby(torrent.files, key=lambda f: f.progress == 0.0) if value)
 
     # Check for conflicts: number of continuous undownloaded blocks should not exceed
