@@ -7,10 +7,9 @@ It handles singleton pattern for the torrent client to ensure consistent access
 across the application.
 """
 
-import threading
+import asyncio
 from urllib.parse import urlparse
 
-from . import config
 from .clients import DelugeClient, QBittorrentClient, RTorrentClient, TorrentClient, TransmissionClient
 
 # Torrent client factory mapping
@@ -32,10 +31,9 @@ def create_torrent_client(url: str) -> TorrentClient:
         TorrentClient: Configured torrent client instance
 
     Raises:
-        ValueError: If URL is empty or client type is not supported
-        TypeError: If URL is None
+        ValueError: If URL is empty, None, or client type is not supported
     """
-    if not url.strip():
+    if not url or not url.strip():
         raise ValueError("URL cannot be empty")
 
     parsed = urlparse(url)
@@ -49,30 +47,39 @@ def create_torrent_client(url: str) -> TorrentClient:
 
 # Global torrent client instance
 _torrent_client_instance: TorrentClient | None = None
-_torrent_client_lock = threading.Lock()
+_torrent_client_lock = asyncio.Lock()
+
+
+async def init_torrent_client(url: str) -> None:
+    """Initialize global torrent client instance.
+
+    Should be called once during application startup.
+
+    Args:
+        url: The torrent client URL.
+
+    Raises:
+        RuntimeError: If already initialized.
+    """
+    global _torrent_client_instance
+    async with _torrent_client_lock:
+        if _torrent_client_instance is not None:
+            raise RuntimeError("Torrent client already initialized.")
+
+        _torrent_client_instance = create_torrent_client(url)
 
 
 def get_torrent_client() -> TorrentClient:
     """Get global torrent client instance.
 
+    Must be called after init_torrent_client() has been invoked.
+
     Returns:
         TorrentClient: Torrent client instance.
+
+    Raises:
+        RuntimeError: If torrent client has not been initialized.
     """
-    global _torrent_client_instance
-    with _torrent_client_lock:
-        if _torrent_client_instance is None:
-            # Get client URL from config
-            client_url = config.cfg.downloader.client
-            _torrent_client_instance = create_torrent_client(client_url)
-        return _torrent_client_instance
-
-
-def set_torrent_client(torrent_client: TorrentClient) -> None:
-    """Set global torrent client instance.
-
-    Args:
-        torrent_client: Torrent client instance to set as current.
-    """
-    global _torrent_client_instance
-    with _torrent_client_lock:
-        _torrent_client_instance = torrent_client
+    if _torrent_client_instance is None:
+        raise RuntimeError("Torrent client not initialized. Call init_torrent_client() first.")
+    return _torrent_client_instance

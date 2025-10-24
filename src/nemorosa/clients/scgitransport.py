@@ -5,6 +5,7 @@ XMLRPC in Python only supports HTTP(S). This module extends the transport to als
 SCGI is required by rTorrent if you want to communicate directly with an instance.
 """
 
+import ipaddress
 import socket
 from io import BytesIO
 from urllib.parse import urlparse
@@ -48,7 +49,14 @@ class SCGITransport(Transport):
             parsed = urlparse(f"scgi://{host_str}")
             if not parsed.hostname or not parsed.port:
                 raise ValueError(f"Invalid host format '{host}', expected 'hostname:port'")
-            s = socket.socket(socket.AF_INET6 if ":" in parsed.hostname else socket.AF_INET, socket.SOCK_STREAM)
+
+            try:
+                is_ipv6 = isinstance(ipaddress.ip_address(parsed.hostname), ipaddress.IPv6Address)
+            except ValueError:
+                # Not a valid IP address, treat as socket.AF_INET
+                is_ipv6 = False
+
+            s = socket.socket(socket.AF_INET6 if is_ipv6 else socket.AF_INET, socket.SOCK_STREAM)
             address = (parsed.hostname, parsed.port)
 
         try:
@@ -73,7 +81,9 @@ class SCGITransport(Transport):
                     break
                 response += r
 
-            response_body = BytesIO(b"\r\n\r\n".join(response.split(b"\r\n\r\n")[1:]))
+            # Split only once at first blank line to separate headers from body
+            parts = response.split(b"\r\n\r\n", 1)
+            response_body = BytesIO(parts[1] if len(parts) > 1 else b"")
 
             return self.parse_response(response_body)  # type: ignore[arg-type]
         finally:

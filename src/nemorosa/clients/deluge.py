@@ -1,7 +1,12 @@
+"""
+Deluge client implementation.
+Provides integration with Deluge via its RPC interface.
+"""
+
 import base64
-import os
 import posixpath
 import re
+from pathlib import Path
 
 import deluge_client
 
@@ -56,7 +61,9 @@ _DELUGE_FIELD_SPECS = {
     "piece_progress": FieldSpec(
         _request_arguments={"pieces", "num_pieces"},
         extractor=lambda t: (
-            [True] * t["num_pieces"] if t["progress"] == 100.0 else [piece == 3 for piece in t["pieces"]]
+            [True] * t["num_pieces"]
+            if t["progress"] == 100.0
+            else [piece == 3 for piece in t["pieces"]]  # 3 = Completed
         ),
     ),
 }
@@ -99,32 +106,23 @@ class DelugeClient(TorrentClient):
             list[ClientTorrentInfo]: List of torrent information.
         """
         try:
-            # Get requested fields (always include hash)
-            field_config = (
-                {k: v for k, v in self.field_config.items() if k in fields or k == "hash"}
-                if fields
-                else self.field_config
-            )
-
-            # Get required Deluge properties based on requested fields
-            arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
+            # Get field configuration and required arguments
+            field_config, arguments = self._get_field_config_and_arguments(fields)
 
             # Get torrents from Deluge (filtered by hashes if provided)
             torrent_details = self.client.call(
                 "core.get_torrents_status", {"id": torrent_hashes} if torrent_hashes else {}, arguments
             )
 
-            if not torrent_details:
+            if not isinstance(torrent_details, dict):
+                logger.error("Invalid torrents details from Deluge: %s", torrent_details)
                 return []
 
             # Build ClientTorrentInfo objects
-            result = []
-            for torrent in torrent_details.values():
-                values = {field_name: spec.extractor(torrent) for field_name, spec in field_config.items()}
-                torrent_info = ClientTorrentInfo(**values)
-                result.append(torrent_info)
-
-            return result
+            return [
+                ClientTorrentInfo(**{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()})
+                for torrent in torrent_details.values()
+            ]
 
         except Exception as e:
             logger.error("Error retrieving torrents from Deluge: %s", e)
@@ -153,14 +151,14 @@ class DelugeClient(TorrentClient):
                 ["state"],  # Only get state for efficiency
             )
 
-            result = {}
-            if torrents_status and isinstance(torrents_status, dict):
-                result = {
-                    torrent_hash: DELUGE_STATE_MAPPING.get(status.get("state"), TorrentState.UNKNOWN)
-                    for torrent_hash, status in torrents_status.items()
-                }
+            if not isinstance(torrents_status, dict):
+                logger.error("Invalid torrents status from Deluge: %s", torrents_status)
+                return {}
 
-            return result
+            return {
+                torrent_hash: DELUGE_STATE_MAPPING.get(status.get("state"), TorrentState.UNKNOWN)
+                for torrent_hash, status in torrents_status.items()
+            }
 
         except Exception as e:
             logger.error(f"Error getting torrent states for monitoring from Deluge: {e}")
@@ -169,15 +167,8 @@ class DelugeClient(TorrentClient):
     def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
         """Get torrent information."""
         try:
-            # Get requested fields (always include hash)
-            field_config = (
-                {k: v for k, v in self.field_config.items() if k in fields or k == "hash"}
-                if fields
-                else self.field_config
-            )
-
-            # Get required arguments from field_config
-            arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
+            # Get field configuration and required arguments
+            field_config, arguments = self._get_field_config_and_arguments(fields)
 
             torrent_info = self.client.call(
                 "core.get_torrent_status",
@@ -185,7 +176,8 @@ class DelugeClient(TorrentClient):
                 arguments,
             )
 
-            if torrent_info is None:
+            if not isinstance(torrent_info, dict):
+                logger.debug("Invalid torrent info from Deluge: %s", torrent_info)
                 return None
 
             # Build ClientTorrentInfo using field_config
@@ -200,13 +192,13 @@ class DelugeClient(TorrentClient):
 
     # region Abstract Methods - Internal Operations
 
-    def _add_torrent(self, torrent_data, download_dir: str, hash_match: bool) -> str:
+    def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
         """Add torrent to Deluge."""
         torrent_b64 = base64.b64encode(torrent_data).decode()
         try:
             torrent_hash = self.client.call(
                 "core.add_torrent_file",
-                f"{os.urandom(16).hex()}.torrent",  # filename
+                None,
                 torrent_b64,
                 {
                     "download_location": download_dir,
@@ -236,9 +228,11 @@ class DelugeClient(TorrentClient):
             except Exception as label_error:
                 # If setting label fails, try creating label first
                 if "Unknown Label" in str(label_error) or "label does not exist" in str(label_error).lower():
-                    self.client.call("label.add", label)
-                    # Try setting label again
-                    self.client.call("label.set_torrent", torrent_hash, label)
+                    try:
+                        self.client.call("label.add", label)
+                        self.client.call("label.set_torrent", torrent_hash, label)
+                    except Exception as retry_error:
+                        logger.warning(f"Failed to set label after creating it: {retry_error}")
 
         return str(torrent_hash)
 
@@ -266,7 +260,8 @@ class DelugeClient(TorrentClient):
         Deluge needs to use index to rename files
         """
         torrent_info = self.client.call("core.get_torrent_status", torrent_hash, ["files"])
-        if torrent_info is None:
+        if not isinstance(torrent_info, dict):
+            logger.debug("Invalid torrent info from Deluge: %s", torrent_info)
             return {}
         files = torrent_info.get("files", [])
         new_rename_map = {
@@ -279,9 +274,8 @@ class DelugeClient(TorrentClient):
     def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
         """Get torrent data from Deluge."""
         try:
-            torrent_path = posixpath.join(self.torrents_dir, torrent_hash + ".torrent")
-            with open(torrent_path, "rb") as f:
-                return f.read()
+            torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
+            return torrent_path.read_bytes()
         except Exception as e:
             logger.error(f"Error getting torrent data from Deluge: {e}")
             return None
