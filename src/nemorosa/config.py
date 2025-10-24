@@ -1,11 +1,12 @@
 """Nemorosa configuration processing module."""
 
-import os
 import secrets
 import sys
+from enum import Enum
+from pathlib import Path
 
-import humanfriendly
 import msgspec
+from humanfriendly import parse_timespan
 from platformdirs import user_config_dir
 
 from . import logger
@@ -13,28 +14,65 @@ from . import logger
 APPNAME = "nemorosa"
 
 
+class LinkType(Enum):
+    """Link type enumeration."""
+
+    SYMLINK = "symlink"
+    HARDLINK = "hardlink"
+    REFLINK = "reflink"
+    REFLINK_OR_COPY = "reflink_or_copy"
+
+
+class LogLevel(Enum):
+    """Log level enumeration."""
+
+    DEBUG = "debug"
+    INFO = "info"
+    WARNING = "warning"
+    ERROR = "error"
+    CRITICAL = "critical"
+
+
+def validate_string_list(value: list[str] | None, field_name: str) -> None:
+    """Validate string list field.
+
+    Args:
+        value: String list to validate or None
+        field_name: Field name for error messages
+
+    Raises:
+        ValueError: Raised when validation fails
+    """
+    if value is not None:
+        if len(value) == 0:
+            raise ValueError(f"{field_name} cannot be an empty list")
+        for item in value:
+            if not item.strip():
+                raise ValueError(f"{field_name} cannot contain empty strings")
+
+
 class LinkingConfig(msgspec.Struct):
     """File linking configuration."""
 
     enable_linking: bool = False
     link_dirs: list[str] = msgspec.field(default_factory=list)
-    link_type: str = "hardlink"
+    link_type: LinkType = LinkType.HARDLINK
 
     def __post_init__(self):
-        # Validate link_type
-        valid_types = ["symlink", "hardlink", "reflink", "reflink_or_copy"]
-        if self.link_type not in valid_types:
-            raise ValueError(f"Invalid link_type '{self.link_type}'. Must be one of: {valid_types}")
-
         # Validate link_dirs when linking is enabled
-        if self.enable_linking and not self.link_dirs:
-            raise ValueError("link_dirs must be specified when linking is enabled")
+        if self.enable_linking:
+            if not self.link_dirs:
+                raise ValueError("link_dirs must be specified when linking is enabled")
+
+            for item in self.link_dirs:
+                if not item.strip():
+                    raise ValueError("link_dirs cannot contain empty strings")
 
 
 class GlobalConfig(msgspec.Struct):
     """Global configuration."""
 
-    loglevel: str = "info"
+    loglevel: LogLevel = LogLevel.INFO
     no_download: bool = False
     exclude_mp3: bool = True
     check_trackers: list[str] | None = msgspec.field(
@@ -44,18 +82,8 @@ class GlobalConfig(msgspec.Struct):
     auto_start_torrents: bool = True
 
     def __post_init__(self):
-        # Validate log level
-        valid_levels = ["debug", "info", "warning", "error", "critical"]
-        if self.loglevel not in valid_levels:
-            raise ValueError(f"Invalid loglevel '{self.loglevel}'. Must be one of: {valid_levels}")
-
-        # Validate check_trackers is a non-empty list or None
-        if self.check_trackers is not None:
-            if len(self.check_trackers) == 0:
-                raise ValueError("check_trackers must be a non-empty list or None")
-            for tracker in self.check_trackers:
-                if not tracker.strip():
-                    raise ValueError("check_trackers cannot contain empty strings")
+        # Validate check_trackers
+        validate_string_list(self.check_trackers, "check_trackers")
 
 
 class DownloaderConfig(msgspec.Struct):
@@ -66,24 +94,18 @@ class DownloaderConfig(msgspec.Struct):
     tags: list[str] | None = None
 
     def __post_init__(self):
-        if not self.client:
+        if not self.client or not self.client.strip():
             raise ValueError("Downloader client URL is required")
 
         # Validate client URL format
         if not self.client.startswith(("deluge://", "transmission+", "qbittorrent+", "rtorrent+")):
             raise ValueError(f"Invalid client URL format: {self.client}")
 
-        # Validate label cannot be empty string
-        if self.label is not None and not self.label.strip():
-            raise ValueError("label cannot be empty string, use null instead")
-
         # Validate tags content
-        if self.tags is not None:
-            if len(self.tags) == 0:
-                raise ValueError("tags cannot be an empty list")
-            for tag in self.tags:
-                if not tag.strip():
-                    raise ValueError("tags cannot contain empty strings")
+        validate_string_list(self.tags, "tags")
+
+        if self.label is not None and not self.label.strip():
+            self.label = None
 
 
 class ServerConfig(msgspec.Struct):
@@ -92,8 +114,8 @@ class ServerConfig(msgspec.Struct):
     host: str | None = None
     port: int = 8256
     api_key: str | None = None
-    search_cadence: str | None = None  # Will be parsed to seconds via property
-    cleanup_cadence: str = "1 day"  # Will be parsed to seconds via property
+    search_cadence: str | None = "1 day"  # Will be parsed to seconds
+    cleanup_cadence: str = "1 day"  # Will be parsed to seconds
 
     def __post_init__(self):
         # Validate port range
@@ -103,31 +125,21 @@ class ServerConfig(msgspec.Struct):
         # Validate search_cadence
         if self.search_cadence is not None:
             try:
-                search_seconds = humanfriendly.parse_timespan(self.search_cadence)
+                search_seconds = int(parse_timespan(self.search_cadence))
                 if search_seconds <= 0:
                     raise ValueError(f"search_cadence must be greater than 0, got: {search_seconds} seconds")
+                self.search_cadence = str(search_seconds)
             except Exception as e:
                 raise ValueError(f"Invalid search_cadence '{self.search_cadence}': {e}") from e
 
         # Validate cleanup_cadence
         try:
-            cleanup_seconds = humanfriendly.parse_timespan(self.cleanup_cadence)
+            cleanup_seconds = int(parse_timespan(self.cleanup_cadence))
             if cleanup_seconds <= 0:
                 raise ValueError(f"cleanup_cadence must be greater than 0, got: {cleanup_seconds} seconds")
+            self.cleanup_cadence = str(cleanup_seconds)
         except Exception as e:
             raise ValueError(f"Invalid cleanup_cadence '{self.cleanup_cadence}': {e}") from e
-
-    @property
-    def search_cadence_seconds(self) -> int:
-        """Get search cadence in seconds."""
-        if self.search_cadence is None:
-            return 0
-        return int(humanfriendly.parse_timespan(self.search_cadence))
-
-    @property
-    def cleanup_cadence_seconds(self) -> int:
-        """Get cleanup cadence in seconds."""
-        return int(humanfriendly.parse_timespan(self.cleanup_cadence))
 
 
 class TargetSiteConfig(msgspec.Struct):
@@ -141,13 +153,15 @@ class TargetSiteConfig(msgspec.Struct):
         if not self.server:
             raise ValueError("Target site server URL is required")
 
+        # Validate server URL format
+        if not self.server.startswith(("http://", "https://")):
+            raise ValueError(f"Invalid server URL format: {self.server}")
+
         # At least one of api_key or cookie is required
         if not self.api_key and not self.cookie:
             raise ValueError(f"Target site '{self.server}' must have either api_key or cookie")
 
-        # Validate server URL format
-        if not self.server.startswith(("http://", "https://")):
-            raise ValueError(f"Invalid server URL format: {self.server}")
+        self.server = self.server.rstrip("/")
 
 
 class NemorosaConfig(msgspec.Struct):
@@ -174,17 +188,17 @@ class NemorosaConfig(msgspec.Struct):
             raise ValueError("rtorrent client requires enable linking")
 
 
-def get_user_config_path() -> str:
+def get_user_config_path() -> Path:
     """Get configuration file path in user config directory.
 
     Returns:
-        str: Configuration file path.
+        Path: Configuration file path.
     """
     config_dir = user_config_dir(APPNAME)
-    return os.path.join(config_dir, "config.yml")
+    return Path(config_dir) / "config.yml"
 
 
-def find_config_path(config_path: str | None = None) -> str:
+def find_config_path(config_path: str | None = None) -> Path:
     """Find configuration file path.
 
     Args:
@@ -192,15 +206,12 @@ def find_config_path(config_path: str | None = None) -> str:
 
     Returns:
         Absolute path of the configuration file.
-
-    Raises:
-        FileNotFoundError: Raised when configuration file is not found.
     """
     # Determine the path to check
-    path_to_check = os.path.abspath(config_path) if config_path else get_user_config_path()
+    path_to_check = Path(config_path) if config_path else get_user_config_path()
 
     # Check if the path exists and return absolute path
-    if os.path.exists(path_to_check):
+    if path_to_check.exists():
         return path_to_check
     else:
         logger.warning("Configuration file not found. Creating default configuration...")
@@ -215,7 +226,7 @@ def find_config_path(config_path: str | None = None) -> str:
         sys.exit(0)
 
 
-def setup_config(config_path: str) -> NemorosaConfig:
+def setup_config(config_path: Path) -> NemorosaConfig:
     """Set up and load configuration.
 
     Args:
@@ -229,8 +240,7 @@ def setup_config(config_path: str) -> NemorosaConfig:
     """
     try:
         # Parse configuration file directly to NemorosaConfig using msgspec
-        with open(config_path, "rb") as f:
-            config = msgspec.yaml.decode(f.read(), type=NemorosaConfig)
+        config = msgspec.yaml.decode(config_path.read_bytes(), type=NemorosaConfig)
 
         logger.info(f"Configuration loaded successfully from: {config_path}")
 
@@ -242,7 +252,7 @@ def setup_config(config_path: str) -> NemorosaConfig:
         raise ValueError(f"Error reading config file '{config_path}': {e}") from e
 
 
-def create_default_config(target_path: str) -> str:
+def create_default_config(target_path: Path) -> Path:
     """Create default configuration file.
 
     Args:
@@ -252,37 +262,37 @@ def create_default_config(target_path: str) -> str:
         Created configuration file path.
     """
     # Create parent directory if it doesn't exist
-    os.makedirs(os.path.dirname(target_path), exist_ok=True)
+    target_path.parent.mkdir(parents=True, exist_ok=True)
 
     # Default configuration content
     default_config = f"""# Nemorosa Configuration File
 
 global:
   # Global settings
-  loglevel: info  # Log level: debug, info, warning, error, critical
-  no_download: false  # Whether to only check without downloading
-  exclude_mp3: true  # Whether to exclude MP3 format files
-  check_trackers:  # List of trackers to check, set to null to check all
+  loglevel: info # Log level: debug, info, warning, error, critical
+  no_download: false # Whether to only check without downloading
+  exclude_mp3: true # Whether to exclude MP3 format files
+  check_trackers: # List of trackers to check, set to null to check all
     - "flacsfor.me"
-    - "home.opsfet.ch" 
+    - "home.opsfet.ch"
     - "52dic.vip"
-  check_music_only: true  # Whether to check music files only
-  auto_start_torrents: true  # Whether to automatically start torrents after successful injection
+  check_music_only: true # Whether to check music files only
+  auto_start_torrents: true # Whether to automatically start torrents after successful injection
 
 linking:
   # File linking configuration
-  enable_linking: false  # Whether to enable file linking
-  link_dirs: []  # List of directories to create links in
-  link_type: "hardlink"  # Type of link: symlink, hardlink, reflink, reflink_or_copy
+  enable_linking: false # Whether to enable file linking
+  link_dirs: [] # List of directories to create links in
+  link_type: "hardlink" # Type of link: symlink, hardlink, reflink, reflink_or_copy
 
 server:
   # Web server settings
-  host: null  # Server host address, null means listen on all interfaces
-  port: 8256  # Server port
-  api_key: {secrets.token_urlsafe(32)}  # API key for accessing web interface
+  host: null # Server host address, null means listen on all interfaces
+  port: 8256 # Server port
+  api_key: "{secrets.token_urlsafe(32)}" # API key for accessing web interface
   # Scheduled job settings (optional, set to null to disable)
-  search_cadence: "1 day"  # How often to run search job (e.g., "1 day", "6 hours", "30 minutes")
-  cleanup_cadence: "1 day"  # How often to run cleanup job
+  search_cadence: "1 day" # How often to run search job (e.g., "1 day", "6 hours", "30 minutes")
+  cleanup_cadence: "1 day" # How often to run cleanup job
 
 downloader:
   # Downloader settings
@@ -296,8 +306,8 @@ downloader:
   # For Windows: Use forward slashes (/) in torrents_dir path
   # Example: ?torrents_dir=C:/Users/username/AppData/Local/qBittorrent/BT_backup
 
-  client: null
-  label: "nemorosa"  # Download label
+  client: ""
+  label: "nemorosa" # Download label
   # Optional tags list, only for qBittorrent and Transmission.
   # For qBittorrent, tags work with label
   # For Transmission, default to use tags, if tags is null, use [label] as fallback
@@ -313,8 +323,7 @@ target_site:
     cookie: "your_cookie_here" # For sites that don't support API, use cookie instead
 """
 
-    with open(target_path, "w", encoding="utf-8") as f:
-        f.write(default_config)
+    target_path.write_text(default_config, encoding="utf-8")
 
     return target_path
 
