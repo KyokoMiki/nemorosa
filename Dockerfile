@@ -1,7 +1,8 @@
 # ===========================================
 # Stage 1: Builder - Install dependencies and build the project
 # ===========================================
-FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS builder
+FROM python:3.13-slim-bookworm AS builder
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Set working directory
 WORKDIR /app
@@ -48,9 +49,6 @@ ENV PATH="/app/.venv/bin:$PATH"
 # Override platformdirs to use /app/data for configuration
 ENV XDG_CONFIG_HOME=/app/data
 ENV XDG_DATA_HOME=/app/data
-
-# Copy only the essential application files
-COPY --from=builder /app/src /app/src
 
 # Expose port for web interface
 EXPOSE 8256
