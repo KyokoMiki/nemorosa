@@ -1,5 +1,7 @@
 """Scheduler module for nemorosa."""
 
+import asyncio
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from enum import Enum
 
@@ -43,9 +45,38 @@ class JobManager:
         self.database = db.get_database()
         # Track running jobs
         self._running_jobs = set()
+        self._running_jobs_lock = asyncio.Lock()
+
+    @asynccontextmanager
+    async def _job_execution_context(self, job_name: str):
+        """Context manager for job execution that handles common setup and teardown.
+
+        Args:
+            job_name: Name of the job being executed.
+
+        Yields:
+            start_time: The job start time for duration calculation.
+        """
+        # Mark job as running
+        async with self._running_jobs_lock:
+            self._running_jobs.add(job_name)
+        start_time = datetime.now(UTC)
+
+        try:
+            yield start_time
+            # Record successful completion
+            end_time = datetime.now(UTC)
+            duration = (end_time - start_time).total_seconds()
+            logger.debug(f"Completed {job_name} job in {duration:.2f} seconds")
+        except Exception as e:
+            logger.exception(f"Error in {job_name} job: {e}")
+        finally:
+            # Mark job as not running
+            async with self._running_jobs_lock:
+                self._running_jobs.discard(job_name)
 
     async def start_scheduler(self):
-        """Start the scheduler and add configured periodic jobs.
+        """Start the scheduler.
 
         This method must be called in an async context to properly initialize
         the AsyncIOScheduler with the running event loop.
@@ -56,11 +87,8 @@ class JobManager:
 
     def add_scheduled_jobs(self):
         """Add configured periodic jobs to the scheduler."""
-
-        # Add search job if configured
-        if config.cfg.server.search_cadence_seconds:
-            self._add_search_job()
-
+        # Add search job
+        self._add_search_job()
         # Add cleanup job
         self._add_cleanup_job()
         logger.info("Scheduled jobs added successfully")
@@ -68,52 +96,49 @@ class JobManager:
     def _add_search_job(self):
         """Add search job to scheduler."""
         try:
-            interval = config.cfg.server.search_cadence_seconds
+            interval = config.cfg.server.search_cadence
+
+            if not interval:
+                logger.debug("No search cadence configured, skipping search job")
+                return
 
             self.scheduler.add_job(
                 self._run_search_job,
-                trigger=IntervalTrigger(seconds=interval),
+                trigger=IntervalTrigger(seconds=int(interval)),
                 id=JobType.SEARCH.value,
                 name="Search Job",
                 max_instances=1,
-                misfire_grace_time=60,
                 coalesce=True,
                 replace_existing=True,
             )
-            logger.debug(f"Added search job with cadence: {config.cfg.server.search_cadence}")
+            logger.debug(f"Added search job with cadence: {interval}")
         except Exception as e:
-            logger.error(f"Failed to add search job: {e}")
+            logger.exception(f"Failed to add search job: {e}")
 
     def _add_cleanup_job(self):
         """Add cleanup job to scheduler."""
         try:
-            interval = config.cfg.server.cleanup_cadence_seconds
+            interval = config.cfg.server.cleanup_cadence
 
             self.scheduler.add_job(
                 self._run_cleanup_job,
-                trigger=IntervalTrigger(seconds=interval),
+                trigger=IntervalTrigger(seconds=int(interval)),
                 id=JobType.CLEANUP.value,
                 name="Cleanup Job",
                 max_instances=1,
-                misfire_grace_time=60,
                 coalesce=True,
                 replace_existing=True,
             )
-            logger.debug(f"Added cleanup job with cadence: {config.cfg.server.cleanup_cadence}")
+            logger.debug(f"Added cleanup job with cadence: {interval}")
         except Exception as e:
-            logger.error(f"Failed to add cleanup job: {e}")
+            logger.exception(f"Failed to add cleanup job: {e}")
 
     async def _run_search_job(self):
         """Run search job."""
         job_name = JobType.SEARCH.value
         logger.debug(f"Starting {job_name} job")
-        # Mark job as running
-        self._running_jobs.add(job_name)
 
-        try:
-            # Record job start
-            start_time = datetime.now(UTC)
-
+        async with self._job_execution_context(job_name) as start_time:
             # Get next run time from APScheduler
             next_run_time = None
             job = self.scheduler.get_job(JobType.SEARCH.value)
@@ -123,9 +148,9 @@ class JobManager:
             await self.database.update_job_run(job_name, start_time, next_run_time)
 
             # Run the actual search process
-            from .core import NemorosaCore
+            from .core import get_core
 
-            processor = NemorosaCore()
+            processor = get_core()
             await processor.process_torrents()
 
             client = processor.torrent_client
@@ -133,28 +158,12 @@ class JobManager:
                 logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
                 await client.wait_for_monitoring_completion()
 
-            # Record successful completion
-            end_time = datetime.now(UTC)
-            duration = (end_time - start_time).total_seconds()
-            logger.debug(f"Completed {job_name} job in {duration:.2f} seconds")
-
-        except Exception as e:
-            logger.error(f"Error in {job_name} job: {e}")
-        finally:
-            # Mark job as not running
-            self._running_jobs.discard(job_name)
-
     async def _run_cleanup_job(self):
         """Run cleanup job."""
         job_name = JobType.CLEANUP.value
         logger.debug(f"Starting {job_name} job")
-        # Mark job as running
-        self._running_jobs.add(job_name)
 
-        try:
-            # Record job start
-            start_time = datetime.now(UTC)
-
+        async with self._job_execution_context(job_name) as start_time:
             # Get next run time from APScheduler
             next_run_time = None
             job = self.scheduler.get_job(JobType.CLEANUP.value)
@@ -164,24 +173,13 @@ class JobManager:
             await self.database.update_job_run(job_name, start_time, next_run_time)
 
             # Run cleanup process
-            from .core import NemorosaCore
+            from .core import get_core
 
-            processor = NemorosaCore()
+            processor = get_core()
             await processor.retry_undownloaded_torrents()
 
             # Then post-process injected torrents
             await processor.post_process_injected_torrents()
-
-            # Record successful completion
-            end_time = datetime.now(UTC)
-            duration = (end_time - start_time).total_seconds()
-            logger.debug(f"Completed {job_name} job in {duration:.2f} seconds")
-
-        except Exception as e:
-            logger.error(f"Error in {job_name} job: {e}")
-        finally:
-            # Mark job as not running
-            self._running_jobs.discard(job_name)
 
     async def trigger_job_early(self, job_type: JobType) -> JobResponse:
         """Trigger a job to run early.
@@ -207,7 +205,10 @@ class JobManager:
                 )
 
             # Check if job is already running
-            if job_name in self._running_jobs:
+            async with self._running_jobs_lock:
+                is_running = job_name in self._running_jobs
+
+            if is_running:
                 logger.warning(f"Job {job_name} is already running")
                 return JobResponse(
                     status="conflict",
@@ -254,7 +255,8 @@ class JobManager:
             )
 
         # Check if job is currently running
-        is_running = job_name in self._running_jobs
+        async with self._running_jobs_lock:
+            is_running = job_name in self._running_jobs
 
         # Get last run time from database
         last_run_dt = await self.database.get_job_last_run(job_name)
@@ -283,16 +285,38 @@ class JobManager:
 
 
 # Global job manager instance
-job_manager: JobManager | None = None
+_job_manager_instance: JobManager | None = None
+_job_manager_lock = asyncio.Lock()
+
+
+async def init_job_manager() -> None:
+    """Initialize global job manager instance.
+
+    Should be called once during application startup (cli.async_init).
+
+    Raises:
+        RuntimeError: If already initialized.
+    """
+    global _job_manager_instance
+    async with _job_manager_lock:
+        if _job_manager_instance is not None:
+            raise RuntimeError("Job manager already initialized.")
+
+        _job_manager_instance = JobManager()
+        await _job_manager_instance.start_scheduler()
 
 
 def get_job_manager() -> JobManager:
     """Get global job manager instance.
 
+    Must be called after init_job_manager() has been invoked.
+
     Returns:
         JobManager instance.
+
+    Raises:
+        RuntimeError: If job manager has not been initialized.
     """
-    global job_manager
-    if job_manager is None:
-        job_manager = JobManager()
-    return job_manager
+    if _job_manager_instance is None:
+        raise RuntimeError("JobManager not initialized. Call init_job_manager() first.")
+    return _job_manager_instance
