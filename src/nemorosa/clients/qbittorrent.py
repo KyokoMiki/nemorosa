@@ -1,13 +1,20 @@
+"""
+qBittorrent client implementation.
+Provides integration with qBittorrent via its Web API.
+"""
+
 import posixpath
 import time
+from pathlib import Path
 
 import qbittorrentapi
-import torf
+from torf import Torrent
 
 from .. import config, logger
 from .client_common import (
     ClientTorrentFile,
     ClientTorrentInfo,
+    FieldSpec,
     TorrentClient,
     TorrentConflictError,
     TorrentState,
@@ -42,17 +49,29 @@ QBITTORRENT_STATE_MAPPING = {
 
 # Field extractors for qBittorrent torrent client
 _QBITTORRENT_FIELD_SPECS = {
-    "hash": lambda t: t.hash,
-    "name": lambda t: t.name,
-    "progress": lambda t: t.progress,
-    "total_size": lambda t: t.size,
-    "files": lambda t: [ClientTorrentFile(name=f.name, size=f.size, progress=f.progress) for f in t.files],
-    "trackers": lambda t: [t.tracker]
-    if t.trackers_count == 1
-    else [tracker.url for tracker in t.trackers if tracker.url not in ("** [DHT] **", "** [PeX] **", "** [LSD] **")],
-    "download_dir": lambda t: t.save_path,
-    "state": lambda t: QBITTORRENT_STATE_MAPPING.get(t.state, TorrentState.UNKNOWN),
-    "piece_progress": lambda t: [piece == 2 for piece in t.pieceStates] if t.pieceStates else [],
+    "hash": FieldSpec(_request_arguments=None, extractor=lambda t: t.hash),
+    "name": FieldSpec(_request_arguments=None, extractor=lambda t: t.name),
+    "progress": FieldSpec(_request_arguments=None, extractor=lambda t: t.progress),
+    "total_size": FieldSpec(_request_arguments=None, extractor=lambda t: t.size),
+    "files": FieldSpec(
+        _request_arguments=None,
+        extractor=lambda t: [ClientTorrentFile(name=f.name, size=f.size, progress=f.progress) for f in t.files],
+    ),
+    "trackers": FieldSpec(
+        _request_arguments=None,
+        extractor=lambda t: [t.tracker]
+        if t.trackers_count == 1
+        else [
+            tracker.url for tracker in t.trackers if tracker.url not in ("** [DHT] **", "** [PeX] **", "** [LSD] **")
+        ],
+    ),
+    "download_dir": FieldSpec(_request_arguments=None, extractor=lambda t: t.save_path),
+    "state": FieldSpec(
+        _request_arguments=None, extractor=lambda t: QBITTORRENT_STATE_MAPPING.get(t.state, TorrentState.UNKNOWN)
+    ),
+    "piece_progress": FieldSpec(
+        _request_arguments=None, extractor=lambda t: [piece == 2 for piece in t.pieceStates] if t.pieceStates else []
+    ),
 }
 
 
@@ -95,27 +114,22 @@ class QBittorrentClient(TorrentClient):
             list[ClientTorrentInfo]: List of torrent information.
         """
         try:
-            # Get requested fields (always include hash)
-            field_config = (
-                {k: v for k, v in self.field_config.items() if k in fields or k == "hash"}
-                if fields
-                else self.field_config
-            )
+            # Get field configuration and required arguments
+            field_config, _ = self._get_field_config_and_arguments(fields)
 
             # Get torrents from qBittorrent
             torrents = self.client.torrents_info(torrent_hashes=torrent_hashes)
 
             # Build ClientTorrentInfo objects
-            result = []
-            for torrent in torrents:
-                values = {field_name: extractor(torrent) for field_name, extractor in field_config.items()}
-                torrent_info = ClientTorrentInfo(**values)
-                result.append(torrent_info)
+            result = [
+                ClientTorrentInfo(**{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()})
+                for torrent in torrents
+            ]
 
             return result
 
         except Exception as e:
-            logger.error("Error retrieving torrents from qBittorrent: %s", e)
+            logger.error(f"Error retrieving torrents from qBittorrent: {e}")
             return []
 
     def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
@@ -127,19 +141,15 @@ class QBittorrentClient(TorrentClient):
 
             torrent = torrent_info[0]
 
-            # Get requested fields (always include hash)
-            field_config = (
-                {k: v for k, v in self.field_config.items() if k in fields or k == "hash"}
-                if fields
-                else self.field_config
-            )
+            # Get field configuration and required arguments
+            field_config, _ = self._get_field_config_and_arguments(fields)
 
             # Build ClientTorrentInfo using field_config
             return ClientTorrentInfo(
-                **{field_name: extractor(torrent) for field_name, extractor in field_config.items()}
+                **{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()}
             )
         except Exception as e:
-            logger.error("Error retrieving torrent info from qBittorrent: %s", e)
+            logger.error(f"Error retrieving torrent info from qBittorrent: {e}")
             return None
 
     def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
@@ -185,24 +195,19 @@ class QBittorrentClient(TorrentClient):
                         self._torrent_states_cache[torrent_hash] = state
 
             # Return cached states for requested torrents
-            return self._torrent_states_cache
+            return {h: self._torrent_states_cache[h] for h in torrent_hashes if h in self._torrent_states_cache}
 
         except Exception as e:
             logger.error(f"Error getting torrent states for monitoring from qBittorrent: {e}")
             # On error, fall back to cached states for requested torrents
-            return self._torrent_states_cache
+            return {h: self._torrent_states_cache[h] for h in torrent_hashes if h in self._torrent_states_cache}
 
     # endregion
 
     # region Abstract Methods - Internal Operations
 
-    def _add_torrent(self, torrent_data, download_dir: str, hash_match: bool) -> str:
+    def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
         """Add torrent to qBittorrent."""
-
-        # qBittorrent doesn't return the hash directly, we need to decode it
-        torrent_obj = torf.Torrent.read_stream(torrent_data)
-        info_hash = torrent_obj.infohash
-
         current_time = time.time()
 
         result = self.client.torrents_add(
@@ -214,6 +219,10 @@ class QBittorrentClient(TorrentClient):
             use_auto_torrent_management=False,
             is_skip_checking=hash_match,  # Skip hash checking if hash match
         )
+
+        # qBittorrent doesn't return the hash directly, we need to decode it
+        torrent_obj = Torrent.read_stream(torrent_data)
+        info_hash = torrent_obj.infohash
 
         # qBittorrent returns "Ok." for success and "Fails." for failure
         if result != "Ok.":
@@ -247,8 +256,11 @@ class QBittorrentClient(TorrentClient):
 
     def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str):
         """Rename entire torrent."""
-        self.client.torrents_rename(torrent_hash=torrent_hash, new_torrent_name=new_name)
-        self.client.torrents_rename_folder(torrent_hash=torrent_hash, old_path=old_name, new_path=new_name)
+        try:
+            self.client.torrents_rename(torrent_hash=torrent_hash, new_torrent_name=new_name)
+            self.client.torrents_rename_folder(torrent_hash=torrent_hash, old_path=old_name, new_path=new_name)
+        except qbittorrentapi.Conflict409Error:
+            pass
 
     def _rename_file(self, torrent_hash: str, old_path: str, new_name: str):
         """Rename file within torrent."""
@@ -262,19 +274,15 @@ class QBittorrentClient(TorrentClient):
         """
         qBittorrent needs to prepend the root directory
         """
-        new_rename_map = {}
-        for key, value in rename_map.items():
-            new_rename_map[posixpath.join(base_path, key)] = posixpath.join(base_path, value)
-        return new_rename_map
+        return {posixpath.join(base_path, key): posixpath.join(base_path, value) for key, value in rename_map.items()}
 
     def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
         """Get torrent data from qBittorrent."""
         try:
             torrent_data = self.client.torrents_export(torrent_hash=torrent_hash)
             if torrent_data is None:
-                torrent_path = posixpath.join(self.torrents_dir, torrent_hash + ".torrent")
-                with open(torrent_path, "rb") as f:
-                    return f.read()
+                torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
+                return torrent_path.read_bytes()
             return torrent_data
         except Exception as e:
             logger.error(f"Error getting torrent data from qBittorrent: {e}")

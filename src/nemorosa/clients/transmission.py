@@ -1,5 +1,11 @@
+"""
+Transmission client implementation.
+Provides integration with Transmission via its RPC interface.
+"""
+
 import base64
 import posixpath
+from pathlib import Path
 
 import msgspec
 import transmission_rpc
@@ -61,12 +67,20 @@ _TRANSMISSION_FIELD_SPECS = {
 class TransmissionClient(TorrentClient):
     """Transmission torrent client implementation."""
 
+    supports_fast_resume = True
+
     def __init__(self, url: str):
         super().__init__()
         client_config = parse_libtc_url(url)
         self.torrents_dir = client_config.torrents_dir or "/config/torrents"
 
+        # Ensure protocol is either 'http' or 'https'
+        protocol = client_config.scheme
+        if protocol not in ("http", "https"):
+            protocol = "http"  # Default to http if scheme is None or invalid
+
         self.client = transmission_rpc.Client(
+            protocol=protocol,
             host=client_config.host or "localhost",
             port=client_config.port or 9091,
             username=client_config.username,
@@ -93,25 +107,17 @@ class TransmissionClient(TorrentClient):
             list[ClientTorrentInfo]: List of torrent information.
         """
         try:
-            # Get required arguments based on requested fields (always include hash)
-            field_config = (
-                {k: v for k, v in self.field_config.items() if k in fields or k == "hash"}
-                if fields
-                else self.field_config
-            )
-
-            # Get required Transmission properties based on requested fields
-            arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
+            # Get field configuration and required arguments
+            field_config, arguments = self._get_field_config_and_arguments(fields)
 
             # Get torrents from Transmission (filtered by hashes if provided)
             torrents = self.client.get_torrents(ids=torrent_hashes, arguments=arguments)  # type: ignore[arg-type]
 
             # Build ClientTorrentInfo objects
-            result = []
-            for torrent in torrents:
-                values = {field_name: spec.extractor(torrent) for field_name, spec in field_config.items()}
-                torrent_info = ClientTorrentInfo(**values)
-                result.append(torrent_info)
+            result = [
+                ClientTorrentInfo(**{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()})
+                for torrent in torrents
+            ]
 
             return result
 
@@ -122,15 +128,8 @@ class TransmissionClient(TorrentClient):
     def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
         """Get torrent information."""
         try:
-            # Get requested fields (always include hash)
-            field_config = (
-                {k: v for k, v in self.field_config.items() if k in fields or k == "hash"}
-                if fields
-                else self.field_config
-            )
-
-            # Get required arguments from field_config
-            arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
+            # Get field configuration and required arguments
+            field_config, arguments = self._get_field_config_and_arguments(fields)
 
             torrent = self.client.get_torrent(torrent_hash, arguments=arguments)
 
@@ -179,11 +178,11 @@ class TransmissionClient(TorrentClient):
 
     # region Abstract Methods - Internal Operations
 
-    def _add_torrent(self, torrent_data, download_dir: str, hash_match: bool) -> str:
+    def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
         """Add torrent to Transmission.
 
         Args:
-            torrent_data: Torrent file data.
+            torrent_data (bytes): Torrent file data.
             download_dir (str): Download directory.
             hash_match (bool): Not used for Transmission (has fast verification by default).
 
@@ -212,7 +211,10 @@ class TransmissionClient(TorrentClient):
 
         # Make direct RPC call to get raw response
         query = {"method": RpcMethod.TorrentAdd, "arguments": kwargs}
-        http_data = self.client._http_query(query)
+        # Note: Must use private method _http_query to access raw response data.
+        # transmission_rpc doesn't provide this capability, which is required to distinguish
+        # between torrent-added and torrent-duplicate responses.
+        http_data = self.client._http_query(query)  # noqa: SLF001
 
         # Parse JSON response
         try:
@@ -270,9 +272,9 @@ class TransmissionClient(TorrentClient):
             local_name_list = local_name.split("/")
             # Transmission cannot complete non-same-level moves
             if len(torrent_name_list) == len(local_name_list):
-                for i in range(len(torrent_name_list)):
-                    if torrent_name_list[i] != local_name_list[i]:
-                        temp_map[("/".join(torrent_name_list[: i + 1]), local_name_list[i])] = i
+                for i, (torrent_part, local_part) in enumerate(zip(torrent_name_list, local_name_list, strict=False)):
+                    if torrent_part != local_part:
+                        temp_map[("/".join(torrent_name_list[: i + 1]), local_part)] = i
 
         transmission_map = {
             posixpath.join(base_path, key): value
@@ -284,9 +286,8 @@ class TransmissionClient(TorrentClient):
     def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
         """Get torrent data from Transmission."""
         try:
-            torrent_path = posixpath.join(self.torrents_dir, torrent_hash + ".torrent")
-            with open(torrent_path, "rb") as f:
-                return f.read()
+            torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
+            return torrent_path.read_bytes()
         except Exception as e:
             logger.error(f"Error getting torrent data from Transmission: {e}")
             return None

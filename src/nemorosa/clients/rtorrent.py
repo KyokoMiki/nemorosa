@@ -1,3 +1,8 @@
+"""
+rTorrent client implementation.
+Provides integration with rTorrent via XML-RPC interface using SCGI transport.
+"""
+
 import posixpath
 import time
 import xmlrpc.client  # nosec B411
@@ -5,7 +10,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 import defusedxml.xmlrpc
-import torf
+from torf import Torrent
 
 from .. import config, logger
 from .client_common import (
@@ -124,6 +129,8 @@ def create_proxy(url: str) -> xmlrpc.client.ServerProxy:
 class RTorrentClient(TorrentClient):
     """rTorrent torrent client implementation."""
 
+    supports_final_directory = True
+
     def __init__(self, url: str):
         super().__init__()
         config = parse_libtc_url(url)
@@ -155,15 +162,8 @@ class RTorrentClient(TorrentClient):
             list[ClientTorrentInfo]: List of torrent information.
         """
         try:
-            # Get requested fields (always include hash)
-            field_config = (
-                {k: v for k, v in self.field_config.items() if k in fields or k == "hash"}
-                if fields
-                else self.field_config
-            )
-
-            # Build rTorrent multicall arguments
-            arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
+            # Get field configuration and required arguments
+            field_config, arguments = self._get_field_config_and_arguments(fields)
 
             if torrent_hashes:
                 # If specific hashes are requested, use xmlrpc.client's MultiCall
@@ -197,12 +197,8 @@ class RTorrentClient(TorrentClient):
 
             for torrent_data in torrents_data:
                 try:
-                    # Build torrent info dict
-                    torrent_dict = {}
-
-                    # Handle list from d.multicall2
-                    for i, arg in enumerate(arguments):
-                        torrent_dict[arg] = torrent_data[i]
+                    # Build torrent info dict from d.multicall2 result
+                    torrent_dict = {arg: torrent_data[i] for i, arg in enumerate(arguments)}
 
                     # Extract values using field specifications
                     values = {field_name: spec.extractor(torrent_dict) for field_name, spec in field_config.items()}
@@ -271,15 +267,8 @@ class RTorrentClient(TorrentClient):
     def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
         """Get torrent information."""
         try:
-            # Get requested fields (always include hash)
-            field_config = (
-                {k: v for k, v in self.field_config.items() if k in fields or k == "hash"}
-                if fields
-                else self.field_config
-            )
-
-            # Build rTorrent multicall arguments
-            arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
+            # Get field configuration and required arguments
+            field_config, arguments = self._get_field_config_and_arguments(fields)
 
             # Use xmlrpc.client's MultiCall for single torrent info
             multicall = xmlrpc.client.MultiCall(self.client)
@@ -296,15 +285,13 @@ class RTorrentClient(TorrentClient):
                 return None
 
             # Build torrent info dict
-            torrent_dict = {}
-            for i, arg in enumerate(arguments):
-                torrent_dict[arg] = results[i]
+            torrent_dict = {arg: results[i] for i, arg in enumerate(arguments)}
 
             # Build ClientTorrentInfo using field_config
             values = {field_name: spec.extractor(torrent_dict) for field_name, spec in field_config.items()}
 
             # Handle additional multicalls if needed
-            directory = posixpath.basename(torrent_dict.get("d.directory", ""))
+            directory = posixpath.basename(str(torrent_dict.get("d.directory", "")))
             self._populate_files_and_trackers(values, torrent_hash, directory, fields)
 
             return ClientTorrentInfo(**values)
@@ -381,10 +368,10 @@ class RTorrentClient(TorrentClient):
 
     # region Abstract Methods - Internal Operations
 
-    def _add_torrent(self, torrent_data, download_dir: str, hash_match: bool) -> str:
+    def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
         """Add torrent to rTorrent with optional fast resume support."""
         # Parse torrent to get hash and info
-        torrent_obj = torf.Torrent.read_stream(torrent_data)
+        torrent_obj = Torrent.read_stream(torrent_data)
         info_hash = torrent_obj.infohash
         torrent_bytes = torrent_data
         torrent_completed = False
@@ -423,15 +410,14 @@ class RTorrentClient(TorrentClient):
                 }
 
                 # Create new torrent with modified metainfo
-                modified_torrent = torf.Torrent()
+                modified_torrent = Torrent()
                 modified_torrent._metainfo = metainfo  # type: ignore[attr-defined]
                 encoded_torrent = modified_torrent.dump()
                 torrent_bytes = encoded_torrent
 
         try:
             # Build command arguments for load.raw
-            cmd = [torrent_bytes]
-            cmd.append(f'd.directory_base.set="{download_dir}"')
+            cmd = [torrent_bytes, f'd.directory_base.set="{download_dir}"']
 
             # Set label if provided
             label = config.cfg.downloader.label
@@ -485,7 +471,7 @@ class RTorrentClient(TorrentClient):
         """Rename file within torrent.
 
         rTorrent does not support renaming individual files within a torrent.
-        This method will log a warning and do nothing.
+        This method will log an error and raise a NotImplementedError.
         """
         logger.error(
             f"rTorrent does not support renaming individual files. "
@@ -504,7 +490,7 @@ class RTorrentClient(TorrentClient):
         """Process rename mapping to adapt to rTorrent.
 
         rTorrent does not support renaming individual files within a torrent.
-        This method will return an empty dict and log a warning if rename_map is not empty.
+        This method will log an error and raise a NotImplementedError if rename_map is not empty.
 
         Args:
             torrent_hash (str): Torrent hash.
@@ -512,21 +498,19 @@ class RTorrentClient(TorrentClient):
             rename_map (dict): Original rename mapping.
 
         Returns:
-            dict: Empty dictionary (rTorrent doesn't support file renaming).
+            dict: Not implemented (rTorrent doesn't support file renaming).
         """
-        if rename_map:
-            logger.warning(
-                "rTorrent does not support renaming individual files within a torrent. "
-                "File renaming will be skipped. Consider enabling linking mode for proper file mapping."
-            )
+        logger.error(
+            "rTorrent does not support renaming individual files within a torrent. "
+            "File renaming will be skipped. Consider enabling linking mode for proper file mapping."
+        )
         raise NotImplementedError("rTorrent does not support renaming individual files within a torrent.")
 
     def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
         """Get torrent data from rTorrent."""
         try:
-            torrent_path = posixpath.join(self.torrents_dir, torrent_hash + ".torrent")
-            with open(torrent_path, "rb") as f:
-                return f.read()
+            torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
+            return torrent_path.read_bytes()
         except Exception as e:
             logger.error(f"Error getting torrent data from rTorrent: {e}")
             return None
