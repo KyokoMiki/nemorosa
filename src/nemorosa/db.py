@@ -3,17 +3,18 @@ Database operation module.
 Provides SQLite storage functionality for torrent scan history, result mapping, URL records and other data.
 """
 
-import os
-import threading
+import asyncio
+from collections.abc import Collection, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 import msgspec
 from platformdirs import user_config_dir
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, delete, func, select, text, update
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, Row, String, delete, func, select, text, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from . import config
 
@@ -24,8 +25,6 @@ if TYPE_CHECKING:
 # Define declarative base using SQLAlchemy 2.0 style
 class Base(DeclarativeBase):
     """Base class for all ORM models."""
-
-    pass
 
 
 # ORM Models using SQLAlchemy 2.0 Mapped and mapped_column
@@ -43,21 +42,6 @@ class ScanResult(Base):
     scanned_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     __table_args__ = (Index("idx_scan_results_matched_checked", "matched_torrent_hash", "checked"),)
-
-
-class UndownloadedTorrent(Base):
-    """Undownloaded torrents table - record detailed information of undownloaded torrents."""
-
-    __tablename__ = "undownloaded_torrents"
-
-    torrent_id: Mapped[str] = mapped_column(String, primary_key=True)
-    site_host: Mapped[str] = mapped_column(String, primary_key=True, server_default="default")
-    download_dir: Mapped[str | None] = mapped_column(String)
-    local_torrent_name: Mapped[str | None] = mapped_column(String)
-    rename_map: Mapped[str | None] = mapped_column(String)  # JSON format
-    added_at: Mapped[datetime] = mapped_column(server_default=func.now())
-
-    __table_args__ = (Index("idx_undownloaded_site_host", "site_host"),)
 
 
 class JobLog(Base):
@@ -83,6 +67,11 @@ class ClientTorrent(Base):
     download_dir: Mapped[str | None] = mapped_column(String)
     trackers: Mapped[str | None] = mapped_column(String)  # JSON array
 
+    # Relationship to files with cascade delete-orphan
+    files: Mapped[list["TorrentFile"]] = relationship(
+        "TorrentFile", back_populates="torrent", cascade="all, delete-orphan"
+    )
+
     @classmethod
     def from_client_info(cls, info: "ClientTorrentInfo") -> "ClientTorrent":
         """Alternative constructor: Create ClientTorrent from ClientTorrentInfo.
@@ -102,6 +91,11 @@ class ClientTorrent(Base):
             total_size=info.total_size,
             download_dir=info.download_dir or None,
             trackers=msgspec.json.encode(info.trackers).decode() if info.trackers else None,
+            # Add files through relationship
+            files=[
+                TorrentFile(torrent_hash=info.hash, file_path=file_obj.name, file_size=file_obj.size)
+                for file_obj in info.files
+            ],
         )
 
 
@@ -115,6 +109,9 @@ class TorrentFile(Base):
     )
     file_path: Mapped[str] = mapped_column(String, primary_key=True)
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    # Back reference to parent torrent
+    torrent: Mapped["ClientTorrent"] = relationship("ClientTorrent", back_populates="files")
 
     __table_args__ = (Index("idx_torrent_files_size", "file_size"),)
 
@@ -137,12 +134,10 @@ class NemorosaDatabase:
         Args:
             db_path: Database file path, if None uses config directory.
         """
-        self.db_path = (
-            os.path.abspath(db_path) if db_path else os.path.join(user_config_dir(config.APPNAME), "nemorosa.db")
-        )
+        self.db_path = Path(db_path).resolve() if db_path else Path(user_config_dir(config.APPNAME)) / "nemorosa.db"
 
         # Ensure database directory exists
-        os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Create async engine with SQLAlchemy 2.0 style
         self.engine: AsyncEngine = create_async_engine(
@@ -171,9 +166,9 @@ class NemorosaDatabase:
     async def add_scan_result(
         self,
         local_torrent_hash: str,
+        site_host: str,
         local_torrent_name: str | None = None,
         matched_torrent_id: str | None = None,
-        site_host: str = "default",
         matched_torrent_hash: str | None = None,
     ):
         """Add scan result record.
@@ -215,88 +210,79 @@ class NemorosaDatabase:
 
     # endregion
 
-    # region Undownloaded torrents
+    # region Undownloaded
 
-    async def load_undownloaded_torrents(self, site_host: str = "default") -> dict[str, dict[str, Any]]:
-        """Load undownloaded torrent information for specified site.
+    async def load_undownloaded_torrents(self) -> Sequence[ScanResult]:
+        """Load all undownloaded torrent information from scan_results.
 
-        Args:
-            site_host: Site hostname, defaults to 'default'.
-
-        Returns:
-            Mapping dictionary from torrent ID to detailed information.
-        """
-        async with self.async_session_maker() as session:
-            stmt = select(UndownloadedTorrent).where(UndownloadedTorrent.site_host == site_host)
-            result_set = await session.execute(stmt)
-            torrents = result_set.scalars().all()
-
-            result = {
-                torrent.torrent_id: {
-                    "download_dir": torrent.download_dir,
-                    "local_torrent_name": torrent.local_torrent_name,
-                    "rename_map": msgspec.json.decode(torrent.rename_map) if torrent.rename_map else {},
-                }
-                for torrent in torrents
-            }
-            return result
-
-    async def add_undownloaded_torrent(self, torrent_id: str, torrent_info: dict, site_host: str = "default"):
-        """Add undownloaded torrent information.
-
-        Args:
-            torrent_id: Torrent ID.
-            torrent_info: Dictionary containing download_dir, local_torrent_name, rename_map.
-            site_host: Site hostname.
-        """
-        async with self.async_session_maker.begin() as session:
-            undownloaded = UndownloadedTorrent(
-                torrent_id=torrent_id,
-                site_host=site_host,
-                download_dir=torrent_info.get("download_dir"),
-                local_torrent_name=torrent_info.get("local_torrent_name"),
-                rename_map=msgspec.json.encode(torrent_info.get("rename_map", {})).decode(),
-            )
-            await session.merge(undownloaded)
-
-    async def remove_undownloaded_torrent(self, torrent_id: str, site_host: str = "default"):
-        """Remove specified torrent from undownloaded torrents table.
-
-        Args:
-            torrent_id: Torrent ID.
-            site_host: Site hostname.
-        """
-        async with self.async_session_maker.begin() as session:
-            stmt = delete(UndownloadedTorrent).where(
-                UndownloadedTorrent.torrent_id == torrent_id, UndownloadedTorrent.site_host == site_host
-            )
-            await session.execute(stmt)
-
-    async def get_matched_scan_results(self) -> dict[str, dict[str, Any]]:
-        """Get scan results with matched torrent hash for all sites that haven't been checked.
+        Returns undownloaded torrents as scan results where:
+        - matched_torrent_id is not NULL (found a match)
+        - matched_torrent_hash is NULL (download failed)
+        - checked is False (not yet processed)
 
         Returns:
-            Dictionary mapping matched_torrent_hash to scan result information.
+            List of ScanResult ORM objects representing undownloaded torrents.
         """
         async with self.async_session_maker() as session:
             stmt = select(ScanResult).where(
+                ScanResult.matched_torrent_id.is_not(None),
+                ScanResult.matched_torrent_hash.is_(None),
+                ScanResult.checked.is_(False),
+            )
+            result_set = await session.execute(stmt)
+            return result_set.scalars().all()
+
+    async def mark_torrent_downloaded(self, local_torrent_hash: str, site_host: str, matched_torrent_hash: str):
+        """Mark a torrent as successfully downloaded by updating its matched_torrent_hash.
+
+        Args:
+            local_torrent_hash: Local torrent hash.
+            site_host: Site hostname.
+            matched_torrent_hash: Hash of the successfully downloaded matched torrent.
+        """
+        async with self.async_session_maker.begin() as session:
+            stmt = (
+                update(ScanResult)
+                .where(
+                    ScanResult.local_torrent_hash == local_torrent_hash,
+                    ScanResult.site_host == site_host,
+                )
+                .values(matched_torrent_hash=matched_torrent_hash)
+            )
+            await session.execute(stmt)
+
+    async def delete_scan_result(self, local_torrent_hash: str, site_host: str):
+        """Delete a scan result from the database.
+
+        Args:
+            local_torrent_hash: Local torrent hash.
+            site_host: Site hostname.
+        """
+        async with self.async_session_maker.begin() as session:
+            stmt = delete(ScanResult).where(
+                ScanResult.local_torrent_hash == local_torrent_hash,
+                ScanResult.site_host == site_host,
+            )
+            await session.execute(stmt)
+
+    # endregion
+
+    # region Post-processing
+
+    async def get_matched_scan_results(self) -> Sequence[str]:
+        """Get matched torrent hashes for all sites that haven't been checked.
+
+        Returns:
+            List of matched torrent hashes.
+        """
+        async with self.async_session_maker() as session:
+            stmt = select(ScanResult.matched_torrent_hash).where(
                 ScanResult.matched_torrent_hash.is_not(None),
                 ScanResult.checked.is_(False),
             )
             result_set = await session.execute(stmt)
-            scan_results = result_set.scalars().all()
-
-            result = {
-                scan_result.matched_torrent_hash: {
-                    "local_torrent_hash": scan_result.local_torrent_hash,
-                    "local_torrent_name": scan_result.local_torrent_name,
-                    "matched_torrent_id": scan_result.matched_torrent_id,
-                    "site_host": scan_result.site_host,
-                }
-                for scan_result in scan_results
-                if scan_result.matched_torrent_hash
-            }
-            return result
+            # Use cast to tell type checker that we've filtered out None values in the query
+            return cast(Sequence[str], result_set.scalars().unique().all())
 
     async def update_scan_result_checked(self, matched_torrent_hash: str, checked: bool):
         """Update checked status for a scan result.
@@ -354,10 +340,22 @@ class NemorosaDatabase:
             last_run: Last run datetime.
             next_run: Next run datetime, or None.
         """
-        new_run_count = await self.get_job_run_count(job_name) + 1
         async with self.async_session_maker.begin() as session:
-            job_log = JobLog(job_name=job_name, last_run=last_run, next_run=next_run, run_count=new_run_count)
-            await session.merge(job_log)
+            stmt = insert(JobLog).values(
+                job_name=job_name,
+                last_run=last_run,
+                next_run=next_run,
+                run_count=1,
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["job_name"],
+                set_={
+                    "last_run": stmt.excluded.last_run,
+                    "next_run": stmt.excluded.next_run,
+                    "run_count": JobLog.run_count + 1,
+                },
+            )
+            await session.execute(stmt)
 
     async def get_job_run_count(self, job_name: str) -> int:
         """Get run count for a job.
@@ -389,19 +387,6 @@ class NemorosaDatabase:
             client_torrent = ClientTorrent.from_client_info(torrent_info)
             await session.merge(client_torrent)
 
-            # Delete old file records for this torrent
-            delete_stmt = delete(TorrentFile).where(TorrentFile.torrent_hash == torrent_info.hash)
-            await session.execute(delete_stmt)
-
-            # Insert file records
-            if torrent_info.files:
-                torrent_files = [
-                    TorrentFile(torrent_hash=torrent_info.hash, file_path=file_obj.name, file_size=file_obj.size)
-                    for file_obj in torrent_info.files
-                ]
-                for torrent_file in torrent_files:
-                    session.add(torrent_file)
-
     async def get_all_cached_torrent_hashes(self) -> set[str]:
         """Get all cached torrent hashes.
 
@@ -411,13 +396,13 @@ class NemorosaDatabase:
         async with self.async_session_maker() as session:
             stmt = select(ClientTorrent.hash)
             result = await session.execute(stmt)
-            return {hash_val for (hash_val,) in result.all()}
+            return set(result.scalars())
 
-    async def delete_client_torrents(self, torrent_hashes: str | list[str] | set[str]):
+    async def delete_client_torrents(self, torrent_hashes: str | Collection[str]):
         """Delete torrent(s) and their files from cache.
 
         Args:
-            torrent_hashes: Single torrent hash, list of torrent hashes, or set of torrent hashes to delete.
+            torrent_hashes: Single torrent hash or a collection of torrent hashes to delete.
         """
         if isinstance(torrent_hashes, str):
             condition = ClientTorrent.hash == torrent_hashes
@@ -517,11 +502,9 @@ class NemorosaDatabase:
         async with self.async_session_maker() as session:
             stmt = select(ClientTorrent.hash, ClientTorrent.name, ClientTorrent.download_dir)
             result = await session.execute(stmt)
-            return {hash_val: (name, download_dir) for hash_val, name, download_dir in result.all()}
+            return {hash_val: (name, download_dir) for hash_val, name, download_dir in result}
 
-    async def search_torrent_by_file_match(
-        self, target_file_size: int, fname_keywords: list[str]
-    ) -> list[dict[str, Any]]:
+    async def search_torrent_by_file_match(self, target_file_size: int, fname_keywords: list[str]) -> Sequence[Row]:
         """Search torrents by file size and name keywords.
 
         Args:
@@ -529,7 +512,7 @@ class NemorosaDatabase:
             fname_keywords: List of keywords that should appear in file path.
 
         Returns:
-            List of dictionaries containing torrent and file information.
+            List of Row objects containing torrent and file information.
         """
         async with self.async_session_maker() as session:
             # Build conditions for matching files
@@ -553,25 +536,11 @@ class NemorosaDatabase:
                 )
                 .join(TorrentFile, ClientTorrent.hash == TorrentFile.torrent_hash)
                 .where(ClientTorrent.hash.in_(select(subquery)))
-                .order_by(ClientTorrent.hash, TorrentFile.file_path)
+                .order_by(ClientTorrent.hash)
             )
 
             result = await session.execute(stmt)
-            rows = result.all()
-
-            # Convert to list of dicts for compatibility
-            return [
-                {
-                    "hash": row.hash,
-                    "name": row.name,
-                    "download_dir": row.download_dir,
-                    "total_size": row.total_size,
-                    "trackers": row.trackers,
-                    "file_path": row.file_path,
-                    "file_size": row.file_size,
-                }
-                for row in rows
-            ]
+            return result.all()
 
     # endregion
 
@@ -627,31 +596,49 @@ class NemorosaDatabase:
 
 # Global database instance
 _db_instance: NemorosaDatabase | None = None
-_db_lock = threading.Lock()
+_db_lock = asyncio.Lock()
+
+
+async def init_database(db_path: str | None = None) -> None:
+    """Initialize global database instance.
+
+    Should be called once during application startup.
+
+    Args:
+        db_path: Database file path, if None uses config directory.
+
+    Raises:
+        RuntimeError: If already initialized.
+    """
+    global _db_instance
+    async with _db_lock:
+        if _db_instance is not None:
+            raise RuntimeError("Database already initialized.")
+
+        _db_instance = NemorosaDatabase(db_path)
+        await _db_instance.init_database()
+
+
+def get_database() -> NemorosaDatabase:
+    """Get global database instance.
+
+    Must be called after init_database() has been invoked.
+
+    Returns:
+        NemorosaDatabase: Database instance.
+
+    Raises:
+        RuntimeError: If database has not been initialized.
+    """
+    if _db_instance is None:
+        raise RuntimeError("Database not initialized. Call init_database() first.")
+    return _db_instance
 
 
 async def cleanup_database():
     """Cleanup global database instance."""
     global _db_instance
-    with _db_lock:
-        db_to_close = _db_instance
-        _db_instance = None
-
-    if db_to_close is not None:
-        await db_to_close.close()
-
-
-def get_database(db_path: str | None = None) -> NemorosaDatabase:
-    """Get global database instance.
-
-    Args:
-        db_path (str, optional): Database file path, if None uses nemorosa.db in config directory.
-
-    Returns:
-        NemorosaDatabase: Database instance.
-    """
-    global _db_instance
-    with _db_lock:
-        if _db_instance is None:
-            _db_instance = NemorosaDatabase(db_path)
-        return _db_instance
+    async with _db_lock:
+        if _db_instance is not None:
+            await _db_instance.close()
+            _db_instance = None
