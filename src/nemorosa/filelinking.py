@@ -7,13 +7,13 @@ allowing files to be linked instead of copied to avoid duplicate storage.
 import errno
 import os
 import shutil
-from enum import Enum
 from urllib.parse import urlparse
 
-import torf
 from reflink_copy import reflink, reflink_or_copy
+from torf import Torrent
 
 from . import config, logger
+from .config import LinkType
 
 
 def _safe_stat_dev(path: str) -> int | None:
@@ -22,15 +22,6 @@ def _safe_stat_dev(path: str) -> int | None:
         return os.stat(path).st_dev
     except OSError:
         return None
-
-
-class LinkType(Enum):
-    """File linking types."""
-
-    SYMLINK = "symlink"
-    HARDLINK = "hardlink"
-    REFLINK = "reflink"
-    REFLINK_OR_COPY = "reflink_or_copy"
 
 
 def get_link_directory(source_path: str) -> str | None:
@@ -78,11 +69,12 @@ def get_link_directory(source_path: str) -> str | None:
                 return link_dir
 
         # If symlinks are allowed, we can use any directory
-        if config.cfg.linking.link_type == LinkType.SYMLINK.value:
+        if config.cfg.linking.link_type == LinkType.SYMLINK and config.cfg.linking.link_dirs:
             return config.cfg.linking.link_dirs[0]
 
         logger.warning(
-            f"No suitable link directory found for {source_path}. Linking may fail for {config.cfg.linking.link_type}"
+            f"No suitable link directory found for {source_path}. "
+            f"Linking may fail for {config.cfg.linking.link_type.value}"
         )
         return None
 
@@ -127,7 +119,7 @@ def create_file_link(source_path: str, dest_path: str, link_type: LinkType | Non
         True if link was created successfully, False otherwise
     """
     if link_type is None:
-        link_type = LinkType(config.cfg.linking.link_type)
+        link_type = config.cfg.linking.link_type
 
     try:
         # Ensure destination directory exists
@@ -220,49 +212,8 @@ def remove_links(link_dir: str, torrent_name: str) -> bool:
         return False
 
 
-def test_linking_capability(test_dir: str) -> bool:
-    """Test if linking is possible in a directory.
-
-    Args:
-        test_dir: Directory to test
-
-    Returns:
-        True if linking is possible, False otherwise
-    """
-    # If linking is not enabled, return False
-    if not config.cfg.linking.enable_linking:
-        return False
-
-    try:
-        # Create a test file
-        test_file = os.path.join(test_dir, "test_linking.tmp")
-        with open(test_file, "w") as f:
-            f.write("test")
-
-        # Try to create a link in each link directory
-        for link_dir in config.cfg.linking.link_dirs:
-            test_link = os.path.join(link_dir, "test_link.tmp")
-            try:
-                if create_file_link(test_file, test_link):
-                    os.unlink(test_link)
-                    os.unlink(test_file)
-                    return True
-            except OSError:
-                continue
-
-        # Clean up
-        if os.path.exists(test_file):
-            os.unlink(test_file)
-
-        return False
-
-    except Exception as e:
-        logger.error(f"Error testing linking capability: {e}")
-        return False
-
-
 def create_file_links_for_torrent(
-    torrent_object: torf.Torrent, local_download_dir: str, local_torrent_name: str, file_mapping: dict
+    torrent_object: Torrent, local_download_dir: str, local_torrent_name: str, file_mapping: dict
 ) -> str | None:
     """Create file links for a torrent instead of renaming files.
 
