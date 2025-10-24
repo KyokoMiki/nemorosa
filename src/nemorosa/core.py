@@ -1,20 +1,23 @@
 """Core processing functions for nemorosa."""
 
-import traceback
+import asyncio
 from enum import Enum
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
 import msgspec
-import torf
 from pydantic import BaseModel, Field
+from torf import Torrent
 
 from . import client_instance, config, db, filecompare, filelinking, logger
-from .api import get_target_apis
+from .api import get_api_by_site_host, get_api_by_tracker, get_target_apis
 from .clients import ClientTorrentInfo, TorrentConflictError
 
 if TYPE_CHECKING:
     from .api import GazelleJSONAPI, GazelleParser
+
+# Constants
+MAX_SEARCH_RESULTS = 20
 
 
 class ProcessStatus(Enum):
@@ -75,8 +78,6 @@ class ProcessResponse(BaseModel):
 class NemorosaCore:
     """Main class for processing torrents and cross-seeding operations."""
 
-    stats: ProcessorStats
-
     def __init__(self):
         """Initialize the torrent processor."""
         self.torrent_client = client_instance.get_torrent_client()
@@ -86,19 +87,19 @@ class NemorosaCore:
     async def hash_based_search(
         self,
         *,
-        torrent_object: torf.Torrent,
+        torrent_object: Torrent,
         api: "GazelleJSONAPI | GazelleParser",
-    ) -> int | None:
+    ) -> tuple[int | None, Torrent | None]:
         """Search for torrent using hash-based search.
 
         Args:
-            torrent_object (torf.Torrent): Torrent object for hash calculation.
+            torrent_object (Torrent): Torrent object for hash calculation.
             api: API instance for the target site.
 
         Returns:
-            int | None: Torrent ID if found, None otherwise.
+            tuple[int | None, Torrent | None]: Torrent ID and matched torrent if found, (None, None) otherwise.
         """
-        logger.debug("Trying hash-based search first")
+        torrent_copy = Torrent.copy(torrent_object)
 
         # Get target source flag from API
         target_source_flag = api.source_flag
@@ -115,10 +116,10 @@ class NemorosaCore:
         # Create a copy of the torrent and try different source flags
         for flag in source_flags:
             try:
-                torrent_object.source = flag
+                torrent_copy.source = flag
 
                 # Calculate hash
-                torrent_hash = torrent_object.infohash
+                torrent_hash = torrent_copy.infohash
 
                 # Search torrent by hash
                 search_result = await api.search_torrent_by_hash(torrent_hash)
@@ -130,12 +131,13 @@ class NemorosaCore:
                     if torrent_id:
                         tid = int(torrent_id)
                         logger.success(f"Found match! Torrent ID: {tid}")
-                        return tid
+                        torrent_copy.comment = api.get_torrent_url(tid)
+                        torrent_copy.trackers = [api.announce]
+                        return tid, torrent_copy
             except Exception as e:
                 logger.debug(f"Hash search failed for source '{flag}': {e}")
-                raise
 
-        return None
+        return None, None
 
     async def filename_search(
         self,
@@ -143,7 +145,7 @@ class NemorosaCore:
         fdict: dict[str, int],
         tsize: int,
         api: "GazelleJSONAPI | GazelleParser",
-    ) -> int | None:
+    ) -> tuple[int | None, Torrent | None]:
         """Search for torrent using filename-based search.
 
         Args:
@@ -152,18 +154,11 @@ class NemorosaCore:
             api: API instance for the target site.
 
         Returns:
-            int | None: Torrent ID if found, None otherwise.
+            tuple[int | None, Torrent | None]: Torrent ID and matched torrent if found.
         """
-        logger.debug("No torrent found by hash, falling back to filename search")
         # search for the files with top 5 longest name
         tid = None
-        scan_querys = []
-        max_fnames = sorted(fdict.keys(), key=len, reverse=True)
-        for index, fname in enumerate(max_fnames):
-            if index == 0 or filecompare.is_music_file(fname):
-                scan_querys.append(fname)
-            if len(scan_querys) >= 5:
-                break
+        scan_querys = filecompare.select_search_filenames(fdict.keys())
 
         for fname in scan_querys:
             logger.debug(f"Searching for file: {fname}")
@@ -208,7 +203,7 @@ class NemorosaCore:
                 break
 
             # Handle cases with too many results
-            if len(torrents) > 20:
+            if len(torrents) > MAX_SEARCH_RESULTS:
                 logger.warning(f"Too many results found for file '{fname_query}' ({len(torrents)}). Skipping.")
                 continue
 
@@ -233,7 +228,16 @@ class NemorosaCore:
                 logger.debug("Stopping search as music file match is not found")
                 break
 
-        return tid
+        if tid is None:
+            return tid, None
+
+        # Download torrent data and create torrent object
+        try:
+            matched_torrent = await api.download_torrent(tid)
+            return tid, matched_torrent
+        except Exception as e:
+            logger.error(f"Failed to download torrent data for torrent ID: {tid}: {e}")
+            return tid, None
 
     async def _search_torrent_by_filename_in_client(self, torrent_fdict: dict[str, int]) -> list[ClientTorrentInfo]:
         """Search for matching torrents in client by filename using database.
@@ -247,16 +251,8 @@ class NemorosaCore:
         try:
             matched_torrents = []
 
-            # Get incoming torrent file list, sorted by filename length (longest first)
-            torrent_files = sorted(torrent_fdict.keys(), key=len, reverse=True)
-
-            # Select top 5 longest filenames for search
-            scan_queries = []
-            for index, fname in enumerate(torrent_files):
-                if index == 0 or filecompare.is_music_file(fname):
-                    scan_queries.append(fname)
-                if len(scan_queries) >= 5:
-                    break
+            # Select top 5 longest filenames for search (sorted by length)
+            scan_queries = filecompare.select_search_filenames(torrent_fdict.keys())
 
             logger.debug(f"Searching with {len(scan_queries)} file queries: {scan_queries}")
 
@@ -350,167 +346,161 @@ class NemorosaCore:
 
         return None
 
+    def inject_matched_torrent(
+        self,
+        matched_torrent: Torrent,
+        local_torrent_info: ClientTorrentInfo,
+        hash_match: bool = False,
+    ) -> bool:
+        """Inject matched torrent into client with file linking and renaming.
+
+        Args:
+            matched_torrent: The matched torrent to inject.
+            local_torrent_info: Local torrent information.
+            hash_match: Whether this is a hash match (skip verification).
+
+        Returns:
+            True if injection was successful, False otherwise.
+        """
+        # Generate file dictionary and rename map
+        matched_fdict = {"/".join(f.parts[1:]): f.size for f in matched_torrent.files}
+        rename_map = filecompare.generate_rename_map(local_torrent_info.fdict, matched_fdict)
+
+        # Handle file linking and rename map based on configuration
+        if config.cfg.linking.enable_linking:
+            # Generate link map for file linking
+            file_mapping = filecompare.generate_link_map(local_torrent_info.fdict, matched_fdict)
+            # File linking mode: create links first, then add torrent with linked directory
+            final_download_dir = filelinking.create_file_links_for_torrent(
+                matched_torrent, local_torrent_info.download_dir, local_torrent_info.name, file_mapping
+            )
+            if final_download_dir is None:
+                logger.error("Failed to create file links, falling back to original directory")
+                final_download_dir = local_torrent_info.download_dir
+        else:
+            # Normal mode: generate rename map for file renaming
+            final_download_dir = local_torrent_info.download_dir
+
+        logger.debug(f"Attempting to inject torrent: {local_torrent_info.name}")
+        logger.debug(f"Download directory: {final_download_dir}")
+        logger.debug(f"Rename map: {rename_map}")
+
+        # Inject torrent and handle renaming
+        success, _ = self.torrent_client.inject_torrent(
+            matched_torrent, final_download_dir, local_torrent_info.name, rename_map, hash_match
+        )
+        return success
+
     async def process_torrent_search(
         self,
         *,
         torrent_details: ClientTorrentInfo,
         api: "GazelleJSONAPI | GazelleParser",
-        torrent_object: torf.Torrent | None = None,
-    ):
+        torrent_object: Torrent | None = None,
+    ) -> tuple[bool, str | None, str | None]:
         """Process torrent search and injection.
 
         Args:
             torrent_details (ClientTorrentInfo): Torrent details from client.
             api: API instance for the target site.
-            torrent_object (torf.Torrent, optional): Original torrent object for hash search.
+            torrent_object (Torrent, optional): Original torrent object for hash search.
 
         Returns:
-            tuple[int | None, bool]: (torrent_id, downloaded) - torrent ID and download success status.
+            tuple[bool, str | None, str | None]: (search_success, matched_torrent_id, matched_torrent_hash).
+                - search_success: True if search completed without errors, False if errors occurred.
+                - matched_torrent_id: Torrent ID if found, None otherwise.
+                - matched_torrent_hash: Torrent hash if successfully injected, None otherwise.
         """
         self.stats.scanned += 1
 
         tid = None
+        matched_torrent = None
         hash_match = True
-
-        # Track if any search method failed with an error
-        search_error_occurred = False
+        search_success = True  # Track if search completed without errors
 
         # Try hash-based search first if torrent object is available
         if torrent_object:
             try:
-                tid = await self.hash_based_search(torrent_object=torrent_object, api=api)
+                logger.debug("Trying hash-based search first")
+                tid, matched_torrent = await self.hash_based_search(torrent_object=torrent_object, api=api)
             except Exception as e:
                 logger.error(f"Hash-based search failed: {e}")
-                search_error_occurred = True
+                search_success = False
 
         # If hash search didn't find anything, try filename search
         if tid is None:
             try:
-                tid = await self.filename_search(fdict=torrent_details.fdict, tsize=torrent_details.total_size, api=api)
+                logger.debug("No torrent found by hash, falling back to filename search")
+                tid, matched_torrent = await self.filename_search(
+                    fdict=torrent_details.fdict, tsize=torrent_details.total_size, api=api
+                )
                 hash_match = False
             except Exception as e:
                 logger.error(f"Filename search failed: {e}")
-                search_error_occurred = True
+                search_success = False
 
         # Handle no match found case
         if tid is None:
             logger.header("No matching torrent found")
-
-            # Record scan result: no matching torrent found
-            if not search_error_occurred:
-                await self.database.add_scan_result(
-                    local_torrent_hash=torrent_details.hash,
-                    local_torrent_name=torrent_details.name,
-                    matched_torrent_id=None,
-                    site_host=api.site_host,
-                    matched_torrent_hash=None,
-                )
-            return None, False
+            return search_success, None, None
 
         # Found a match
         self.stats.found += 1
         logger.success(f"Found match! Torrent ID: {tid}")
 
-        # If found via hash search, modify the existing torrent for the new tracker
-        # Otherwise, download the torrent data
-        if hash_match:
-            assert torrent_object is not None
-            torrent_object.comment = api.get_torrent_url(tid)
-            torrent_object.trackers = [api.announce]
-            torrent_data = torrent_object.dump()
-        else:
-            torrent_data = await api.download_torrent(tid)
-            if torrent_data is None:
-                raise ValueError("Failed to download torrent data")
-            torrent_object = torf.Torrent.read_stream(torrent_data)
-
-        # Generate file dictionary and rename map
-        fdict_torrent = {"/".join(f.parts[1:]): f.size for f in torrent_object.files}
-
-        rename_map = filecompare.generate_rename_map(torrent_details.fdict, fdict_torrent)
-
-        # Handle file linking and rename map based on configuration
-        if config.cfg.linking.enable_linking:
-            # Generate link map for file linking
-            file_mapping = filecompare.generate_link_map(torrent_details.fdict, fdict_torrent)
-            # File linking mode: create links first, then add torrent with linked directory
-            final_download_dir = filelinking.create_file_links_for_torrent(
-                torrent_object, torrent_details.download_dir, torrent_details.name, file_mapping
-            )
-            if final_download_dir is None:
-                logger.error("Failed to create file links, falling back to original directory")
-                final_download_dir = torrent_details.download_dir
-        else:
-            # Normal mode: generate rename map for file renaming
-            final_download_dir = torrent_details.download_dir
-
         # Inject torrent and handle renaming
-        downloaded = False
-        if not config.cfg.global_config.no_download:
+        if config.cfg.global_config.no_download:
+            return search_success, str(tid), None
+
+        matched_torrent_hash = None
+        injection_success = False
+
+        # Check if matched_torrent is None (download failed)
+        if matched_torrent is None:
+            logger.error(f"Failed to inject torrent: {tid} (matched_torrent is None)")
+        else:
+            # Try to inject torrent
             try:
-                success, _ = self.torrent_client.inject_torrent(
-                    torrent_data, final_download_dir, torrent_details.name, rename_map, hash_match
-                )
-                if success:
-                    downloaded = True
+                injection_success = self.inject_matched_torrent(matched_torrent, torrent_details, hash_match)
+                if injection_success:
                     self.stats.downloaded += 1
+                    matched_torrent_hash = matched_torrent.infohash
                     logger.success("Torrent injected successfully")
                 else:
                     logger.error(f"Failed to inject torrent: {tid}")
-                    self.stats.cnt_dl_fail += 1
-                    if self.stats.cnt_dl_fail <= 10:
-                        logger.error(traceback.format_exc())
-                        logger.error(
-                            f"It might because the torrent id {tid} has reached the "
-                            f"limitation of non-browser downloading of {api.server}. "
-                            f"The failed download info will be saved to database. "
-                            "You can download it from your own browser."
-                        )
-                        if self.stats.cnt_dl_fail == 10:
-                            logger.debug("Suppressing further hinting for .torrent file downloading failures")
             except TorrentConflictError as e:
                 # Torrent conflict - treat as no match found
                 logger.debug(f"Torrent conflict detected: {e}")
-                # Record scan result: no matching torrent found
-                await self.database.add_scan_result(
-                    local_torrent_hash=torrent_details.hash,
-                    local_torrent_name=torrent_details.name,
-                    matched_torrent_id=None,
-                    site_host=api.site_host,
-                    matched_torrent_hash=None,
+                return search_success, None, None
+            except Exception as e:
+                # Other errors during injection - skip this torrent
+                logger.exception(f"Error during torrent injection: {e}")
+
+        # Log download/injection failure
+        if not injection_success:
+            self.stats.cnt_dl_fail += 1
+            if self.stats.cnt_dl_fail <= 10:
+                logger.error(
+                    f"It might because the torrent id {tid} has reached the "
+                    f"limitation of non-browser downloading of {api.server}. "
+                    f"The failed download info will be saved to database. "
+                    "You can download it from your own browser."
                 )
-                return None, False
+                if self.stats.cnt_dl_fail == 10:
+                    logger.debug("Suppressing further hinting for .torrent file downloading failures")
 
-        # Record scan result: matching torrent found
-        await self.database.add_scan_result(
-            local_torrent_hash=torrent_details.hash,
-            local_torrent_name=torrent_details.name,
-            matched_torrent_id=str(tid),
-            site_host=api.site_host,
-            matched_torrent_hash=torrent_object.infohash,
-        )
-        if not downloaded:
-            torrent_info = {
-                "download_dir": final_download_dir,
-                "local_torrent_name": torrent_details.name,
-                "rename_map": rename_map,
-            }
-            await self.database.add_undownloaded_torrent(str(tid), torrent_info, api.site_host)
-
-        # Start tracking verification after database operations are complete
-        if downloaded:
-            await self.torrent_client.track_verification(torrent_object.infohash)
-
-        return tid, downloaded
+        return search_success, str(tid), matched_torrent_hash
 
     async def process_single_torrent_from_client(
         self,
         torrent_details: ClientTorrentInfo,
+        skip_scanned_check: bool = False,
     ) -> bool:
         """Process a single torrent from client torrent list.
 
         Args:
             torrent_details (ClientTorrentInfo): Torrent details from client.
+            skip_scanned_check (bool): If True, skip the already-scanned check (for webhooks).
 
         Returns:
             bool: True if any target site was successful, False otherwise.
@@ -521,11 +511,10 @@ class NemorosaCore:
 
         # Scan and match for each target site
         any_success = False
-        existing_target_trackers = set(torrent_details.existing_target_trackers)
 
         for api_instance in get_target_apis():
-            # Check if torrent has been scanned on this specific site
-            if await self.database.is_hash_scanned(
+            # Check if torrent has been scanned on this specific site (unless skip_scanned_check is True)
+            if not skip_scanned_check and await self.database.is_hash_scanned(
                 local_torrent_hash=torrent_details.hash, site_host=api_instance.site_host
             ):
                 logger.debug(
@@ -538,20 +527,32 @@ class NemorosaCore:
             logger.debug(f"Trying target site: {api_instance.server} (tracker: {api_instance.tracker_query})")
 
             # Check if this content already exists on current target tracker
-            if api_instance.tracker_query in existing_target_trackers:
+            if api_instance.tracker_query in torrent_details.existing_target_trackers:
                 logger.debug(f"Content already exists on {api_instance.tracker_query}, skipping")
                 continue
 
             try:
                 # Scan and match
-                tid, _ = await self.process_torrent_search(
+                search_success, matched_torrent_id, matched_torrent_hash = await self.process_torrent_search(
                     torrent_details=torrent_details,
                     api=api_instance,
                     torrent_object=torrent_object,  # Pass torrent object for hash search
                 )
 
-                if tid is not None:
+                # Record scan result to database if search completed without errors
+                if search_success:
+                    await self.database.add_scan_result(
+                        local_torrent_hash=torrent_details.hash,
+                        site_host=api_instance.site_host,
+                        local_torrent_name=torrent_details.name,
+                        matched_torrent_id=matched_torrent_id,
+                        matched_torrent_hash=matched_torrent_hash,
+                    )
+
+                if matched_torrent_hash is not None:
                     any_success = True
+                    # Start tracking verification for the matched torrent
+                    await self.torrent_client.track_verification(matched_torrent_hash)
                     logger.success(f"Successfully processed on {api_instance.server}")
 
             except Exception as e:
@@ -594,8 +595,7 @@ class NemorosaCore:
                     logger.success("Torrent processed successfully")
 
         except Exception as e:
-            logger.error("Error processing torrents: %s", e)
-            logger.error(traceback.format_exc())
+            logger.exception("Error processing torrents: %s", e)
         finally:
             logger.success("Torrent processing summary:")
             logger.success("Torrents scanned: %d", self.stats.scanned)
@@ -611,64 +611,73 @@ class NemorosaCore:
         retry_stats = ProcessorStats()
 
         try:
-            # Process undownloaded torrents for each target site
-            for api_instance in get_target_apis():
-                logger.debug(f"Processing undownloaded torrents for site: {api_instance.server}")
+            # Get all undownloaded torrents
+            undownloaded_torrents = await self.database.load_undownloaded_torrents()
 
-                # Get undownloaded torrents for this site
-                undownloaded_torrents = await self.database.load_undownloaded_torrents(api_instance.site_host)
+            if not undownloaded_torrents:
+                logger.info("No undownloaded torrents found")
+                return
 
-                if not undownloaded_torrents:
-                    logger.debug(f"No undownloaded torrents found for site: {api_instance.server}")
-                    continue
+            logger.info(f"Found {len(undownloaded_torrents)} undownloaded torrents")
 
-                logger.debug(
-                    f"Found {len(undownloaded_torrents)} undownloaded torrents for site: {api_instance.server}"
-                )
+            for undownloaded in undownloaded_torrents:
+                retry_stats.attempted += 1
+                total = len(undownloaded_torrents)
+                torrent_id = str(undownloaded.matched_torrent_id)
+                logger.header(f"Retrying torrent ID: {torrent_id} ({retry_stats.attempted}/{total})")
 
-                for torrent_id, torrent_info in undownloaded_torrents.items():
-                    retry_stats.attempted += 1
-                    logger.header(
-                        f"Retrying torrent ID: {torrent_id} ({retry_stats.attempted}/{len(undownloaded_torrents)})"
-                    )
-
-                    try:
-                        # Download torrent data
-                        torrent_data = await api_instance.download_torrent(torrent_id)
-
-                        # Get torrent information
-                        download_dir = torrent_info.get("download_dir", "")
-                        local_torrent_name = torrent_info.get("local_torrent_name", "")
-                        rename_map = torrent_info.get("rename_map", {})
-
-                        logger.debug(f"Attempting to inject torrent: {local_torrent_name}")
-                        logger.debug(f"Download directory: {download_dir}")
-                        logger.debug(f"Rename map: {rename_map}")
-
-                        # Try to inject torrent into client
-                        success, _ = self.torrent_client.inject_torrent(
-                            torrent_data, download_dir, local_torrent_name, rename_map, False
+                try:
+                    # Get API instance by site_host
+                    api_instance = get_api_by_site_host(undownloaded.site_host)
+                    if not api_instance:
+                        logger.warning(
+                            f"Could not find API instance for site_host {undownloaded.site_host}, "
+                            f"skipping torrent {torrent_id}"
                         )
-                        if success:
-                            retry_stats.successful += 1
-                            retry_stats.removed += 1
-
-                            # Injection successful, remove from undownloaded table
-                            await self.database.remove_undownloaded_torrent(torrent_id, api_instance.site_host)
-                            logger.success(f"Successfully downloaded and injected torrent {torrent_id}")
-                            logger.success(f"Removed torrent {torrent_id} from undownloaded list")
-                        else:
-                            retry_stats.failed += 1
-                            logger.error(f"Failed to inject torrent {torrent_id}")
-
-                    except Exception as e:
                         retry_stats.failed += 1
-                        logger.error(f"Error processing torrent {torrent_id}: {e}")
                         continue
 
+                    logger.debug(f"Using API instance: {api_instance.server}")
+
+                    # Get local torrent information from client
+                    local_torrent_info = self.torrent_client.get_torrent_info(
+                        undownloaded.local_torrent_hash, fields=["name", "download_dir", "files"]
+                    )
+                    if not local_torrent_info:
+                        logger.warning(
+                            f"Local torrent {undownloaded.local_torrent_hash} not found in client, "
+                            f"deleting from database"
+                        )
+                        await self.database.delete_scan_result(undownloaded.local_torrent_hash, undownloaded.site_host)
+                        retry_stats.removed += 1
+                        continue
+
+                    # Download torrent data
+                    matched_torrent = await api_instance.download_torrent(torrent_id)
+
+                    # Try to inject torrent into client
+                    success = self.inject_matched_torrent(matched_torrent, local_torrent_info, hash_match=False)
+                    if success:
+                        retry_stats.successful += 1
+                        retry_stats.removed += 1
+
+                        # Injection successful, update scan_result with matched_torrent_hash
+                        await self.database.mark_torrent_downloaded(
+                            undownloaded.local_torrent_hash, undownloaded.site_host, matched_torrent.infohash
+                        )
+                        logger.success(f"Successfully downloaded and injected torrent {torrent_id}")
+                        logger.success(f"Updated scan result for torrent {torrent_id}")
+                    else:
+                        retry_stats.failed += 1
+                        logger.error(f"Failed to inject torrent {torrent_id}")
+
+                except Exception as e:
+                    retry_stats.failed += 1
+                    logger.error(f"Error processing torrent {torrent_id}: {e}")
+                    continue
+
         except Exception as e:
-            logger.error("Error retrying undownloaded torrents: %s", e)
-            logger.error(traceback.format_exc())
+            logger.exception("Error retrying undownloaded torrents: %s", e)
         finally:
             logger.success("Retry undownloaded torrents summary:")
             logger.success("Torrents attempted: %d", retry_stats.attempted)
@@ -719,8 +728,7 @@ class NemorosaCore:
                 # For "not_found" and "checking" status, no stats update needed
 
         except Exception as e:
-            logger.error("Error processing injected torrents: %s", e)
-            logger.error(traceback.format_exc())
+            logger.exception("Error processing injected torrents: %s", e)
         finally:
             logger.success("Injected torrents post-processing summary:")
             logger.success("Matches checked: %d", stats.matches_checked)
@@ -745,7 +753,7 @@ class NemorosaCore:
 
         try:
             # Extract target_trackers from target_apis
-            target_trackers = [api_instance.tracker_query for api_instance in get_target_apis()]
+            target_trackers = {api_instance.tracker_query for api_instance in get_target_apis()}
 
             # Get torrent details from torrent client with existing trackers info
             torrent_info = self.torrent_client.get_single_torrent(infohash, target_trackers)
@@ -756,19 +764,17 @@ class NemorosaCore:
                     message=f"Torrent with infohash {infohash} not found in client or was filtered out",
                 )
 
-            # Check if torrent already exists on all target trackers
-            existing_trackers = set(torrent_info.existing_target_trackers)
-            target_tracker_set = set(target_trackers)
-
-            if target_tracker_set.issubset(existing_trackers):
+            if target_trackers.issubset(torrent_info.existing_target_trackers):
                 return ProcessResponse(
                     status=ProcessStatus.SKIPPED,
-                    message=f"Torrent already exists on all target trackers: {list(existing_trackers)}",
+                    message=f"Torrent already exists on all target trackers: {torrent_info.existing_target_trackers}",
                 )
 
             # Process the torrent using the same logic as process_single_torrent_from_client
+            # Skip the scanned check for webhook calls
             any_success = await self.process_single_torrent_from_client(
                 torrent_details=torrent_info,
+                skip_scanned_check=True,
             )
 
             if any_success:
@@ -806,6 +812,8 @@ class NemorosaCore:
             # Extract torrent ID from torrent_link
             parsed_link = urlparse(torrent_link)
             query_params = parse_qs(parsed_link.query)
+            if "id" not in query_params or not query_params["id"]:
+                raise ValueError(f"Missing 'id' parameter in torrent link: {torrent_link}")
             tid = query_params["id"][0]
 
             logger.debug(f"Extracted torrent ID: {tid} from link: {torrent_link}")
@@ -814,7 +822,7 @@ class NemorosaCore:
             await self.torrent_client.refresh_client_torrents_cache()
 
             # Parse incoming torrent data
-            torrent_object = torf.Torrent.read_stream(torrent_data)
+            torrent_object = Torrent.read_stream(torrent_data)
             fdict_torrent = {"/".join(f.parts[1:]): f.size for f in torrent_object.files}
 
             # Search for matching torrents using database (no need to load all torrents)
@@ -828,26 +836,18 @@ class NemorosaCore:
 
             # Check if incoming torrent may trump local torrent
             for matched_torrent in matched_torrents:
-                for api_instance in get_target_apis():
-                    # Check if local matched torrent contains tracker consistent with incoming torrent
-                    local_hostname = urlparse(matched_torrent.trackers[0]).hostname
-                    incoming_hostname = urlparse(torrent_object.trackers.flat[0]).hostname
-                    if (
-                        local_hostname is not None
-                        and incoming_hostname is not None
-                        and api_instance.tracker_query in local_hostname
-                        and api_instance.tracker_query in incoming_hostname
-                    ):
-                        logger.warning(
-                            f"Incoming torrent {tid} may trump local torrent {matched_torrent.hash}, "
-                            "skipping processing"
-                        )
-                        return ProcessResponse(
-                            status=ProcessStatus.SKIPPED_POTENTIAL_TRUMP,
-                            message=f"Local torrent {matched_torrent.hash} may be trumped, skipping processing",
-                        )
+                matched_api = get_api_by_tracker(matched_torrent.trackers)
+                torrent_api = get_api_by_tracker(torrent_object.trackers.flat)
+                if matched_api is not None and matched_api == torrent_api:
+                    logger.warning(
+                        f"Incoming torrent {tid} may trump local torrent {matched_torrent.hash}, skipping processing"
+                    )
+                    return ProcessResponse(
+                        status=ProcessStatus.SKIPPED_POTENTIAL_TRUMP,
+                        message=f"Local torrent {matched_torrent.hash} may be trumped, skipping processing",
+                    )
 
-            # Use the first matching torrent
+            # Select the torrent with the most files
             matched_torrent = max(matched_torrents, key=lambda x: len(x.files))
             logger.success(f"Found matching torrent in client: {matched_torrent.name}")
 
@@ -869,34 +869,60 @@ class NemorosaCore:
                 # Normal mode: use original download directory
                 final_download_dir = matched_torrent.download_dir
 
-            # Inject torrent and handle renaming
-            downloaded = False
-            if not config.cfg.global_config.no_download:
-                success, _ = self.torrent_client.inject_torrent(
-                    torrent_data, final_download_dir, matched_torrent.name, rename_map, False
-                )
-                if success:
-                    downloaded = True
-                    self.stats.downloaded += 1
-                    logger.success("Torrent injected successfully")
-                else:
-                    logger.error(f"Failed to inject torrent: {tid}")
-
-            if downloaded:
-                await self.torrent_client.track_verification(torrent_object.infohash)
-            else:
-                torrent_info = {
-                    "download_dir": final_download_dir,
-                    "local_torrent_name": matched_torrent.name,
-                    "rename_map": rename_map,
-                }
-                await self.database.add_undownloaded_torrent(str(tid), torrent_info, str(parsed_link.hostname))
-
-            return ProcessResponse(
-                status=ProcessStatus.SUCCESS,
-                message=f"Successfully processed reverse announce torrent: {torrent_name}",
+            success, _ = self.torrent_client.inject_torrent(
+                torrent_object, final_download_dir, matched_torrent.name, rename_map, False
             )
+            if success:
+                logger.success("Torrent injected successfully")
+                await self.torrent_client.track_verification(torrent_object.infohash)
+                return ProcessResponse(
+                    status=ProcessStatus.SUCCESS,
+                    message=f"Successfully processed reverse announce torrent: {torrent_name}",
+                )
+            else:
+                logger.error(f"Failed to inject torrent: {tid}")
+                return ProcessResponse(
+                    status=ProcessStatus.ERROR,
+                    message=f"Failed to inject torrent: {tid}",
+                )
 
         except Exception as e:
             logger.error(f"Error processing reverse announce torrent {torrent_name}: {str(e)}")
             return ProcessResponse(status=ProcessStatus.ERROR, message=f"Error processing torrent: {str(e)}")
+
+
+# Global core instance
+_core_instance: NemorosaCore | None = None
+_core_lock = asyncio.Lock()
+
+
+async def init_core() -> None:
+    """Initialize global core instance.
+
+    Should be called once during application startup.
+
+    Raises:
+        RuntimeError: If already initialized.
+    """
+    global _core_instance
+    async with _core_lock:
+        if _core_instance is not None:
+            raise RuntimeError("Core already initialized.")
+
+        _core_instance = NemorosaCore()
+
+
+def get_core() -> NemorosaCore:
+    """Get global core instance.
+
+    Must be called after init_core() has been invoked.
+
+    Returns:
+        NemorosaCore: Core instance.
+
+    Raises:
+        RuntimeError: If core has not been initialized.
+    """
+    if _core_instance is None:
+        raise RuntimeError("Core not initialized. Call init_core() first.")
+    return _core_instance

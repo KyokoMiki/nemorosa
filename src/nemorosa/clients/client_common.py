@@ -45,7 +45,7 @@ def decode_bitfield_bytes(bitfield_data: bytes, piece_count: int) -> list[bool]:
     return piece_progress
 
 
-class PostProcessResult(msgspec.Struct, frozen=False):
+class PostProcessResult(msgspec.Struct):
     """Result of processing a single injected torrent."""
 
     status: str = "not_found"  # 'completed', 'partial_kept', 'partial_removed', 'not_found', 'checking', 'error'
