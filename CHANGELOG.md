@@ -5,7 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.2.1...HEAD)
+## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.3.0...HEAD)
+
+## [0.3.0](https://github.com/KyokoMiki/nemorosa/compare/0.2.1...0.3.0) - 2025-10-25
+
+### Added
+
+- **rTorrent Client Support**: Added support for rTorrent client. rTorrent connects via XMLRPC. Because rTorrent does not support file renaming, `enable_linking` must be enabled to use it
+- **Torrent Tags Support**: Added tags support for torrent injection. For qBittorrent, tags are used together with label. For Transmission, tags are used by default and override label; if tags is null, [label] is used as fallback
+
+### Changed
+
+- **API Parameter Naming**: The parameter `infoHash` in `/api/webhook` endpoint has been changed to `infohash` (**BREAKING CHANGE**: Update any scripts or documentation that reference the old parameter name)
+- **Unified Logging Format**: All logs now follow uvicorn style for consistency across the application
+- **Retry Logic Refactoring**: Refactored retry logic. The `undownloaded_torrents` table is no longer used and can be safely ignored
+
+### Fixed
+
+- **File Suffix Matching**: Fixed suffix matching logic and improved search accuracy
+- **rTorrent XML Security**: Moved defusedxml monkey_patch to class initialization for better security handling
+- **Deluge Timeout**: Increased Deluge client timeout to 60 seconds to avoid timeout issues
+- **Retry Undownloaded Torrents**: Fixed an issue where file mapping information could not be obtained when retrying matched torrents that failed to download
+
+### What's Changed
+
+* feat(clients): add rTorrent client support by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/21
+* feat(downloader): add tags support for torrent injection by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/22
+* fix(clients): improve deluge timeout and rtorrent initialization by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/23
+* build(deps): bump uvloop from 0.21.0 to 0.22.1 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/25
+* build(deps): bump winloop from 0.2.3 to 0.3.1 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/26
+* build(deps): bump ruff from 0.14.0 to 0.14.1 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/27
+* build(deps): bump fastapi from 0.119.0 to 0.119.1 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/28
+* feat!: refactor retry mechanism and initialization by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/30
+
+**Full Changelog**: https://github.com/KyokoMiki/nemorosa/compare/0.2.1...0.3.0
 
 ## [0.2.1](https://github.com/KyokoMiki/nemorosa/compare/0.2.0...0.2.1) - 2025-10-14
 
