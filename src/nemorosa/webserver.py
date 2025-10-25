@@ -1,6 +1,8 @@
 """Web server module for nemorosa."""
 
 import base64
+import binascii
+import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
@@ -11,7 +13,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from . import __version__, api, config, db, logger, scheduler
-from .core import NemorosaCore, ProcessResponse, ProcessStatus
+from .core import ProcessResponse, ProcessStatus, get_core
 from .scheduler import JobResponse
 
 
@@ -36,12 +38,13 @@ class AnnounceRequest(BaseModel):
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     """Lifespan event handler for FastAPI app."""
-    job_manager = scheduler.get_job_manager()
-
     # Initialize core components (torrent client, database, API connections, scheduler)
     from .cli import async_init
 
     await async_init()
+
+    # Get job manager after initialization
+    job_manager = scheduler.get_job_manager()
 
     # Add scheduled jobs if available
     if job_manager and api.get_target_apis():
@@ -78,7 +81,7 @@ def verify_api_key(
         # No API key configured, allow all requests
         return True
 
-    if not credentials or credentials.credentials != api_key:
+    if not credentials or not secrets.compare_digest(credentials.credentials, api_key):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
 
     return True
@@ -155,7 +158,7 @@ async def webhook(
 
     try:
         # Process the torrent
-        processor = NemorosaCore()
+        processor = get_core()
         result = await processor.process_single_torrent(infohash)
 
         if result.status == ProcessStatus.NOT_FOUND:
@@ -222,7 +225,7 @@ async def announce(
     try:
         try:
             torrent_bytes = base64.b64decode(request.torrentdata)
-        except Exception as e:
+        except (binascii.Error, ValueError) as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid base64 torrent data: {str(e)}"
             ) from e
@@ -231,7 +234,7 @@ async def announce(
         logger.info(f"Received announce for torrent: {request.name} from {request.link}")
 
         # Process the torrent for cross-seeding using the reverse announce function
-        processor = NemorosaCore()
+        processor = get_core()
         result = await processor.process_reverse_announce_torrent(
             torrent_name=request.name,
             torrent_link=request.link,
@@ -280,7 +283,7 @@ async def announce(
     },
 )
 async def trigger_job(
-    job_type: Annotated[str, Query(description="Job type: 'search' or 'cleanup'")],
+    job_type: Annotated[scheduler.JobType, Query(description="Job type: 'search' or 'cleanup'")],
     _: ApiKeyDep,
 ) -> JobResponse:
     """Trigger a scheduled job to run ahead of schedule.
@@ -300,21 +303,8 @@ async def trigger_job(
         JobResponse: Job trigger result with status and timing information
     """
     try:
-        # Get job manager
-        job_mgr = scheduler.get_job_manager()
-
-        # Convert string to JobType enum and validate
-        try:
-            job_type_enum = scheduler.JobType(job_type)
-        except ValueError as e:
-            valid_job_types = [job_type.value for job_type in scheduler.JobType]
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid job type '{job_type}'. Must be one of: {valid_job_types}",
-            ) from e
-
         # Trigger the job
-        result = await job_mgr.trigger_job_early(job_type_enum)
+        result = await scheduler.get_job_manager().trigger_job_early(job_type)
 
         # Map internal status to HTTP status codes
         if result.status == "not_found":
@@ -334,7 +324,7 @@ async def trigger_job(
 
 
 @app.get(
-    "/api/job/{job_type}",
+    "/api/job",
     response_model=JobResponse,
     tags=["jobs"],
     summary="Get job status",
@@ -346,7 +336,7 @@ async def trigger_job(
     },
 )
 async def get_job_status(
-    job_type: str,
+    job_type: Annotated[scheduler.JobType, Query(description="Job type: 'search' or 'cleanup'")],
     _: ApiKeyDep,
 ) -> JobResponse:
     """Get the current status and schedule of a job.
@@ -362,24 +352,14 @@ async def get_job_status(
         JobResponse: Job status information including run times
     """
     try:
-        # Get job manager
-        job_mgr = scheduler.get_job_manager()
-
-        # Convert string to JobType enum and validate
-        try:
-            job_type_enum = scheduler.JobType(job_type)
-        except ValueError as e:
-            valid_job_types = [job_type.value for job_type in scheduler.JobType]
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid job type '{job_type}'. Must be one of: {valid_job_types}",
-            ) from e
-
         # Get job status
-        result = await job_mgr.get_job_status(job_type_enum)
+        result = await scheduler.get_job_manager().get_job_status(job_type)
 
         return result
 
+    except HTTPException:
+        # Re-raise HTTP exceptions as-is
+        raise
     except Exception as e:
         logger.error(f"Error getting job status for {job_type}: {str(e)}")
         raise HTTPException(
@@ -392,7 +372,7 @@ def run_webserver():
     # Use config values if not provided
     host = config.cfg.server.host
     port = config.cfg.server.port
-    log_level = config.cfg.global_config.loglevel
+    log_level = config.cfg.global_config.loglevel.value
 
     # Log server startup
     logger.info(f"Starting Nemorosa web server on {host if host is not None else 'all interfaces (IPv4/IPv6)'}:{port}")
