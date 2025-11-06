@@ -53,34 +53,25 @@ def select_search_filenames(filenames: Collection[str], max_count: int = 5) -> l
     return selected
 
 
-def make_filename_query(filename: str) -> str:
-    """Generate cleaned search query string from filename.
+def make_search_query(text: str) -> str:
+    """Generate cleaned search query string from text.
 
     Features:
-    1. Remove path part, keep only filename
-    2. Replace garbled characters with equal-length spaces
-    3. Merge consecutive spaces into single space
+    1. Replace garbled characters with equal-length spaces
+    2. Merge consecutive spaces into single space
 
     Args:
-        filename (str): Original filename.
+        text (str): Original text (for filenames, should be basename without path).
 
     Returns:
-        str: Cleaned filename.
+        str: Cleaned search query string.
     """
-
-    # Remove path part, keep only filename
-    base_filename = posixpath.basename(filename)
-
     # Replace common garbled characters and special symbols with equal-length spaces
     # Including: question marks, Chinese question marks, consecutive underscores, brackets, etc.
-    sanitized_name = base_filename
-
-    # Replace common garbled characters and invisible characters with equal-length spaces
-    # Including zero-width spaces, control characters, and other invisible Unicode characters
     sanitized_name = re.sub(
         r'[?？�_\-.·~`!@#$%^&*+=|\\:";\'<>,/\u200b\u200c\u200d\u2060\ufeff\u00a0\u180e\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\u0000-\u001f\u007f-\u009f]',
         " ",
-        sanitized_name,
+        text,
     )
 
     # Finally merge consecutive multiple spaces into single space

@@ -542,6 +542,28 @@ class NemorosaDatabase:
             result = await session.execute(stmt)
             return result.all()
 
+    async def search_torrent_by_album_name(self, album_keywords: list[str]) -> bool:
+        """Search torrents by album name keywords in torrent name.
+
+        Args:
+            album_keywords: List of keywords that should appear in torrent name.
+
+        Returns:
+            bool: True if at least one matching torrent is found, False otherwise.
+        """
+        async with self.async_session_maker() as session:
+            # Build conditions for matching album name in torrent name
+            conditions = []
+            for keyword in album_keywords:
+                conditions.append(func.lower(ClientTorrent.name).like(f"%{keyword.lower()}%"))
+
+            # Main query to check if any matching torrents exist
+            stmt = select(func.count(ClientTorrent.hash)).where(*conditions)
+
+            result = await session.execute(stmt)
+            count = result.scalar_one_or_none() or 0
+            return count > 0
+
     # endregion
 
     # region Metadata

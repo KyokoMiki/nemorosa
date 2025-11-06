@@ -1,7 +1,5 @@
 """Web server module for nemorosa."""
 
-import base64
-import binascii
 import secrets
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -22,14 +20,14 @@ class AnnounceRequest(BaseModel):
 
     name: str = Field(..., description="Torrent name")
     link: str = Field(..., description="Torrent download link")
-    torrentdata: str = Field(..., description="Base64 encoded torrent data")
+    album: str = Field(..., description="Album name for searching")
 
     model_config = {
         "json_schema_extra": {
             "example": {
                 "name": "Example.Album.2024.FLAC-GROUP",
                 "link": "https://tracker.example.com/torrents.php?id=12345",
-                "torrentdata": "ZDg6YW5ub3VuY2U0MTpodHRw...",
+                "album": "Example Album",
             }
         }
     }
@@ -223,13 +221,6 @@ async def announce(
     """
 
     try:
-        try:
-            torrent_bytes = base64.b64decode(request.torrentdata)
-        except (binascii.Error, ValueError) as e:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid base64 torrent data: {str(e)}"
-            ) from e
-
         # Log the announce
         logger.info(f"Received announce for torrent: {request.name} from {request.link}")
 
@@ -238,7 +229,7 @@ async def announce(
         result = await processor.process_reverse_announce_torrent(
             torrent_name=request.name,
             torrent_link=request.link,
-            torrent_data=torrent_bytes,
+            album_name=request.album,
         )
 
         if result.status == ProcessStatus.NOT_FOUND:
