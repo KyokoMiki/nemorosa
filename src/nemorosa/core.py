@@ -1,6 +1,7 @@
 """Core processing functions for nemorosa."""
 
 import asyncio
+import posixpath
 from enum import Enum
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
@@ -172,9 +173,9 @@ class NemorosaCore:
             # Record the number of results found
             logger.debug(f"Found {len(torrents)} potential matches for file '{fname_query}'")
 
-            # If no results found and it's a music file, try make filename query and search again
+            # If no results found and it's a music file, try make search query and search again
             if len(torrents) == 0 and filecompare.is_music_file(fname):
-                fname_query = filecompare.make_filename_query(fname)
+                fname_query = filecompare.make_search_query(posixpath.basename(fname))
                 if fname_query != fname:
                     logger.debug(
                         f"No results found for '{fname}', trying fallback search with basename: '{fname_query}'"
@@ -262,8 +263,8 @@ class NemorosaCore:
                 # Get the file size to match
                 target_file_size = torrent_fdict[fname]
 
-                # Use make_filename_query to process filename
-                fname_query = filecompare.make_filename_query(fname)
+                # Use make_search_query to process filename
+                fname_query = filecompare.make_search_query(posixpath.basename(fname))
                 if not fname_query:
                     continue
 
@@ -796,14 +797,14 @@ class NemorosaCore:
         self,
         torrent_name: str,
         torrent_link: str,
-        torrent_data: bytes,
+        album_name: str,
     ) -> ProcessResponse:
         """Process a single announce torrent for cross-seeding.
 
         Args:
             torrent_name (str): Name of the torrent.
             torrent_link (str): Torrent link containing the torrent ID.
-            torrent_data (bytes): Torrent file data.
+            album_name (str): Album name for searching.
 
         Returns:
             ProcessResponse: Processing result with status and details.
@@ -818,12 +819,56 @@ class NemorosaCore:
 
             logger.debug(f"Extracted torrent ID: {tid} from link: {torrent_link}")
 
+            # First, try to search by album name
+            album_keywords = filecompare.make_search_query(album_name).split()
+            logger.debug(f"Searching for album: {album_name} with keywords: {album_keywords}")
+
+            # Validate album keywords to avoid unfiltered query
+            if len(album_keywords) == 0:
+                logger.debug(f"No valid album keywords extracted for album: {album_name}")
+                return ProcessResponse(
+                    status=ProcessStatus.NOT_FOUND,
+                    message=f"No valid album keywords extracted for album: {album_name}",
+                )
+
             # Refresh client torrent cache
             await self.torrent_client.refresh_client_torrents_cache()
 
-            # Parse incoming torrent data
-            torrent_object = Torrent.read_stream(torrent_data)
-            fdict_torrent = {"/".join(f.parts[1:]): f.size for f in torrent_object.files}
+            # Search in database by album name
+            has_album_match = await self.database.search_torrent_by_album_name(album_keywords)
+            if not has_album_match:
+                return ProcessResponse(
+                    status=ProcessStatus.NOT_FOUND,
+                    message=f"No matching torrent found in client for album: {album_name}",
+                )
+
+            # Get API instance from torrent link
+            site_host = str(parsed_link.hostname)
+            torrent_api = get_api_by_site_host(site_host)
+
+            if not torrent_api:
+                return ProcessResponse(
+                    status=ProcessStatus.ERROR,
+                    message=f"Could not find API instance for site: {site_host}",
+                )
+
+            # Get torrent info from API to extract file list
+            try:
+                torrent_info = await torrent_api.torrent(tid)
+                if not torrent_info:
+                    return ProcessResponse(
+                        status=ProcessStatus.ERROR,
+                        message=f"Failed to get torrent info for ID: {tid}",
+                    )
+            except Exception as e:
+                logger.error(f"Failed to get torrent info: {e}")
+                return ProcessResponse(
+                    status=ProcessStatus.ERROR,
+                    message=f"Failed to get torrent info: {str(e)}",
+                )
+
+            # Extract file list from torrent info
+            fdict_torrent = torrent_info.get("fileList", {})
 
             # Search for matching torrents using database (no need to load all torrents)
             matched_torrents = await self._search_torrent_by_filename_in_client(fdict_torrent)
@@ -837,7 +882,6 @@ class NemorosaCore:
             # Check if incoming torrent may trump local torrent
             for matched_torrent in matched_torrents:
                 matched_api = get_api_by_tracker(matched_torrent.trackers)
-                torrent_api = get_api_by_tracker(torrent_object.trackers.flat)
                 if matched_api is not None and matched_api == torrent_api:
                     logger.warning(
                         f"Incoming torrent {tid} may trump local torrent {matched_torrent.hash}, skipping processing"
@@ -847,9 +891,19 @@ class NemorosaCore:
                         message=f"Local torrent {matched_torrent.hash} may be trumped, skipping processing",
                     )
 
-            # Select the torrent with the most files
+            # Select the torrent with the most files (only after checking all don't conflict)
             matched_torrent = max(matched_torrents, key=lambda x: len(x.files))
             logger.success(f"Found matching torrent in client: {matched_torrent.name}")
+
+            # Download torrent data from API (only after finding a match)
+            try:
+                torrent_object = await torrent_api.download_torrent(tid)
+            except Exception as e:
+                logger.error(f"Failed to download torrent data: {e}")
+                return ProcessResponse(
+                    status=ProcessStatus.ERROR,
+                    message=f"Failed to download torrent data: {str(e)}",
+                )
 
             # Use client's file dictionary
             rename_map = filecompare.generate_rename_map(matched_torrent.fdict, fdict_torrent)
