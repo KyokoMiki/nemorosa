@@ -5,7 +5,32 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.3.0...HEAD)
+## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.4.0...HEAD)
+
+## [0.4.0](https://github.com/KyokoMiki/nemorosa/compare/0.3.0...0.4.0) - 2025-11-07
+
+### Added
+
+- **Directory Creation Mode Configuration**: Added `dir_mode` configuration option for file linking, allowing customization of directory permission mode when creating link directories (default: 775). This enables proper write permissions for torrent clients
+- **Docker Timezone Configuration**: Added support for timezone configuration via `TZ` environment variable in Docker containers
+
+### Changed
+
+- **Announce API Endpoint**: Changed `/api/announce` endpoint to accept `album` (string) instead of `torrentdata` (base64 encoded torrent data). Torrent files are now only downloaded after finding an album name match in the local client, reducing unnecessary downloads (**BREAKING CHANGE**: Update the `Data (JSON)` section in autobrr's External filter webhook configuration. Please refer to the [wiki](https://github.com/KyokoMiki/nemorosa/wiki/Announce-Matching#setting-up-autobrr) for details)
+- **Album Name Matching**: Added album name matching logic before downloading torrent files. The system now searches for matching torrents by album keywords in the local client before proceeding with torrent file downloads
+- **Empty Client Initialization**: Allow initialization of new clients without existing torrents.
+
+### What's Changed
+
+* build(deps): bump apscheduler from 3.11.0 to 3.11.1 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/35
+* build(deps): bump fastapi from 0.119.1 to 0.121.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/36
+* build(deps): bump ruff from 0.14.1 to 0.14.3 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/37
+* feat(core)!: require album name match for announce matching torrent downloads by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/38
+* feat(docker): support timezone configuration via TZ by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/39
+* feat(filelinking): add directory creation mode configuration option by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/40
+* feat(init): allow new clients without torrents by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/41
+
+**Full Changelog**: https://github.com/KyokoMiki/nemorosa/compare/0.3.0...0.4.0
 
 ## [0.3.0](https://github.com/KyokoMiki/nemorosa/compare/0.2.1...0.3.0) - 2025-10-25
 
