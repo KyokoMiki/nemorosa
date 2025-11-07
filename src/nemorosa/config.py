@@ -81,9 +81,7 @@ class LinkingConfig(msgspec.Struct):
 
         # Check if the octal value is within valid permission range (0o0 to 0o777)
         if not (0o0 <= self.dir_mode <= 0o777):
-            raise ValueError(
-                f"dir_mode must be between 0 and 777 (octal permissions), got: {mode_str}"
-            )
+            raise ValueError(f"dir_mode must be between 0 and 777 (octal permissions), got: {mode_str}")
 
 
 class GlobalConfig(msgspec.Struct):
