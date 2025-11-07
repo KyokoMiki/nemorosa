@@ -169,7 +169,7 @@ async def async_init():
     cached_client_url = await database.get_metadata("client_url")
 
     if cached_client_url != current_client_url:
-        logger.info(f"Client URL changed from {cached_client_url} to {current_client_url}")
+        logger.debug(f"Client URL changed from {cached_client_url} to {current_client_url}")
         logger.info("Rebuilding client torrents cache...")
 
         # Get all torrents from the new client
@@ -177,11 +177,6 @@ async def async_init():
         all_torrents = app_torrent_client.get_torrents(
             fields=["hash", "name", "total_size", "files", "trackers", "download_dir"]
         )
-
-        # Validate that the new client has torrents
-        if not all_torrents:
-            # Note: Client must have torrents for nemorosa to work properly
-            raise RuntimeError(f"New client at {current_client_url} has no torrents.")
 
         # Rebuild cache
         await app_torrent_client.rebuild_client_torrents_cache(all_torrents)
