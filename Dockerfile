@@ -41,9 +41,6 @@ FROM python:3.13-slim-bookworm
 # Set working directory
 WORKDIR /app
 
-# Accept optional timezone argument
-ARG TZ
-
 # Copy the virtual environment from builder stage
 COPY --from=builder /app/.venv /app/.venv
 
@@ -56,5 +53,5 @@ ENV XDG_DATA_HOME=/app/data
 # Expose port for web interface
 EXPOSE 8256
 
-# Configure timezone at runtime: set TZ env var and system timezone files
-ENTRYPOINT ["sh", "-c", "[ -n \"$TZ\" ] && [ -f \"/usr/share/zoneinfo/$TZ\" ] && ln -sf \"/usr/share/zoneinfo/$TZ\" /etc/localtime && echo \"$TZ\" > /etc/timezone || true; exec nemorosa \"$@\""]
+# Use the installed application directly via Python module
+ENTRYPOINT ["nemorosa"]
