@@ -6,11 +6,15 @@ Provides colored logging functionality with custom log levels and formatters.
 import logging
 import sys
 from enum import Enum
+from urllib.parse import urlparse
 
 import click
 from uvicorn.logging import DefaultFormatter
 
 from .config import LogLevel
+
+# Constants for URL password redaction
+REDACTED_MSG = "[REDACTED]"
 
 
 class LogColor(Enum):
@@ -27,6 +31,45 @@ class LogColor(Enum):
     WARNING = "yellow"
     ERROR = "red"
     CRITICAL = "bright_red"
+
+
+def redact_url_password(url_str: str) -> str:
+    """Redact password from URL.
+
+    This function attempts to parse the URL and if it contains a password,
+    returns a new URL with the password replaced by [REDACTED].
+
+    Args:
+        url_str: The URL string that may contain a password.
+
+    Returns:
+        str: The URL with password redacted if URL contains password, otherwise original URL.
+    """
+    try:
+        parsed_url = urlparse(url_str)
+        if not parsed_url.password:
+            return url_str
+
+        # Build new netloc with redacted password
+        # netloc format: [username[:password]@]host[:port]
+        # Start with username and redacted password
+        auth_part = f"{parsed_url.username}:{REDACTED_MSG}"
+
+        # Build host part
+        host_part = parsed_url.hostname or ""
+
+        # Add port only if explicitly specified
+        if parsed_url.port:
+            host_part = f"{host_part}:{parsed_url.port}"
+
+        new_netloc = f"{auth_part}@{host_part}"
+        # Replace netloc in the parsed URL
+        redacted_parsed = parsed_url._replace(netloc=new_netloc)
+        return redacted_parsed.geturl()
+
+    except Exception:
+        # Ignore any parsing errors and return original URL
+        return url_str
 
 
 # Global logger instance
