@@ -159,7 +159,7 @@ async def async_init():
     logger.info("Database initialized successfully")
 
     # Initialize torrent client
-    logger.debug("Connecting to torrent client at %s...", config.cfg.downloader.client)
+    logger.debug("Connecting to torrent client at %s...", logger.redact_url_password(config.cfg.downloader.client))
     await client_instance.init_torrent_client(config.cfg.downloader.client)
     logger.info("Successfully connected to torrent client")
 
@@ -169,7 +169,11 @@ async def async_init():
     cached_client_url = await database.get_metadata("client_url")
 
     if cached_client_url != current_client_url:
-        logger.debug(f"Client URL changed from {cached_client_url} to {current_client_url}")
+        logger.debug(
+            "Client URL changed from %s to %s",
+            logger.redact_url_password(cached_client_url) if cached_client_url else "None",
+            logger.redact_url_password(current_client_url),
+        )
         logger.info("Rebuilding client torrents cache...")
 
         # Get all torrents from the new client
@@ -221,7 +225,7 @@ def main():
     logger.debug(f"Config file: {args.config or 'auto-detected'}")
     logger.debug(f"No download: {config.cfg.global_config.no_download}")
     logger.debug(f"Log level: {config.cfg.global_config.loglevel.value}")
-    logger.debug(f"Client URL: {config.cfg.downloader.client}")
+    logger.debug(f"Client URL: {logger.redact_url_password(config.cfg.downloader.client)}")
     check_trackers = config.cfg.global_config.check_trackers
     logger.debug(f"CHECK_TRACKERS: {check_trackers if check_trackers else 'All trackers allowed'}")
 

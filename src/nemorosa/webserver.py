@@ -367,7 +367,7 @@ def run_webserver():
 
     # Log server startup
     logger.info(f"Starting Nemorosa web server on {host if host is not None else 'all interfaces (IPv4/IPv6)'}:{port}")
-    logger.info(f"Using torrent client: {config.cfg.downloader.client}")
+    logger.info(f"Using torrent client: {logger.redact_url_password(config.cfg.downloader.client)}")
     logger.info(f"Target sites: {len(config.cfg.target_sites)}")
 
     # Check if API key is configured
