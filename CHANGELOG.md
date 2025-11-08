@@ -5,7 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.4.0...HEAD)
+## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.4.1...HEAD)
+
+## [0.4.1](https://github.com/KyokoMiki/nemorosa/compare/0.4.0...0.4.1) - 2025-11-08
+
+### Changed
+
+- **Password Redaction in Logs**: Changed log output to automatically redact passwords from URLs, preventing sensitive credentials from appearing in log messages and improving security
+
+### Fixed
+
+- **Docker Entrypoint Parameter Passing**: Fixed parameter passing issue in Docker entrypoint script
+- **Database Operations During Shutdown**: Protected database operations from cancellation during shutdown by wrapping cache sync operations with `asyncio.shield()`, ensuring clean exit during shutdown operations
+
+### What's Changed
+
+* fix(clients): protect database operations from cancellation during shutdown by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/44
+* feat(logging): redact passwords from URLs in log messages by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/45
+
+**Full Changelog**: https://github.com/KyokoMiki/nemorosa/compare/0.4.0...0.4.1
 
 ## [0.4.0](https://github.com/KyokoMiki/nemorosa/compare/0.3.0...0.4.0) - 2025-11-07
 
