@@ -339,26 +339,30 @@ class TorrentClient(ABC):
             if not torrents:
                 logger.debug("No torrents provided for cache sync")
                 # Clear all cached torrents if the new list is empty
-                await database.clear_client_torrents_cache()
+                await asyncio.shield(database.clear_client_torrents_cache())
                 return
 
             # Get current cached torrent hashes
-            cached_hashes = await database.get_all_cached_torrent_hashes()
+            cached_hashes = await asyncio.shield(database.get_all_cached_torrent_hashes())
             new_hashes = {torrent.hash for torrent in torrents}
 
             # Step 1: Batch delete torrents that no longer exist in client
             torrents_to_delete = cached_hashes - new_hashes
             if torrents_to_delete:
-                await database.delete_client_torrents(torrents_to_delete)
+                await asyncio.shield(database.delete_client_torrents(torrents_to_delete))
                 logger.debug(f"Deleted {len(torrents_to_delete)} torrents from cache")
 
             # Step 2: Update/insert torrents one by one
             for torrent in torrents:
-                await database.save_client_torrent_info(torrent)
+                await asyncio.shield(database.save_client_torrent_info(torrent))
                 await asyncio.sleep(0)  # Yield control to allow other async tasks to run
 
             logger.success(f"Synced {len(torrents)} torrents to database cache")
 
+        except asyncio.CancelledError:
+            # During shutdown, exit gracefully - the sync will continue on the next run
+            logger.debug("Cache sync cancelled during shutdown (expected)")
+            return
         except Exception as e:
             logger.warning(f"Failed to sync cache: {e}")
 
