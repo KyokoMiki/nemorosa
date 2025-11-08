@@ -97,7 +97,7 @@ def init_logger(loglevel: LogLevel = LogLevel.INFO) -> None:
 
     # Create console handler with colored formatter
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(DefaultFormatter(fmt="%(levelprefix)s %(message)s"))
+    handler.setFormatter(DefaultFormatter(fmt="%(asctime)s | %(levelprefix)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
     logger.addHandler(handler)
 
     # Prevent propagation to avoid duplicate logs
