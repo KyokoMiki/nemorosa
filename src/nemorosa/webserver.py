@@ -10,9 +10,11 @@ from fastapi.responses import FileResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
-from . import __version__, api, config, db, logger, scheduler
+from . import __version__, config, logger
+from .api import cleanup_api, get_target_apis
 from .core import ProcessResponse, ProcessStatus, get_core
-from .scheduler import JobResponse
+from .db import cleanup_database
+from .scheduler import JobResponse, JobType, get_job_manager
 
 
 class AnnounceRequest(BaseModel):
@@ -42,10 +44,10 @@ async def lifespan(_: FastAPI):
     await async_init()
 
     # Get job manager after initialization
-    job_manager = scheduler.get_job_manager()
+    job_manager = get_job_manager()
 
     # Add scheduled jobs if available
-    if job_manager and api.get_target_apis():
+    if job_manager and get_target_apis():
         job_manager.add_scheduled_jobs()
         logger.info("Scheduled jobs configured and added")
 
@@ -57,10 +59,10 @@ async def lifespan(_: FastAPI):
         logger.info("Scheduler stopped")
 
     # Close all API client sessions
-    await api.cleanup_api()
+    await cleanup_api()
 
     # Cleanup database
-    await db.cleanup_database()
+    await cleanup_database()
 
 
 # Create FastAPI app
@@ -277,7 +279,7 @@ async def announce(
     },
 )
 async def trigger_job(
-    job_type: Annotated[scheduler.JobType, Query(description="Job type: 'search' or 'cleanup'")],
+    job_type: Annotated[JobType, Query(description="Job type: 'search' or 'cleanup'")],
     _: ApiKeyDep,
 ) -> JobResponse:
     """Trigger a scheduled job to run ahead of schedule.
@@ -298,7 +300,7 @@ async def trigger_job(
     """
     try:
         # Trigger the job
-        result = await scheduler.get_job_manager().trigger_job_early(job_type)
+        result = await get_job_manager().trigger_job_early(job_type)
 
         # Map internal status to HTTP status codes
         if result.status == "not_found":
@@ -330,7 +332,7 @@ async def trigger_job(
     },
 )
 async def get_job_status(
-    job_type: Annotated[scheduler.JobType, Query(description="Job type: 'search' or 'cleanup'")],
+    job_type: Annotated[JobType, Query(description="Job type: 'search' or 'cleanup'")],
     _: ApiKeyDep,
 ) -> JobResponse:
     """Get the current status and schedule of a job.
@@ -347,7 +349,7 @@ async def get_job_status(
     """
     try:
         # Get job status
-        result = await scheduler.get_job_manager().get_job_status(job_type)
+        result = await get_job_manager().get_job_status(job_type)
 
         return result
 

@@ -1,9 +1,9 @@
 """Nemorosa configuration processing module."""
 
-import secrets
 import sys
 from enum import Enum
 from pathlib import Path
+from secrets import token_urlsafe
 
 import msgspec
 from humanfriendly import parse_timespan
@@ -306,7 +306,7 @@ server:
   # Web server settings
   host: null # Server host address, null means listen on all interfaces
   port: 8256 # Server port
-  api_key: "{secrets.token_urlsafe(32)}" # API key for accessing web interface
+  api_key: "{token_urlsafe(32)}" # API key for accessing web interface
   # Scheduled job settings (optional, set to null to disable)
   search_cadence: "1 day" # How often to run search job (e.g., "1 day", "6 hours", "30 minutes")
   cleanup_cadence: "1 day" # How often to run cleanup job

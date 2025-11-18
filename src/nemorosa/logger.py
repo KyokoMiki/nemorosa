@@ -6,12 +6,14 @@ Provides colored logging functionality with custom log levels and formatters.
 import logging
 import sys
 from enum import Enum
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import click
 from uvicorn.logging import DefaultFormatter
 
-from .config import LogLevel
+if TYPE_CHECKING:
+    from .config import LogLevel
 
 # Constants for URL password redaction
 REDACTED_MSG = "[REDACTED]"
@@ -76,7 +78,7 @@ def redact_url_password(url_str: str) -> str:
 _logger_instance: logging.Logger | None = None
 
 
-def init_logger(loglevel: LogLevel = LogLevel.INFO) -> None:
+def init_logger(loglevel: "LogLevel | None" = None) -> None:
     """Initialize global logger instance.
 
     Should be called once during application startup.
@@ -90,7 +92,7 @@ def init_logger(loglevel: LogLevel = LogLevel.INFO) -> None:
     logger = logging.getLogger("nemorosa")
 
     # Set log level
-    logger.setLevel(loglevel.value.upper())
+    logger.setLevel(loglevel.value.upper() if loglevel else logging.INFO)
 
     # Remove existing handlers to avoid duplicate logs
     logger.handlers.clear()
@@ -107,7 +109,7 @@ def init_logger(loglevel: LogLevel = LogLevel.INFO) -> None:
     _logger_instance = logger
 
 
-def set_log_level(loglevel: LogLevel) -> None:
+def set_log_level(loglevel: "LogLevel") -> None:
     """Update log level of initialized logger.
 
     Args:

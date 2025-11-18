@@ -9,7 +9,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from pydantic import BaseModel, Field
 
-from . import config, db, logger
+from . import config, logger
+from .db import get_database
 
 
 class JobResponse(BaseModel):
@@ -42,7 +43,7 @@ class JobManager:
         """Initialize job manager."""
         self.scheduler = AsyncIOScheduler()
 
-        self.database = db.get_database()
+        self.database = get_database()
         # Track running jobs
         self._running_jobs = set()
         self._running_jobs_lock = asyncio.Lock()

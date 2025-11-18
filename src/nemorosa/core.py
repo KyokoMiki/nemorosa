@@ -10,9 +10,20 @@ import msgspec
 from pydantic import BaseModel, Field
 from torf import Torrent
 
-from . import client_instance, config, db, filecompare, filelinking, logger
+from . import config, logger
 from .api import get_api_by_site_host, get_api_by_tracker, get_target_apis
+from .client_instance import get_torrent_client
 from .clients import ClientTorrentInfo, TorrentConflictError
+from .db import get_database
+from .filecompare import (
+    check_conflicts,
+    generate_link_map,
+    generate_rename_map,
+    is_music_file,
+    make_search_query,
+    select_search_filenames,
+)
+from .filelinking import create_file_links_for_torrent
 
 if TYPE_CHECKING:
     from .api import GazelleJSONAPI, GazelleParser
@@ -81,8 +92,8 @@ class NemorosaCore:
 
     def __init__(self):
         """Initialize the torrent processor."""
-        self.torrent_client = client_instance.get_torrent_client()
-        self.database = db.get_database()
+        self.torrent_client = get_torrent_client()
+        self.database = get_database()
         self.stats = ProcessorStats()
 
     async def hash_based_search(
@@ -159,7 +170,7 @@ class NemorosaCore:
         """
         # search for the files with top 5 longest name
         tid = None
-        scan_querys = filecompare.select_search_filenames(fdict.keys())
+        scan_querys = select_search_filenames(fdict.keys())
 
         for fname in scan_querys:
             logger.debug(f"Searching for file: {fname}")
@@ -174,8 +185,8 @@ class NemorosaCore:
             logger.debug(f"Found {len(torrents)} potential matches for file '{fname_query}'")
 
             # If no results found and it's a music file, try make search query and search again
-            if len(torrents) == 0 and filecompare.is_music_file(fname):
-                fname_query = filecompare.make_search_query(posixpath.basename(fname))
+            if len(torrents) == 0 and is_music_file(fname):
+                fname_query = make_search_query(posixpath.basename(fname))
                 if fname_query != fname:
                     logger.debug(
                         f"No results found for '{fname}', trying fallback search with basename: '{fname_query}'"
@@ -225,7 +236,7 @@ class NemorosaCore:
                 break
 
             logger.debug(f"No more results for file '{fname}'")
-            if filecompare.is_music_file(fname):
+            if is_music_file(fname):
                 logger.debug("Stopping search as music file match is not found")
                 break
 
@@ -253,7 +264,7 @@ class NemorosaCore:
             matched_torrents = []
 
             # Select top 5 longest filenames for search (sorted by length)
-            scan_queries = filecompare.select_search_filenames(torrent_fdict.keys())
+            scan_queries = select_search_filenames(torrent_fdict.keys())
 
             logger.debug(f"Searching with {len(scan_queries)} file queries: {scan_queries}")
 
@@ -264,7 +275,7 @@ class NemorosaCore:
                 target_file_size = torrent_fdict[fname]
 
                 # Use make_search_query to process filename
-                fname_query = filecompare.make_search_query(posixpath.basename(fname))
+                fname_query = make_search_query(posixpath.basename(fname))
                 if not fname_query:
                     continue
 
@@ -282,9 +293,7 @@ class NemorosaCore:
                     logger.debug(f"Verifying candidate torrent: {candidate.name}")
 
                     # Database query already ensured size and name match, only check conflicts
-                    if config.cfg.linking.enable_linking or not filecompare.check_conflicts(
-                        candidate.fdict, torrent_fdict
-                    ):
+                    if config.cfg.linking.enable_linking or not check_conflicts(candidate.fdict, torrent_fdict):
                         logger.success(f"Complete torrent match found: {candidate.name}")
                         matched_torrents.append(candidate)
                     else:
@@ -295,7 +304,7 @@ class NemorosaCore:
                     break
 
                 # If music file and no match found, stop searching
-                if filecompare.is_music_file(fname):
+                if is_music_file(fname):
                     logger.debug("Stopping search as music file match is not found")
                     break
 
@@ -332,13 +341,13 @@ class NemorosaCore:
             resp = await api.torrent(t["torrentId"])
             resp_files = resp.get("fileList", {})
 
-            check_music_file = fname if filecompare.is_music_file(fname) else scan_querys[-1]
+            check_music_file = fname if is_music_file(fname) else scan_querys[-1]
 
             # For music files, byte-level size comparison is sufficient for identical matching
             # as it provides reliable file identification without requiring full content comparison
             if fdict[check_music_file] in resp_files.values():
                 # Check file conflicts
-                if config.cfg.linking.enable_linking or not filecompare.check_conflicts(fdict, resp_files):
+                if config.cfg.linking.enable_linking or not check_conflicts(fdict, resp_files):
                     logger.success(f"File match found! Torrent ID: {t['torrentId']} (File: {check_music_file})")
                     return t["torrentId"]
                 else:
@@ -365,14 +374,14 @@ class NemorosaCore:
         """
         # Generate file dictionary and rename map
         matched_fdict = {"/".join(f.parts[1:]): f.size for f in matched_torrent.files}
-        rename_map = filecompare.generate_rename_map(local_torrent_info.fdict, matched_fdict)
+        rename_map = generate_rename_map(local_torrent_info.fdict, matched_fdict)
 
         # Handle file linking and rename map based on configuration
         if config.cfg.linking.enable_linking:
             # Generate link map for file linking
-            file_mapping = filecompare.generate_link_map(local_torrent_info.fdict, matched_fdict)
+            file_mapping = generate_link_map(local_torrent_info.fdict, matched_fdict)
             # File linking mode: create links first, then add torrent with linked directory
-            final_download_dir = filelinking.create_file_links_for_torrent(
+            final_download_dir = create_file_links_for_torrent(
                 matched_torrent, local_torrent_info.download_dir, local_torrent_info.name, file_mapping
             )
             if final_download_dir is None:
@@ -820,7 +829,7 @@ class NemorosaCore:
             logger.debug(f"Extracted torrent ID: {tid} from link: {torrent_link}")
 
             # First, try to search by album name
-            album_keywords = filecompare.make_search_query(album_name).split()
+            album_keywords = make_search_query(album_name).split()
             logger.debug(f"Searching for album: {album_name} with keywords: {album_keywords}")
 
             # Validate album keywords to avoid unfiltered query
@@ -906,14 +915,14 @@ class NemorosaCore:
                 )
 
             # Use client's file dictionary
-            rename_map = filecompare.generate_rename_map(matched_torrent.fdict, fdict_torrent)
+            rename_map = generate_rename_map(matched_torrent.fdict, fdict_torrent)
 
             # Handle file linking and rename map based on configuration
             if config.cfg.linking.enable_linking:
                 # Generate link map for file linking
-                file_mapping = filecompare.generate_link_map(matched_torrent.fdict, fdict_torrent)
+                file_mapping = generate_link_map(matched_torrent.fdict, fdict_torrent)
                 # File linking mode: create links first, then add torrent with linked directory
-                final_download_dir = filelinking.create_file_links_for_torrent(
+                final_download_dir = create_file_links_for_torrent(
                     torrent_object, matched_torrent.download_dir, matched_torrent.name, file_mapping
                 )
                 if final_download_dir is None:
