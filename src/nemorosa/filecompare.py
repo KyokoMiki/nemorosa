@@ -3,11 +3,11 @@ File comparison and matching module for nemorosa.
 Provides functionality to compare torrent files and find matches between client torrents and tracker torrents.
 """
 
-import difflib
 import posixpath
 import re
 from collections import defaultdict
 from collections.abc import Collection
+from difflib import SequenceMatcher
 from itertools import groupby
 from typing import TYPE_CHECKING
 
@@ -208,7 +208,7 @@ def filename_match(torrent_name: str, local_names: list[str]) -> str | None:
     best_similarity = -1
 
     for local_name in local_names:
-        similarity = difflib.SequenceMatcher(None, local_name, torrent_name).ratio()
+        similarity = SequenceMatcher(None, local_name, torrent_name).ratio()
         if similarity > best_similarity:
             best_similarity = similarity
             best_match = local_name

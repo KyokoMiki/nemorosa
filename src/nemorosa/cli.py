@@ -1,11 +1,15 @@
 """Command line interface for nemorosa."""
 
-import argparse
 import asyncio
 import sys
+from argparse import ArgumentParser
 
-from . import api, client_instance, config, db, logger, scheduler
+from . import config, logger
+from .api import cleanup_api, get_target_apis, init_api
+from .client_instance import get_torrent_client, init_torrent_client
 from .core import get_core, init_core
+from .db import cleanup_database, get_database, init_database
+from .scheduler import init_job_manager
 from .webserver import run_webserver
 
 
@@ -30,9 +34,9 @@ def setup_argument_parser():
     """Set up command line argument parser.
 
     Returns:
-        argparse.ArgumentParser: Configured argument parser.
+        ArgumentParser: Configured argument parser.
     """
-    parser = argparse.ArgumentParser(
+    parser = ArgumentParser(
         description="Music torrent cross-seeding tool with automatic file mapping and seamless injection"
     )
 
@@ -155,17 +159,17 @@ async def async_init():
     """
     logger.debug("Initializing database...")
     # Initialize database
-    await db.init_database()
+    await init_database()
     logger.info("Database initialized successfully")
 
     # Initialize torrent client
     logger.debug("Connecting to torrent client at %s...", logger.redact_url_password(config.cfg.downloader.client))
-    await client_instance.init_torrent_client(config.cfg.downloader.client)
+    await init_torrent_client(config.cfg.downloader.client)
     logger.info("Successfully connected to torrent client")
 
     # Check if client URL has changed and rebuild cache if needed
     current_client_url = config.cfg.downloader.client
-    database = db.get_database()
+    database = get_database()
     cached_client_url = await database.get_metadata("client_url")
 
     if cached_client_url != current_client_url:
@@ -177,7 +181,7 @@ async def async_init():
         logger.info("Rebuilding client torrents cache...")
 
         # Get all torrents from the new client
-        app_torrent_client = client_instance.get_torrent_client()
+        app_torrent_client = get_torrent_client()
         all_torrents = app_torrent_client.get_torrents(
             fields=["hash", "name", "total_size", "files", "trackers", "download_dir"]
         )
@@ -190,15 +194,15 @@ async def async_init():
         await database.set_metadata("client_url", current_client_url)
 
     # Initialize API connections
-    await api.init_api(config.cfg.target_sites)
-    logger.info(f"API connections established for {len(api.get_target_apis())} target sites")
+    await init_api(config.cfg.target_sites)
+    logger.info(f"API connections established for {len(get_target_apis())} target sites")
 
     # Initialize core processor
     await init_core()
     logger.debug("Core processor initialized")
 
     # Initialize and start scheduler
-    await scheduler.init_job_manager()
+    await init_job_manager()
 
 
 def main():
@@ -275,13 +279,13 @@ async def _async_main(args):
             await processor.process_torrents()
     finally:
         # Wait for torrent monitoring to complete all tracked torrents
-        client = client_instance.get_torrent_client()
+        client = get_torrent_client()
         if client and client.monitoring:
             logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
             await client.wait_for_monitoring_completion()
 
         # Close all API client sessions
-        await api.cleanup_api()
+        await cleanup_api()
 
         # Cleanup database
-        await db.cleanup_database()
+        await cleanup_database()
