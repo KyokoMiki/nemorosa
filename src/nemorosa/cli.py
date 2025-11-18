@@ -280,4 +280,8 @@ async def _async_main(args):
             logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
             await client.wait_for_monitoring_completion()
 
+        # Close all API client sessions
+        await api.cleanup_api()
+
+        # Cleanup database
         await db.cleanup_database()
