@@ -4,15 +4,15 @@ Provides API implementations for Gazelle-based torrent sites, including JSON API
 """
 
 import asyncio
-import html
 from abc import ABC, abstractmethod
 from collections.abc import Collection
+from html import unescape
 from http.cookies import SimpleCookie
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 
-import httpx
 import msgspec
+from aiohttp import ClientSession, ClientTimeout, CookieJar
 from aiolimiter import AsyncLimiter
 from bs4 import BeautifulSoup, Tag
 from humanfriendly import parse_size
@@ -34,14 +34,15 @@ class GazelleBase(ABC):
     """Base class for Gazelle API, containing common attributes and methods."""
 
     def __init__(self, server: str) -> None:
-        timeout = httpx.Timeout(connect=30.0, read=60.0, write=30.0, pool=30.0)
+        timeout = ClientTimeout(total=60.0, connect=30.0, sock_read=60.0)
 
-        self.client = httpx.AsyncClient(timeout=timeout)
-        self.client.headers = {
+        headers = {
             "Accept-Charset": "utf-8",
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
             " Chrome/137.0.0.0 Safari/537.36 Edg/137.0.0.0",
         }
+        self.cookie_jar = CookieJar()
+        self.client = ClientSession(timeout=timeout, headers=headers, cookie_jar=self.cookie_jar)
         self.server = server
         self.authkey = None
         self.passkey = None
@@ -68,6 +69,10 @@ class GazelleBase(ABC):
     @property
     def site_host(self) -> str:
         return str(urlparse(self.server).hostname)
+
+    async def close(self) -> None:
+        """Close the aiohttp ClientSession."""
+        await self.client.close()
 
     async def torrent(self, torrent_id: int | str) -> dict[str, Any]:
         """Get torrent object - subclasses need to implement specific request logic.
@@ -130,7 +135,7 @@ class GazelleBase(ABC):
             # split filename and filesize
             parts = entry.split("{{{")
             if len(parts) == 2:
-                filename = html.unescape(parts[0].strip())
+                filename = unescape(parts[0].strip())
                 filesize = parts[1].removesuffix("}}}").strip()
                 file_list[filename] = int(filesize)
             else:
@@ -155,7 +160,7 @@ class GazelleBase(ABC):
             response = await self.request(torrent_link)
 
         logger.debug(f"Torrent {torrent_id} downloaded successfully")
-        return Torrent.read_stream(response.content)
+        return Torrent.read_stream(response)
 
     def get_torrent_url(self, torrent_id: int | str) -> str:
         """Get the permalink for a torrent by its ID.
@@ -243,8 +248,8 @@ class GazelleBase(ABC):
 
         try:
             # For AJAX requests, do not check status code, because Gazelle API may return valid JSON on error
-            r = await self.request(ajaxpage, params=params, check_status_code=False)
-            json_response = msgspec.json.decode(r.content)
+            content = await self.request(ajaxpage, params=params, check_status_code=False)
+            json_response = msgspec.json.decode(content)
             return json_response
         except (ValueError, msgspec.DecodeError) as e:
             raise RequestException from e
@@ -253,42 +258,37 @@ class GazelleBase(ABC):
         self,
         url: str,
         params: dict[str, Any] | None = None,
-        method: str = "GET",
-        data: dict[str, Any] | None = None,
         check_status_code: bool = True,
-    ) -> httpx.Response:
-        """Send HTTP request and return response.
+    ) -> bytes:
+        """Send HTTP GET request and return response content.
 
         Args:
             url (str): Request URL.
             params (dict[str, Any] | None, optional): Query parameters.
-            method (str): HTTP method. Defaults to "GET".
-            data (dict[str, Any] | None, optional): Request body data.
             check_status_code (bool): If True, raise exception for non-200 status. Defaults to True.
 
         Returns:
-            httpx.Response: HTTP response object.
+            bytes: Response content.
 
         Raises:
-            ValueError: If unsupported HTTP method is used.
             RequestException: If request fails and check_status_code is True.
         """
         async with self.rate_limiter:
             full_url = urljoin(self.server, url)
 
-            if method == "GET":
-                response = await self.client.get(full_url, params=params)
-            elif method == "POST":
-                response = await self.client.post(full_url, data=data, params=params)
-            else:
-                raise ValueError("Unsupported HTTP method")
+            try:
+                async with self.client.get(full_url, params=params) as aio_response:
+                    content = await aio_response.read()
+                    status = aio_response.status
+            except Exception as e:
+                raise RequestException(f"Request error: {e}") from e
 
-            if response.status_code != 200 and check_status_code:
-                logger.debug(f"Status of request is {response.status_code}. Aborting...")
-                logger.debug(f"Response content: {response.content}")
-                raise RequestException(f"HTTP {response.status_code}: {response.content}")
+            if status != 200 and check_status_code:
+                logger.debug(f"Status of request is {status}. Aborting...")
+                logger.debug(f"Response content: {content}")
+                raise RequestException(f"HTTP {status}: {content}")
 
-            return response
+            return content
 
     @abstractmethod
     async def auth(self) -> None:
@@ -304,7 +304,7 @@ class GazelleJSONAPI(GazelleBase):
         self,
         server: str,
         api_key: str | None = None,
-        cookies: dict[str, str] | None = None,
+        cookies: SimpleCookie | None = None,
     ) -> None:
         super().__init__(server)
 
@@ -314,8 +314,7 @@ class GazelleJSONAPI(GazelleBase):
             self.auth_method = "api_key"
 
         if api_key is None and cookies:
-            for name, value in cookies.items():
-                self.client.cookies.set(name, value)
+            self.cookie_jar.update_cookies(cookies)
 
     async def auth(self) -> None:
         """Get auth key from server.
@@ -366,14 +365,13 @@ class GazelleParser(GazelleBase):
     def __init__(
         self,
         server: str,
-        cookies: dict[str, str] | None = None,
+        cookies: SimpleCookie | None = None,
         api_key: str | None = None,
     ) -> None:
         super().__init__(server)
 
         if cookies:
-            for name, value in cookies.items():
-                self.client.cookies.set(name, value)
+            self.cookie_jar.update_cookies(cookies)
             logger.debug("Using provided cookies")
         else:
             logger.warning("No cookies provided")
@@ -401,14 +399,14 @@ class GazelleParser(GazelleBase):
         """
         params = {"action": "advanced", "filelist": filename}
 
-        response = await self.request("torrents.php", params=params)
-        return self.parse_search_results(response.text)
+        content = await self.request("torrents.php", params=params)
+        return self.parse_search_results(content)
 
-    def parse_search_results(self, html_content: str) -> list[dict[str, Any]]:
+    def parse_search_results(self, html_content: bytes | str) -> list[dict[str, Any]]:
         """Parse search results page.
 
         Args:
-            html_content (str): HTML content of the search results page.
+            html_content (bytes | str): HTML content of the search results page.
 
         Returns:
             list[dict[str, Any]]: List of parsed torrent information.
@@ -533,14 +531,14 @@ TRACKER_SPECS = {
 
 def get_api_instance(
     server: str,
-    cookies: dict[str, str] | None = None,
+    cookies: SimpleCookie | None = None,
     api_key: str | None = None,
 ) -> GazelleJSONAPI | GazelleParser:
     """Get appropriate API instance based on server address.
 
     Args:
         server (str): Server address.
-        cookies (dict[str, str] | None): Optional cookies.
+        cookies (SimpleCookie | None): Optional cookies.
         api_key (str | None): Optional API key.
 
     Returns:
@@ -582,10 +580,8 @@ async def init_api(target_sites: list[TargetSiteConfig]) -> None:
         target_apis = []
 
         for i, site in enumerate(target_sites):
-            # Convert cookie string to dict if present
-            site_cookies = (
-                {key: morsel.value for key, morsel in SimpleCookie(site.cookie).items()} if site.cookie else None
-            )
+            # Parse cookie string to SimpleCookie if present
+            site_cookies = SimpleCookie(site.cookie) if site.cookie else None
 
             logger.debug(f"Connecting to target site {i + 1}/{len(target_sites)}: {site.server}")
             try:
@@ -673,3 +669,37 @@ def get_api_by_site_host(
             return api_instance
 
     return None
+
+
+async def cleanup_api() -> None:
+    """Close all API client sessions and cleanup resources.
+
+    This function should be called during application shutdown to properly
+    close all aiohttp ClientSession instances and release resources.
+    Errors during cleanup are logged but do not prevent other clients from closing.
+    """
+    global _target_apis_instance
+    async with _target_apis_lock:
+        if not _target_apis_instance:
+            logger.debug("No API instances to cleanup")
+            return
+
+        logger.debug(f"Cleaning up {len(_target_apis_instance)} API client(s)...")
+        cleanup_errors = []
+
+        for api_instance in _target_apis_instance:
+            try:
+                await api_instance.close()
+                logger.debug(f"Closed API client for {api_instance.server}")
+            except Exception as e:
+                error_msg = f"Error closing API client for {api_instance.server}: {e}"
+                logger.warning(error_msg)
+                cleanup_errors.append(error_msg)
+
+        # Clear the instance list
+        _target_apis_instance = []
+
+        if cleanup_errors:
+            logger.warning(f"API cleanup completed with {len(cleanup_errors)} error(s)")
+        else:
+            logger.debug("All API clients closed successfully")

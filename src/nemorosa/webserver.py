@@ -56,6 +56,9 @@ async def lifespan(_: FastAPI):
         job_manager.stop_scheduler()
         logger.info("Scheduler stopped")
 
+    # Close all API client sessions
+    await api.cleanup_api()
+
     # Cleanup database
     await db.cleanup_database()
 
