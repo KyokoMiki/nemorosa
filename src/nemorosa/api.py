@@ -109,27 +109,65 @@ class GazelleBase(ABC):
         Returns:
             dict[str, Any]: Response data from the API.
         """
-        return await self.ajax("torrent", id=torrent_id)
+        # GGN uses api.php instead of ajax.php
+        if "gazellegames.net" in self.server:
+            apipage = self.server + "/api.php"
+            params = {"request": "torrent", "id": str(torrent_id)}
+            content = await self.request(apipage, params=params, check_status_code=False)
+            return msgspec.json.decode(content)
+        else:
+            return await self.ajax("torrent", id=torrent_id)
 
-    def parse_file_list(self, file_list_str: str) -> dict[str, int]:
+    def parse_file_list(self, file_list_data: str | list | dict) -> dict[str, int]:
         """Parse the file list from a torrent object.
 
-        The file list is expected to be a string with entries separated by '|||'.
-        Each entry is in the format 'filename{{{filesize}}}'.
+        The file list can be:
+        - A string with entries separated by '|||', each entry in format 'filename{{{filesize}}}'
+        - A list of dicts with 'name' and 'size' keys (GGN format)
+        - A dict (already parsed, return as-is)
 
         Args:
-            file_list_str (str): Raw file list string from torrent object.
+            file_list_data (str | list | dict): Raw file list data from torrent object.
 
         Returns:
             dict[str, int]: Dictionary mapping filename to file size.
         """
-        if not file_list_str:
-            logger.warning("File list is empty or None")
+        if not file_list_data:
+            logger.debug("File list is empty or None")
             return {}
+        
+        # If it's already a dict, return it
+        if isinstance(file_list_data, dict):
+            return file_list_data
+        
+        # If it's a list (GGN format: could be list of dicts or list of strings)
+        if isinstance(file_list_data, list):
+            logger.debug("Parsing file list from list format")
+            file_list = {}
+            for item in file_list_data:
+                if isinstance(item, dict):
+                    # Format: [{"name": "...", "size": ...}, ...]
+                    name = item.get("name", "")
+                    size = item.get("size", 0)
+                    if name:
+                        file_list[name] = int(size)
+                elif isinstance(item, str):
+                    # Format: ["filename{{{size}}}", ...] - parse as string entries
+                    parts = item.split("{{{")
+                    if len(parts) == 2:
+                        filename = unescape(parts[0].strip())
+                        filesize = parts[1].removesuffix("}}}").strip()
+                        file_list[filename] = int(filesize)
+                    else:
+                        logger.warning(f"Malformed file list entry: {item}")
+                else:
+                    logger.warning(f"Unexpected file list item format: {item} (type: {type(item)})")
+            return file_list
 
-        logger.debug("Parsing file list")
+        # Otherwise, treat it as a string
+        logger.debug("Parsing file list from string format")
         # split the string into individual entries
-        entries = file_list_str.split("|||")
+        entries = file_list_data.split("|||")
         file_list = {}
         for entry in entries:
             # split filename and filesize
@@ -152,7 +190,14 @@ class GazelleBase(ABC):
         Returns:
             Torrent: The parsed torrent object.
         """
-        if self.auth_method == "api_key":
+        # GGN uses torrents.php?action=download instead of ajax.php
+        if "gazellegames.net" in self.server:
+            # GGN requires authkey and passkey for download
+            if not self.authkey or not self.passkey:
+                raise RequestException("GGN requires authkey and passkey for torrent download (should be set during auth)")
+            download_url = f"{self.server}/torrents.php?action=download&id={torrent_id}&authkey={self.authkey}&torrent_pass={self.passkey}"
+            response = await self.request(download_url)
+        elif self.auth_method == "api_key":
             ajaxpage = self.server + "/ajax.php"
             response = await self.request(ajaxpage, params={"action": "download", "id": torrent_id})
         else:
@@ -278,15 +323,18 @@ class GazelleBase(ABC):
 
             try:
                 async with self.client.get(full_url, params=params) as aio_response:
-                    content = await aio_response.read()
+                    # Read response in chunks to handle large responses
+                    content = b""
+                    async for chunk in aio_response.content.iter_chunked(8192):
+                        content += chunk
                     status = aio_response.status
             except Exception as e:
                 raise RequestException(f"Request error: {e}") from e
 
             if status != 200 and check_status_code:
                 logger.debug(f"Status of request is {status}. Aborting...")
-                logger.debug(f"Response content: {content}")
-                raise RequestException(f"HTTP {status}: {content}")
+                logger.debug(f"Response content (first 500 bytes): {content[:500]}")
+                raise RequestException(f"HTTP {status}: {content[:500]}")
 
             return content
 
@@ -370,7 +418,16 @@ class GazelleParser(GazelleBase):
     ) -> None:
         super().__init__(server)
 
-        if cookies:
+        # GGN uses API keys, not cookies
+        if "gazellegames.net" in server:
+            if api_key:
+                # GGN API documentation specifies X-API-Key header (not Authorization)
+                self.client.headers["X-API-Key"] = api_key
+                self.auth_method = "api_key"
+                logger.debug("Using API key for GGN authentication (X-API-Key header)")
+            else:
+                logger.warning("No API key provided for GGN")
+        elif cookies:
             self.cookie_jar.update_cookies(cookies)
             logger.debug("Using provided cookies")
         else:
@@ -382,11 +439,89 @@ class GazelleParser(GazelleBase):
         Raises:
             RequestException: If authentication fails.
         """
+        # For GGN, get authkey and passkey from quick_user endpoint
+        if "gazellegames.net" in self.server:
+            try:
+                # GGN has quick_user endpoint that returns authkey and passkey
+                apipage = self.server + "/api.php"
+                params = {"request": "quick_user"}
+                
+                content = await self.request(apipage, params=params, check_status_code=False)
+                
+                if len(content) == 0:
+                    logger.warning("GGN quick_user returned empty response - API key may be invalid")
+                    raise RequestException("GGN API returned empty response")
+                
+                json_response = msgspec.json.decode(content)
+                
+                if json_response.get("status") == "success":
+                    user_data = json_response.get("response", {})
+                    self.authkey = user_data.get("authkey")
+                    self.passkey = user_data.get("passkey")
+                else:
+                    error_msg = json_response.get("error", "unknown error")
+                    logger.error(f"GGN API authentication failed: {error_msg}")
+                    raise RequestException(f"GGN API authentication failed: {error_msg}")
+            except RequestException:
+                raise
+            except Exception as e:
+                logger.error(f"Failed to authenticate with GGN API: {e}")
+                raise RequestException(f"GGN API authentication error: {e}") from e
+        else:
+            # For other trackers, use blank search
+            try:
+                await self.search_torrent_by_filename("")
+            except RequestException as e:
+                logger.error(f"Failed to authenticate: {e}")
+                raise
+
+    async def search_torrent_by_hash(self, torrent_hash: str) -> dict[str, Any] | None:
+        """Search torrent by hash - override for trackers that may not support hash search.
+
+        For trackers using HTML parsing (GazelleParser), hash search may not be available.
+        GGN doesn't support hash search - both the torrent and search endpoints fail.
+        This method gracefully returns None if hash search is not supported,
+        allowing the system to fall back to filename-based search.
+
+        Args:
+            torrent_hash (str): Torrent hash to search for.
+
+        Returns:
+            dict[str, Any] | None: Search result with torrent information, or None if not found/not supported.
+        """
+        # GGN doesn't support hash search - the hash parameter on search endpoint doesn't actually filter by hash
+        # The torrent endpoint with hash parameter returns "bad hash parameter" error
+        # So we skip hash search for GGN and rely on filename search fallback
+        if "gazellegames.net" in self.server:
+            return None
+        
+        # For other trackers, try the standard ajax.php approach
         try:
-            await self.search_torrent_by_filename("")
+            response = await self.ajax("torrent", hash=torrent_hash)
+            if response.get("status") == "success":
+                logger.debug(f"Hash search successful for hash '{torrent_hash}'")
+                return response
+            else:
+                if response.get("error") in ("bad parameters", "bad hash parameter"):
+                    logger.debug(f"No torrent found matching hash '{torrent_hash}'")
+                    return None
+                else:
+                    # For HTML parser trackers, hash search might not be supported
+                    # Log at debug level and return None to allow fallback to filename search
+                    logger.debug(
+                        f"Hash search not available or failed for hash '{torrent_hash}': "
+                        f"{response.get('error', 'unknown error')}. Will fall back to filename search."
+                    )
+                    return None
         except RequestException as e:
-            logger.error(f"Failed to authenticate: {e}")
-            raise
+            # For HTML parser trackers, hash search endpoint might not exist
+            # Log at debug level and return None to allow fallback to filename search
+            logger.debug(f"Hash search endpoint not available: {e}. Will fall back to filename search.")
+            return None
+        except Exception as e:
+            # Any other error - log and return None to allow fallback
+            logger.debug(f"Hash search error for hash '{torrent_hash}': {e}. Will fall back to filename search.")
+            return None
 
     async def search_torrent_by_filename(self, filename: str) -> list[dict[str, Any]]:
         """Execute search and return torrent list.
@@ -397,10 +532,59 @@ class GazelleParser(GazelleBase):
         Returns:
             list[dict[str, Any]]: List containing torrent information.
         """
+        # GGN uses JSON API instead of HTML parsing
+        if "gazellegames.net" in self.server:
+            apipage = self.server + "/api.php"
+            params = {
+                "request": "search",
+                "search_type": "torrents",
+                "filelist": filename,
+                "filter_cat[4]": "1"
+            }
+            
+            try:
+                content = await self.request(apipage, params=params, check_status_code=False)
+                json_response = msgspec.json.decode(content)
+                
+                if json_response.get("status") != "success":
+                    error_msg = json_response.get("error", "unknown error")
+                    logger.warning(f"GGN API search failed for '{filename}': {error_msg}")
+                    return []
+                
+                response_data = json_response.get("response", {})
+                torrents = []
+                
+                if isinstance(response_data, list) or not response_data:
+                    return []
+                
+                for group_id, group_data in response_data.items():
+                    group_torrents = group_data.get("Torrents", {})
+                    for torrent_id, torrent_data in group_torrents.items():
+                        torrent_info = {
+                            "torrentId": torrent_id,
+                            "size": int(torrent_data.get("Size", 0)),
+                            "title": group_data.get("Name", f"Torrent {torrent_id}"),
+                            "formats": [],
+                            "info": torrent_data.get("ReleaseTitle", ""),
+                        }
+                        torrents.append(torrent_info)
+                
+                logger.info(f"Filename search for '{filename}': found {len(torrents)} torrent(s)")
+                return torrents
+            except (RequestException, ValueError, msgspec.DecodeError) as e:
+                logger.error(f"GGN API search error for '{filename}': {e}")
+                return []
+            except Exception as e:
+                logger.error(f"GGN API search unexpected error for '{filename}': {e}")
+                return []
+        
+        # For other trackers, use HTML parsing
         params = {"action": "advanced", "filelist": filename}
-
+        logger.debug(f"Filename search: requesting torrents.php with params: {params}")
         content = await self.request("torrents.php", params=params)
-        return self.parse_search_results(content)
+        torrents = self.parse_search_results(content)
+        logger.info(f"Filename search for '{filename}': found {len(torrents)} torrent(s)")
+        return torrents
 
     def parse_search_results(self, html_content: bytes | str) -> list[dict[str, Any]]:
         """Parse search results page.
@@ -411,12 +595,18 @@ class GazelleParser(GazelleBase):
         Returns:
             list[dict[str, Any]]: List of parsed torrent information.
         """
+        # Convert bytes to string if needed
+        if isinstance(html_content, bytes):
+            html_content = html_content.decode('utf-8', errors='ignore')
+        
         soup = BeautifulSoup(html_content, "lxml")
 
         # Find all torrents under albums
         torrent_rows = soup.select("tr.group_torrent")
+        logger.debug(f"Found {len(torrent_rows)} torrent row(s) in HTML")
+        
         torrents = [torrent for torrent_row in torrent_rows if (torrent := self.parse_torrent_row(torrent_row))]
-
+        
         return torrents
 
     def parse_torrent_row(self, row: Tag) -> dict[str, Any] | None:
@@ -450,18 +640,50 @@ class GazelleParser(GazelleBase):
 
             full_download_url = urljoin(self.server, href)
 
-            # Get torrent size
-            size_cell = row.select("td")[3]  # Column 4 is size
-            size_text = size_cell.get_text(strip=True).replace(",", "")
-            size = parse_size(size_text, binary=True)
+            # Get all table cells
+            cells = row.select("td")
+            
+            # Get torrent size - try column 3 (index 3) first, then search if needed
+            size = None
+            if len(cells) > 3:
+                try:
+                    size_text = cells[3].get_text(strip=True).replace(",", "")
+                    size = parse_size(size_text, binary=True)
+                except Exception:
+                    pass
+            
+            # If column 3 didn't work, search for a cell that parses as size
+            if size is None:
+                for cell in cells:
+                    size_text = cell.get_text(strip=True).replace(",", "")
+                    # Skip cells that look like time/date strings
+                    if any(time_word in size_text.lower() for time_word in ["ago", "hour", "day", "week", "month", "year", "minute"]):
+                        continue
+                    try:
+                        size = parse_size(size_text, binary=True)
+                        break
+                    except Exception:
+                        continue
+            
+            # If we still couldn't find a valid size, log a warning and skip this torrent
+            if size is None:
+                logger.warning(f"Could not parse size for torrent {torrent_id}, skipping")
+                return None
 
             # Get title
+            title = None
             title_node = row.select_one("td:nth-child(2) > div > a")
-            title = title_node.get_text(strip=True) if title_node else f"Torrent {torrent_id}"
+            if title_node:
+                title = title_node.get_text(strip=True)
+            
+            if not title:
+                title = f"Torrent {torrent_id}"
 
-            # Get torrent type
+            # Get torrent formats
+            formats = []
             format_nodes = row.select("td:nth-child(2) > div > span")
-            formats = [span.get_text(strip=True) for span in format_nodes] if format_nodes else []
+            if format_nodes:
+                formats = [span.get_text(strip=True) for span in format_nodes]
 
             # Get torrent info
             info_nodes = row.select("td:nth-child(2) > div > span.small")
@@ -525,6 +747,13 @@ TRACKER_SPECS = {
         source_flag="LZTR",
         tracker_url="https://tracker.lztr.me:34443",
         tracker_query="tracker.lztr.me",
+    ),
+    "https://gazellegames.net": TrackerSpec(
+        api_type=GazelleParser,
+        max_requests_per_10s=2,
+        source_flag="GGn",
+        tracker_url="https://tracker.gazellegames.net",
+        tracker_query="tracker.gazellegames.net",
     ),
 }
 

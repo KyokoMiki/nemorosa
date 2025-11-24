@@ -116,6 +116,12 @@ class NemorosaCore:
         # Get target source flag from API
         target_source_flag = api.source_flag
 
+        # For GGN, try hash search with source flag but skip variations (GGn may or may not be present)
+        if "gazellegames.net" in api.server:
+            # GGN uses source flag "GGn" but hash search doesn't work, so skip it
+            return None, None
+
+        # For other trackers, try source flag variations
         source_flags = [target_source_flag, ""]
 
         # Define possible source flags for the target tracker
@@ -132,22 +138,34 @@ class NemorosaCore:
 
                 # Calculate hash
                 torrent_hash = torrent_copy.infohash
+                logger.debug(f"Trying hash search with source flag '{flag}', hash: {torrent_hash}")
 
                 # Search torrent by hash
                 search_result = await api.search_torrent_by_hash(torrent_hash)
                 if search_result:
-                    logger.success(f"Found torrent by hash! Hash: {torrent_hash}")
-
+                    logger.debug(f"Hash search returned result: status={search_result.get('status')}")
+                    logger.debug(f"Response structure: {list(search_result.get('response', {}).keys())}")
+                    
                     # Get torrent ID from search result
-                    torrent_id = search_result["response"]["torrent"]["id"]
-                    if torrent_id:
-                        tid = int(torrent_id)
-                        logger.success(f"Found match! Torrent ID: {tid}")
-                        torrent_copy.comment = api.get_torrent_url(tid)
-                        torrent_copy.trackers = [api.announce]
-                        return tid, torrent_copy
+                    torrent_data = search_result.get("response", {}).get("torrent")
+                    if torrent_data:
+                        torrent_id = torrent_data.get("id")
+                        logger.debug(f"Extracted torrent ID: {torrent_id}")
+                        if torrent_id:
+                            tid = int(torrent_id)
+                            logger.success(f"Found torrent by hash! Hash: {torrent_hash}, Torrent ID: {tid}")
+                            torrent_copy.comment = api.get_torrent_url(tid)
+                            torrent_copy.trackers = [api.announce]
+                            return tid, torrent_copy
+                        else:
+                            logger.warning(f"Hash search found result but torrent ID is missing or None")
+                    else:
+                        logger.warning(f"Hash search found result but 'response.torrent' is missing. Response keys: {list(search_result.get('response', {}).keys())}")
+                else:
+                    logger.debug(f"Hash search returned None for hash {torrent_hash} with source flag '{flag}'")
             except Exception as e:
-                logger.debug(f"Hash search failed for source '{flag}': {e}")
+                logger.warning(f"Hash search failed for source '{flag}': {e}")
+                logger.exception(f"Hash search exception details for source '{flag}':")
 
         return None, None
 
@@ -338,8 +356,12 @@ class NemorosaCore:
         for t_index, t in enumerate(torrents, 1):
             logger.debug(f"Checking torrent #{t_index}/{len(torrents)}: ID {t['torrentId']}")
 
-            resp = await api.torrent(t["torrentId"])
-            resp_files = resp.get("fileList", {})
+            try:
+                resp = await api.torrent(t["torrentId"])
+                resp_files = resp.get("fileList", {})
+            except Exception as e:
+                logger.warning(f"Failed to get torrent data for ID {t['torrentId']}: {e}. Continuing with next torrent.")
+                continue
 
             check_music_file = fname if is_music_file(fname) else scan_querys[-1]
 
