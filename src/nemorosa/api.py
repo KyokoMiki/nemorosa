@@ -568,7 +568,8 @@ class GazelleParser(GazelleBase):
                 for cell in cells:
                     size_text = cell.get_text(strip=True).replace(",", "")
                     # Skip cells that look like time/date strings
-                    if any(time_word in size_text.lower() for time_word in ["ago", "hour", "day", "week", "month", "year", "minute"]):
+                    time_words = ["ago", "hour", "day", "week", "month", "year", "minute"]
+                    if any(time_word in size_text.lower() for time_word in time_words):
                         continue
                     try:
                         size = parse_size(size_text, binary=True)
@@ -740,12 +741,6 @@ class GazelleGamesNet(GazelleParser):
                     )
                     return None
         except (RequestException, ValueError, msgspec.DecodeError) as e:
-            logger.debug(
-                f"Hash search error for hash '{torrent_hash}': {e}. "
-                f"Will fall back to filename search."
-            )
-            return None
-        except Exception as e:
             logger.debug(
                 f"Hash search error for hash '{torrent_hash}': {e}. "
                 f"Will fall back to filename search."
@@ -961,7 +956,8 @@ def get_api_by_tracker(
         trackers (str | Collection[str]): A single tracker URL string or a collection of tracker URLs.
 
     Returns:
-        GazelleJSONAPI | GazelleParser | GazelleGamesNet | None: The first matching API instance, or None if no match is found.
+        GazelleJSONAPI | GazelleParser | GazelleGamesNet | None: The first matching API
+        instance, or None if no match is found.
 
     Raises:
         RuntimeError: If target APIs have not been initialized.
