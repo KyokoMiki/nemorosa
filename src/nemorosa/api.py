@@ -627,7 +627,9 @@ class GazelleGamesNet(GazelleParser):
         cookies: SimpleCookie | None = None,
         api_key: str | None = None,
     ) -> None:
-        super().__init__(server, cookies, api_key)
+        # Don't call super().__init__() to avoid the "No cookies provided" warning
+        # GGN uses API keys, not cookies
+        GazelleBase.__init__(self, server)
 
         if api_key:
             # GGN API documentation specifies X-API-Key header (not Authorization)

@@ -111,13 +111,17 @@ class NemorosaCore:
         Returns:
             tuple[int | None, Torrent | None]: Torrent ID and matched torrent if found, (None, None) otherwise.
         """
+        # For hash search, try different source flag variations
+        # The target tracker's torrent has its own source flag, so we need to try different combinations
         torrent_copy = Torrent.copy(torrent_object)
-
-        # Get target source flag from API
         target_source_flag = api.source_flag
-
-        # For all trackers, try source flag variations
-        source_flags = [target_source_flag, ""]
+        original_hash = torrent_object.infohash
+        
+        # Try target source flag first (most likely to match the target tracker's torrent)
+        source_flags = [target_source_flag]
+        
+        # Also try original hash (in case source flags match)
+        source_flags.append("")  # Empty string means use original source flag
 
         # Define possible source flags for the target tracker
         # This should match the logic in fertilizer
@@ -126,14 +130,21 @@ class NemorosaCore:
         elif target_source_flag == "OPS":
             source_flags.append("APL")
 
-        # Create a copy of the torrent and try different source flags
+        # Try different source flags
         for flag in source_flags:
             try:
-                torrent_copy.source = flag
-
-                # Calculate hash
-                torrent_hash = torrent_copy.infohash
-                logger.debug(f"Trying hash search with source flag '{flag}', hash: {torrent_hash}")
+                # For empty flag, use original hash (don't modify source)
+                if flag == "":
+                    torrent_hash = original_hash
+                    logger.debug(
+                        f"Trying hash search with original hash (source flag unchanged): {torrent_hash}"
+                    )
+                else:
+                    torrent_copy.source = flag
+                    torrent_hash = torrent_copy.infohash
+                    logger.debug(
+                        f"Trying hash search with source flag '{flag}', hash: {torrent_hash}"
+                    )
 
                 # Search torrent by hash
                 search_result = await api.search_torrent_by_hash(torrent_hash)
@@ -149,6 +160,12 @@ class NemorosaCore:
                         if torrent_id:
                             tid = int(torrent_id)
                             logger.success(f"Found torrent by hash! Hash: {torrent_hash}, Torrent ID: {tid}")
+                            # Ensure we have a copy with the correct source flag for injection
+                            if flag == "":
+                                # Used original hash, but set target source flag for injection
+                                torrent_copy = Torrent.copy(torrent_object)
+                                torrent_copy.source = api.source_flag
+                            # Otherwise, torrent_copy already has the correct source flag
                             torrent_copy.comment = api.get_torrent_url(tid)
                             torrent_copy.trackers = [api.announce]
                             return tid, torrent_copy
