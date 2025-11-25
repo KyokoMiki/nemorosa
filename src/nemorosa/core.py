@@ -117,7 +117,7 @@ class NemorosaCore:
         target_source_flag = api.source_flag
 
         # For GGN, try hash search with source flag but skip variations (GGn may or may not be present)
-        if "gazellegames.net" in api.server:
+        if hasattr(api, 'is_ggn') and api.is_ggn:
             # GGN uses source flag "GGn" but hash search doesn't work, so skip it
             return None, None
 
@@ -158,14 +158,13 @@ class NemorosaCore:
                             torrent_copy.trackers = [api.announce]
                             return tid, torrent_copy
                         else:
-                            logger.warning(f"Hash search found result but torrent ID is missing or None")
+                            logger.warning("Hash search found result but torrent ID is missing or None")
                     else:
                         logger.warning(f"Hash search found result but 'response.torrent' is missing. Response keys: {list(search_result.get('response', {}).keys())}")
                 else:
                     logger.debug(f"Hash search returned None for hash {torrent_hash} with source flag '{flag}'")
             except Exception as e:
-                logger.warning(f"Hash search failed for source '{flag}': {e}")
-                logger.exception(f"Hash search exception details for source '{flag}':")
+                logger.exception(f"Hash search failed for source '{flag}': {e}")
 
         return None, None
 
