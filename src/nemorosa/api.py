@@ -485,7 +485,7 @@ class GazelleParser(GazelleBase):
         """Search torrent by hash - override for trackers that may not support hash search.
 
         For trackers using HTML parsing (GazelleParser), hash search may not be available.
-        GGN doesn't support hash search - both the torrent and search endpoints fail.
+        GGN uses api.php?request=torrent&hash=<hash> for hash search.
         This method gracefully returns None if hash search is not supported,
         allowing the system to fall back to filename-based search.
 
@@ -495,11 +495,30 @@ class GazelleParser(GazelleBase):
         Returns:
             dict[str, Any] | None: Search result with torrent information, or None if not found/not supported.
         """
-        # GGN doesn't support hash search - the hash parameter on search endpoint doesn't actually filter by hash
-        # The torrent endpoint with hash parameter returns "bad hash parameter" error
-        # So we skip hash search for GGN and rely on filename search fallback
+        # GGN uses api.php?request=torrent&hash=<hash> for hash search
         if self.is_ggn:
-            return None
+            try:
+                response_data = await self.request("api.php", params={"request": "torrent", "hash": torrent_hash})
+                response = msgspec.json.decode(response_data)
+                if response.get("status") == "success":
+                    logger.debug(f"Hash search successful for hash '{torrent_hash}'")
+                    return response
+                else:
+                    if response.get("error") in ("bad parameters", "bad hash parameter"):
+                        logger.debug(f"No torrent found matching hash '{torrent_hash}'")
+                        return None
+                    else:
+                        logger.debug(
+                            f"Hash search failed for hash '{torrent_hash}': "
+                            f"{response.get('error', 'unknown error')}. Will fall back to filename search."
+                        )
+                        return None
+            except (RequestException, ValueError, msgspec.DecodeError) as e:
+                logger.debug(f"Hash search error for hash '{torrent_hash}': {e}. Will fall back to filename search.")
+                return None
+            except Exception as e:
+                logger.debug(f"Hash search error for hash '{torrent_hash}': {e}. Will fall back to filename search.")
+                return None
         
         # For other trackers, try the standard ajax.php approach
         try:

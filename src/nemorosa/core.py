@@ -116,12 +116,7 @@ class NemorosaCore:
         # Get target source flag from API
         target_source_flag = api.source_flag
 
-        # For GGN, try hash search with source flag but skip variations (GGn may or may not be present)
-        if hasattr(api, 'is_ggn') and api.is_ggn:
-            # GGN uses source flag "GGn" but hash search doesn't work, so skip it
-            return None, None
-
-        # For other trackers, try source flag variations
+        # For all trackers, try source flag variations
         source_flags = [target_source_flag, ""]
 
         # Define possible source flags for the target tracker
