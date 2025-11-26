@@ -26,7 +26,7 @@ from .filecompare import (
 from .filelinking import create_file_links_for_torrent
 
 if TYPE_CHECKING:
-    from .api import GazelleJSONAPI, GazelleParser
+    from .api import GazelleGamesNet, GazelleJSONAPI, GazelleParser
 
 # Constants
 MAX_SEARCH_RESULTS = 20
@@ -100,7 +100,7 @@ class NemorosaCore:
         self,
         *,
         torrent_object: Torrent,
-        api: "GazelleJSONAPI | GazelleParser",
+        api: "GazelleJSONAPI | GazelleParser | GazelleGamesNet",
     ) -> tuple[int | None, Torrent | None]:
         """Search for torrent using hash-based search.
 
@@ -156,7 +156,7 @@ class NemorosaCore:
         *,
         fdict: dict[str, int],
         tsize: int,
-        api: "GazelleJSONAPI | GazelleParser",
+        api: "GazelleJSONAPI | GazelleParser | GazelleGamesNet",
     ) -> tuple[int | None, Torrent | None]:
         """Search for torrent using filename-based search.
 
@@ -321,7 +321,7 @@ class NemorosaCore:
         fname: str,
         fdict: dict,
         scan_querys: list[str],
-        api: "GazelleJSONAPI | GazelleParser",
+        api: "GazelleJSONAPI | GazelleParser | GazelleGamesNet",
     ) -> int | None:
         """Match torrents by file content.
 
@@ -338,8 +338,13 @@ class NemorosaCore:
         for t_index, t in enumerate(torrents, 1):
             logger.debug(f"Checking torrent #{t_index}/{len(torrents)}: ID {t['torrentId']}")
 
-            resp = await api.torrent(t["torrentId"])
-            resp_files = resp.get("fileList", {})
+            try:
+                resp = await api.torrent(t["torrentId"])
+                resp_files = resp.get("fileList", {})
+            except Exception as e:
+                torrent_id = t["torrentId"]
+                logger.exception(f"Failed to get torrent data for ID {torrent_id}: {e}. Continuing with next torrent.")
+                continue
 
             check_music_file = fname if is_music_file(fname) else scan_querys[-1]
 
@@ -405,7 +410,7 @@ class NemorosaCore:
         self,
         *,
         torrent_details: ClientTorrentInfo,
-        api: "GazelleJSONAPI | GazelleParser",
+        api: "GazelleJSONAPI | GazelleParser | GazelleGamesNet",
         torrent_object: Torrent | None = None,
     ) -> tuple[bool, str | None, str | None]:
         """Process torrent search and injection.
