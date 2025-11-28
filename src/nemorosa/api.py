@@ -463,16 +463,24 @@ class GazelleParser(GazelleBase):
             # Get all table cells
             cells = row.select("td")
 
-            # Get torrent size - try column 3 (index 3) first, then search if needed
+            # Get title from the torrent details link in first td
+            title = ""
+            title_link = row.select_one('a[href^="torrents.php?id="][href*="torrentid="]')
+            if title_link:
+                title = title_link.get_text(strip=True)
+            title = f"Torrent {torrent_id} {title}"
+
+            # Parse size from the appropriate cell
+            # Structure: td[0]=colspan5 (download/title), td[1]=files, td[2]=empty, td[3]=time, td[4]=size
             size = None
-            if len(cells) > 3:
+            if len(cells) > 4:
                 try:
-                    size_text = cells[3].get_text(strip=True).replace(",", "")
+                    size_text = cells[4].get_text(strip=True).replace(",", "")
                     size = parse_size(size_text, binary=True)
                 except (InvalidSize, ValueError):
                     pass
 
-            # If column 3 didn't work, search for a cell that parses as size
+            # If column 4 didn't work, search for a cell that parses as size
             if size is None:
                 for cell in cells:
                     size_text = cell.get_text(strip=True).replace(",", "")
@@ -486,37 +494,16 @@ class GazelleParser(GazelleBase):
                     except (InvalidSize, ValueError):
                         continue
 
-            # If we still couldn't find a valid size, log a warning and skip this torrent
+            # If we still couldn't find a valid size, set it to 0
             if size is None:
-                logger.warning(f"Could not parse size for torrent {torrent_id}, skipping")
-                return None
-
-            # Get title
-            title = None
-            title_node = row.select_one("td:nth-child(2) > div > a")
-            if title_node:
-                title = title_node.get_text(strip=True)
-
-            if not title:
-                title = f"Torrent {torrent_id}"
-
-            # Get torrent formats
-            formats = []
-            format_nodes = row.select("td:nth-child(2) > div > span")
-            if format_nodes:
-                formats = [span.get_text(strip=True) for span in format_nodes]
-
-            # Get torrent info
-            info_nodes = row.select("td:nth-child(2) > div > span.small")
-            info_text = info_nodes[0].get_text(strip=True) if info_nodes else ""
+                logger.warning(f"Could not parse size for torrent {torrent_id}, setting to 0")
+                size = 0
 
             return {
                 "torrentId": torrent_id,
                 "download_link": full_download_url,
                 "size": size,
                 "title": title,
-                "formats": formats,
-                "info": info_text,
             }
         except Exception as e:
             logger.error(f"Error parsing torrent row: {e}")
