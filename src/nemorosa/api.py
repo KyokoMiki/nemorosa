@@ -30,6 +30,20 @@ class RequestException(Exception):
     pass
 
 
+class TorrentSearchResult(msgspec.Struct):
+    """Standardized torrent search result structure.
+
+    Attributes:
+        torrent_id: Unique identifier for the torrent.
+        size: Size of the torrent in bytes.
+        title: Display title of the torrent.
+    """
+
+    torrent_id: int
+    size: int
+    title: str
+
+
 class GazelleBase(ABC):
     """Base class for Gazelle API, containing common attributes and methods."""
 
@@ -191,14 +205,14 @@ class GazelleBase(ABC):
         )
 
     @abstractmethod
-    async def search_torrent_by_filename(self, filename: str) -> list[dict[str, Any]]:
+    async def search_torrent_by_filename(self, filename: str) -> list[TorrentSearchResult]:
         """Search torrents by filename - subclasses must implement specific logic.
 
         Args:
             filename (str): Filename to search for.
 
         Returns:
-            list[dict[str, Any]]: List of matching torrent objects.
+            list[TorrentSearchResult]: List containing torrent information.
         """
 
     async def search_torrent_by_hash(self, torrent_hash: str) -> dict[str, Any] | None:
@@ -341,7 +355,7 @@ class GazelleJSONAPI(GazelleBase):
         params = {"auth": self.authkey}
         await self.request(logoutpage, params=params)
 
-    async def search_torrent_by_filename(self, filename: str) -> list[dict[str, Any]]:
+    async def search_torrent_by_filename(self, filename: str) -> list[TorrentSearchResult]:
         params = {"filelist": filename}
         try:
             response = await self.api("browse", **params)
@@ -353,14 +367,28 @@ class GazelleJSONAPI(GazelleBase):
                 logger.debug(f"API search successful for file '{filename}'")
 
             # Process search results
-            torrents = [
-                torrent
-                for group in response["response"]["results"]
-                if "torrents" in group
-                for torrent in group["torrents"]
-            ]
+            results = []
+            for group in response["response"]["results"]:
+                if "torrents" not in group:
+                    continue
+                group_name = group.get("groupName", "")
+                for torrent in group["torrents"]:
+                    torrent_id = torrent.get("torrentId", "")
+                    if not torrent_id:
+                        continue
 
-            return torrents
+                    size = int(torrent.get("size", 0))
+                    title = f"{group_name} - {torrent.get('remasterTitle', '')}".strip(" -")
+
+                    results.append(
+                        TorrentSearchResult(
+                            torrent_id=int(torrent_id),
+                            size=size,
+                            title=title or f"Torrent {torrent_id}",
+                        )
+                    )
+
+            return results
         except Exception as e:
             logger.error(f"Error searching for torrent by filename '{filename}': {e}")
             raise
@@ -393,14 +421,14 @@ class GazelleParser(GazelleBase):
             logger.error(f"Failed to authenticate: {e}")
             raise
 
-    async def search_torrent_by_filename(self, filename: str) -> list[dict[str, Any]]:
+    async def search_torrent_by_filename(self, filename: str) -> list[TorrentSearchResult]:
         """Execute search and return torrent list.
 
         Args:
             filename (str): Filename to search for.
 
         Returns:
-            list[dict[str, Any]]: List containing torrent information.
+            list[TorrentSearchResult]: List containing torrent information.
         """
         # For HTML parser trackers, use HTML parsing
         params = {"action": "advanced", "filelist": filename}
@@ -410,14 +438,14 @@ class GazelleParser(GazelleBase):
         logger.debug(f"Filename search for '{filename}': found {len(torrents)} torrent(s)")
         return torrents
 
-    def parse_search_results(self, html_content: bytes | str) -> list[dict[str, Any]]:
+    def parse_search_results(self, html_content: bytes | str) -> list[TorrentSearchResult]:
         """Parse search results page.
 
         Args:
             html_content (bytes | str): HTML content of the search results page.
 
         Returns:
-            list[dict[str, Any]]: List of parsed torrent information.
+            list[TorrentSearchResult]: List of parsed torrent information.
         """
         soup = BeautifulSoup(html_content, "lxml")
 
@@ -429,14 +457,14 @@ class GazelleParser(GazelleBase):
 
         return torrents
 
-    def parse_torrent_row(self, row: Tag) -> dict[str, Any] | None:
+    def parse_torrent_row(self, row: Tag) -> TorrentSearchResult | None:
         """Parse single torrent row.
 
         Args:
             row (Tag): BeautifulSoup Tag object representing a torrent row.
 
         Returns:
-            dict[str, Any] | None: Parsed torrent information, or None if parsing fails.
+            TorrentSearchResult | None: Parsed torrent information, or None if parsing fails.
         """
         try:
             # Get download link
@@ -458,17 +486,9 @@ class GazelleParser(GazelleBase):
             self.authkey = query_params.get("authkey", [None])[0]
             self.passkey = query_params.get("torrent_pass", [None])[0]
 
-            full_download_url = urljoin(self.server, href)
-
             # Get all table cells
             cells = row.select("td")
-
-            # Get title from the torrent details link in first td
-            title = ""
-            title_link = row.select_one('a[href^="torrents.php?id="][href*="torrentid="]')
-            if title_link:
-                title = title_link.get_text(strip=True)
-            title = f"Torrent {torrent_id} {title}"
+            title = f"Torrent {torrent_id}"
 
             # Parse size from the appropriate cell
             # Structure: td[0]=colspan5 (download/title), td[1]=files, td[2]=empty, td[3]=time, td[4]=size
@@ -482,10 +502,10 @@ class GazelleParser(GazelleBase):
 
             # If column 4 didn't work, search for a cell that parses as size
             if size is None:
+                time_words = ("ago", "hour", "day", "week", "month", "year", "minute")
                 for cell in cells:
                     size_text = cell.get_text(strip=True).replace(",", "")
                     # Skip cells that look like time/date strings
-                    time_words = ["ago", "hour", "day", "week", "month", "year", "minute"]
                     if any(time_word in size_text.lower() for time_word in time_words):
                         continue
                     try:
@@ -499,12 +519,11 @@ class GazelleParser(GazelleBase):
                 logger.warning(f"Could not parse size for torrent {torrent_id}, setting to 0")
                 size = 0
 
-            return {
-                "torrentId": torrent_id,
-                "download_link": full_download_url,
-                "size": size,
-                "title": title,
-            }
+            return TorrentSearchResult(
+                torrent_id=int(torrent_id),
+                size=size,
+                title=title,
+            )
         except Exception as e:
             logger.error(f"Error parsing torrent row: {e}")
             return None
@@ -612,14 +631,14 @@ class GazelleGamesNet(GazelleBase):
         """
         return await super().search_torrent_by_hash(torrent_hash.upper())
 
-    async def search_torrent_by_filename(self, filename: str) -> list[dict[str, Any]]:
+    async def search_torrent_by_filename(self, filename: str) -> list[TorrentSearchResult]:
         """Execute search using GGN's JSON API and return torrent list.
 
         Args:
             filename (str): Filename to search for.
 
         Returns:
-            list[dict[str, Any]]: List containing torrent information.
+            list[TorrentSearchResult]: List containing torrent information.
         """
         try:
             json_response = await self.api(
@@ -632,25 +651,29 @@ class GazelleGamesNet(GazelleBase):
                 return []
 
             response_data = json_response.get("response", {})
-            torrents = []
+            results = []
 
             if isinstance(response_data, list) or not response_data:
                 return []
 
             for group_data in response_data.values():
                 group_torrents = group_data.get("Torrents", {})
+                group_name = group_data.get("Name", "")
                 for torrent_id, torrent_data in group_torrents.items():
-                    torrent_info = {
-                        "torrentId": torrent_id,
-                        "size": int(torrent_data.get("Size", 0)),
-                        "title": group_data.get("Name", f"Torrent {torrent_id}"),
-                        "formats": [],
-                        "info": torrent_data.get("ReleaseTitle", ""),
-                    }
-                    torrents.append(torrent_info)
+                    size = int(torrent_data.get("Size", 0))
+                    release_title = torrent_data.get("ReleaseTitle", "")
+                    title = f"{group_name} - {release_title}".strip(" -") if release_title else group_name
 
-            logger.debug(f"Filename search for '{filename}': found {len(torrents)} torrent(s)")
-            return torrents
+                    results.append(
+                        TorrentSearchResult(
+                            torrent_id=int(torrent_id),
+                            size=size,
+                            title=title or f"Torrent {torrent_id}",
+                        )
+                    )
+
+            logger.debug(f"Filename search for '{filename}': found {len(results)} torrent(s)")
+            return results
         except (RequestException, ValueError, msgspec.DecodeError) as e:
             logger.error(f"GGN API search error for '{filename}': {e}")
             return []
