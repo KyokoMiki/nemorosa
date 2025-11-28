@@ -26,7 +26,7 @@ from .filecompare import (
 from .filelinking import create_file_links_for_torrent
 
 if TYPE_CHECKING:
-    from .api import GazelleGamesNet, GazelleJSONAPI, GazelleParser
+    from .api import GazelleGamesNet, GazelleJSONAPI, GazelleParser, TorrentSearchResult
 
 # Constants
 MAX_SEARCH_RESULTS = 20
@@ -205,8 +205,8 @@ class NemorosaCore:
             # Match by total size
             size_match_found = False
             for t in torrents:
-                if tsize == t["size"]:
-                    tid = t["torrentId"]
+                if tsize == t.size:
+                    tid = t.torrent_id
                     size_match_found = True
                     logger.success(f"Size match found! Torrent ID: {tid} (Size: {tsize})")
                     break
@@ -317,7 +317,7 @@ class NemorosaCore:
     async def match_by_file_content(
         self,
         *,
-        torrents: list[dict],
+        torrents: list["TorrentSearchResult"],
         fname: str,
         fdict: dict,
         scan_querys: list[str],
@@ -326,7 +326,7 @@ class NemorosaCore:
         """Match torrents by file content.
 
         Args:
-            torrents (list[dict]): List of torrents to check.
+            torrents (list[TorrentSearchResult]): List of torrents to check.
             fname (str): Original filename.
             fdict (dict): File dictionary mapping filename to size.
             scan_querys (list[str]): List of scan queries.
@@ -336,13 +336,13 @@ class NemorosaCore:
             int | None: Torrent ID if found, None otherwise.
         """
         for t_index, t in enumerate(torrents, 1):
-            logger.debug(f"Checking torrent #{t_index}/{len(torrents)}: ID {t['torrentId']}")
+            logger.debug(f"Checking torrent #{t_index}/{len(torrents)}: ID {t.torrent_id}")
 
             try:
-                resp = await api.torrent(t["torrentId"])
+                resp = await api.torrent(t.torrent_id)
                 resp_files = resp.get("fileList", {})
             except Exception as e:
-                torrent_id = t["torrentId"]
+                torrent_id = t.torrent_id
                 logger.exception(f"Failed to get torrent data for ID {torrent_id}: {e}. Continuing with next torrent.")
                 continue
 
@@ -353,8 +353,8 @@ class NemorosaCore:
             if fdict[check_music_file] in resp_files.values():
                 # Check file conflicts
                 if config.cfg.linking.enable_linking or not check_conflicts(fdict, resp_files):
-                    logger.success(f"File match found! Torrent ID: {t['torrentId']} (File: {check_music_file})")
-                    return t["torrentId"]
+                    logger.success(f"File match found! Torrent ID: {t.torrent_id} (File: {check_music_file})")
+                    return t.torrent_id
                 else:
                     logger.debug("Conflict detected. Skipping this torrent.")
                     return None
