@@ -7,7 +7,7 @@ on:
   pull_request:
 
 jobs:
-  lint:
+  ruff:
     runs-on: ubuntu-latest
 
     steps:
