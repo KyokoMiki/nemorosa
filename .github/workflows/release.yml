@@ -18,7 +18,7 @@ jobs:
       version: ${{ env.VERSION }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
           token: ${{ secrets.BUMP_VERSION_TOKEN_ACTION }}
@@ -68,7 +68,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           ref: main # Checkout the latest main branch (after update-version push)
           fetch-depth: 0 # Ensures we get all history for tag retrieval and pushing
@@ -122,7 +122,7 @@ jobs:
     if: github.event_name == 'release'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
         with:
           ref: main # Checkout the latest main branch (after update-version push)
           fetch-depth: 0
