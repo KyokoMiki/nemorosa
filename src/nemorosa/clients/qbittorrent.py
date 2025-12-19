@@ -88,7 +88,8 @@ class QBittorrentClient(TorrentClient):
             password=client_config.password,
         )
         # Authenticate with qBittorrent
-        self.client.auth_log_in()
+        if client_config.username and client_config.password:
+            self.client.auth_log_in()
 
         # Initialize sync state for incremental updates
         self._last_rid = 0
