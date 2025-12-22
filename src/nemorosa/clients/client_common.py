@@ -587,6 +587,7 @@ class TorrentClient(ABC):
                 trigger=DateTrigger(),
                 args=[torrents],
                 id="rebuild_cache",
+                misfire_grace_time=None,
                 replace_existing=True,
                 max_instances=1,
             )
@@ -969,6 +970,7 @@ class TorrentClient(ABC):
                 trigger=IntervalTrigger(seconds=1),
                 id=self._monitor_job_id,
                 name="Torrent Monitor",
+                misfire_grace_time=None,
                 max_instances=1,  # Prevent overlapping executions
                 coalesce=True,
                 replace_existing=True,
@@ -1078,6 +1080,7 @@ class TorrentClient(ABC):
             trigger=DateTrigger(run_date=datetime.now(UTC) + timedelta(seconds=5)),
             args=[torrent_hash],
             id=f"delayed_add_{torrent_hash}",
+            misfire_grace_time=None,
             replace_existing=True,
         )
         logger.debug(f"Scheduled tracking verification for torrent {torrent_hash}")
