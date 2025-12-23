@@ -395,6 +395,21 @@ def run_webserver():
 
     # Import uvicorn here to avoid import issues
     import uvicorn
+    from uvicorn.config import LOGGING_CONFIG
+
+    # Override uvicorn log format to match nemorosa log format
+    LOGGING_CONFIG["formatters"]["default"]["fmt"] = "%(asctime)s | %(levelprefix)s %(message)s"
+    LOGGING_CONFIG["formatters"]["default"]["datefmt"] = "%Y-%m-%d %H:%M:%S"
+    LOGGING_CONFIG["formatters"]["access"]["fmt"] = (
+        '%(asctime)s | %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
+    )
+    LOGGING_CONFIG["formatters"]["access"]["datefmt"] = "%Y-%m-%d %H:%M:%S"
 
     # Run server
-    uvicorn.run("nemorosa.webserver:app", host=host, port=port, log_level=log_level, reload=False)  # type: ignore[arg-type]
+    uvicorn.run(
+        app="nemorosa.webserver:app",
+        host=host,  # type: ignore[arg-type]
+        port=port,
+        log_level=log_level,
+        reload=False,
+    )
