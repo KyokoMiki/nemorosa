@@ -5,7 +5,63 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.4.1...HEAD)
+## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.4.2...HEAD)
+
+## [0.4.2](https://github.com/KyokoMiki/nemorosa/compare/0.4.1...0.4.2) - 2025-12-23
+
+### Added
+
+- **GazelleGames.net (GGN) Tracker Support**: Added full support for GazelleGames.net tracker using JSON API, including X-API-Key authentication, filename search, and hash search
+- **Python 3.14 Support**: Added support for Python 3.14
+- **Log Timestamps**: Added timestamps to log output with custom format (YYYY-MM-DD HH:MM:SS) for better readability
+
+### Changed
+
+- **HTTP Client Migration**: Replaced httpx with aiohttp for HTTP requests, improving async performance and resource management
+
+### Fixed
+
+- **Scheduler Job Misfire**: Fixed an issue where scheduled jobs could be skipped due to misfire
+- **qBittorrent Auth Bypass**: Fixed an issue where username and password were still required when authentication bypass is enabled from whitelisted subnets
+- **Gazelle Torrent Parsing**: Fixed torrent row parsing logic in GazelleParser to correctly extract size and title fields
+
+### What's Changed
+
+* Add timestamps to log output with custom format by @Elbulus in https://github.com/KyokoMiki/nemorosa/pull/46
+* build(deps): bump fastapi from 0.121.0 to 0.121.1 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/48
+* build(deps): bump ruff from 0.14.3 to 0.14.4 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/49
+* build(deps): bump fastapi from 0.121.1 to 0.121.2 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/51
+* build(deps): bump ruff from 0.14.4 to 0.14.5 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/52
+* build(deps): bump qbittorrent-api from 2025.7.0 to 2025.11.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/53
+* feat(api): add GazelleGames.net (GGN) tracker support by @spectralm0rph in https://github.com/KyokoMiki/nemorosa/pull/55
+* ci: add alpha image build workflow by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/56
+* feat: add Python 3.14 support and update dependencies by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/57
+* fix(api): update GazelleParser torrent row parsing logic by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/58
+* ci: add github-actions package ecosystem to Dependabot by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/59
+* build(deps): bump actions/checkout from 5 to 6 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/60
+* build(deps): bump ruff from 0.14.6 to 0.14.7 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/61
+* build(deps): bump fastapi from 0.122.0 to 0.123.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/62
+* build(deps): bump winloop from 0.3.1 to 0.4.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/63
+* build(deps): bump fastapi from 0.123.0 to 0.124.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/64
+* build(deps): bump ruff from 0.14.7 to 0.14.8 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/65
+* build(deps): bump platformdirs from 4.5.0 to 4.5.1 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/66
+* build(deps-dev): bump ruff from 0.14.8 to 0.14.9 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/68
+* build(deps): bump fastapi from 0.124.0 to 0.124.4 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/69
+* Handle qBittorrent auth bypass correctly by @mastermc0 in https://github.com/KyokoMiki/nemorosa/pull/71
+* build(deps): bump winloop from 0.4.0 to 0.4.1 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/73
+* build(deps-dev): bump ruff from 0.14.9 to 0.14.10 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/74
+* build(deps): bump fastapi from 0.124.4 to 0.127.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/75
+* build(deps): bump apscheduler from 3.11.1 to 3.11.2 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/76
+* fix(scheduler): prevent jobs from being skipped due to misfire by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/77
+* fix(logging): unify uvicorn log format with nemorosa by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/78
+
+### New Contributors
+
+* @Elbulus made their first contribution in https://github.com/KyokoMiki/nemorosa/pull/46
+* @spectralm0rph made their first contribution in https://github.com/KyokoMiki/nemorosa/pull/55
+* @mastermc0 made their first contribution in https://github.com/KyokoMiki/nemorosa/pull/71
+
+**Full Changelog**: https://github.com/KyokoMiki/nemorosa/compare/0.4.1...0.4.2
 
 ## [0.4.1](https://github.com/KyokoMiki/nemorosa/compare/0.4.0...0.4.1) - 2025-11-08
 
