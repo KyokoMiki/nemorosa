@@ -361,7 +361,7 @@ class NemorosaCore:
 
         return None
 
-    def inject_matched_torrent(
+    async def inject_matched_torrent(
         self,
         matched_torrent: Torrent,
         local_torrent_info: ClientTorrentInfo,
@@ -386,8 +386,12 @@ class NemorosaCore:
             # Generate link map for file linking
             file_mapping = generate_link_map(local_torrent_info.fdict, matched_fdict)
             # File linking mode: create links first, then add torrent with linked directory
-            final_download_dir = create_file_links_for_torrent(
-                matched_torrent, local_torrent_info.download_dir, local_torrent_info.name, file_mapping
+            final_download_dir = await asyncio.to_thread(
+                create_file_links_for_torrent,
+                matched_torrent,
+                local_torrent_info.download_dir,
+                local_torrent_info.name,
+                file_mapping,
             )
             if final_download_dir is None:
                 logger.error("Failed to create file links, falling back to original directory")
@@ -401,7 +405,7 @@ class NemorosaCore:
         logger.debug(f"Rename map: {rename_map}")
 
         # Inject torrent and handle renaming
-        success, _ = self.torrent_client.inject_torrent(
+        success, _ = await self.torrent_client.inject_torrent(
             matched_torrent, final_download_dir, local_torrent_info.name, rename_map, hash_match
         )
         return success
@@ -476,7 +480,7 @@ class NemorosaCore:
         else:
             # Try to inject torrent
             try:
-                injection_success = self.inject_matched_torrent(matched_torrent, torrent_details, hash_match)
+                injection_success = await self.inject_matched_torrent(matched_torrent, torrent_details, hash_match)
                 if injection_success:
                     self.stats.downloaded += 1
                     matched_torrent_hash = matched_torrent.infohash
@@ -522,7 +526,7 @@ class NemorosaCore:
         """
 
         # Try to get torrent data from torrent client for hash search
-        torrent_object = self.torrent_client.get_torrent_object(torrent_details.hash)
+        torrent_object = await self.torrent_client.get_torrent_object(torrent_details.hash)
 
         # Scan and match for each target site
         any_success = False
@@ -655,7 +659,7 @@ class NemorosaCore:
                     logger.debug(f"Using API instance: {api_instance.server}")
 
                     # Get local torrent information from client
-                    local_torrent_info = self.torrent_client.get_torrent_info(
+                    local_torrent_info = await self.torrent_client.get_torrent_info(
                         undownloaded.local_torrent_hash, fields=["name", "download_dir", "files"]
                     )
                     if not local_torrent_info:
@@ -671,7 +675,7 @@ class NemorosaCore:
                     matched_torrent = await api_instance.download_torrent(torrent_id)
 
                     # Try to inject torrent into client
-                    success = self.inject_matched_torrent(matched_torrent, local_torrent_info, hash_match=False)
+                    success = await self.inject_matched_torrent(matched_torrent, local_torrent_info, hash_match=False)
                     if success:
                         retry_stats.successful += 1
                         retry_stats.removed += 1
@@ -771,7 +775,7 @@ class NemorosaCore:
             target_trackers = {api_instance.tracker_query for api_instance in get_target_apis()}
 
             # Get torrent details from torrent client with existing trackers info
-            torrent_info = self.torrent_client.get_single_torrent(infohash, target_trackers)
+            torrent_info = await self.torrent_client.get_single_torrent(infohash, target_trackers)
 
             if not torrent_info:
                 return ProcessResponse(
@@ -927,8 +931,12 @@ class NemorosaCore:
                 # Generate link map for file linking
                 file_mapping = generate_link_map(matched_torrent.fdict, fdict_torrent)
                 # File linking mode: create links first, then add torrent with linked directory
-                final_download_dir = create_file_links_for_torrent(
-                    torrent_object, matched_torrent.download_dir, matched_torrent.name, file_mapping
+                final_download_dir = await asyncio.to_thread(
+                    create_file_links_for_torrent,
+                    torrent_object,
+                    matched_torrent.download_dir,
+                    matched_torrent.name,
+                    file_mapping,
                 )
                 if final_download_dir is None:
                     logger.error("Failed to create file links, falling back to original directory")
@@ -937,7 +945,7 @@ class NemorosaCore:
                 # Normal mode: use original download directory
                 final_download_dir = matched_torrent.download_dir
 
-            success, _ = self.torrent_client.inject_torrent(
+            success, _ = await self.torrent_client.inject_torrent(
                 torrent_object, final_download_dir, matched_torrent.name, rename_map, False
             )
             if success:
