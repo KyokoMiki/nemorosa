@@ -182,7 +182,7 @@ async def async_init():
 
         # Get all torrents from the new client
         app_torrent_client = get_torrent_client()
-        all_torrents = app_torrent_client.get_torrents(
+        all_torrents = await app_torrent_client.get_torrents(
             fields=["hash", "name", "total_size", "files", "trackers", "download_dir"]
         )
 

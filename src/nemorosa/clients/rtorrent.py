@@ -3,12 +3,14 @@ rTorrent client implementation.
 Provides integration with rTorrent via XML-RPC interface using SCGI transport.
 """
 
+import asyncio
 import posixpath
-import time
 import xmlrpc.client  # nosec B411
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import aiofiles
+import aiofiles.os
 import defusedxml.xmlrpc
 from torf import Torrent
 
@@ -147,7 +149,7 @@ class RTorrentClient(TorrentClient):
 
     # region Abstract Methods - Public Operations
 
-    def get_torrents(
+    async def get_torrents(
         self, torrent_hashes: list[str] | None = None, fields: list[str] | None = None
     ) -> list[ClientTorrentInfo]:
         """Get all torrents from rTorrent.
@@ -178,7 +180,7 @@ class RTorrentClient(TorrentClient):
                             getattr(multicall, arg)(torrent_hash.upper())
 
                         # Execute all calls at once
-                        results = multicall()
+                        results = await asyncio.to_thread(multicall)
 
                         if results:
                             # Build result similar to d.multicall2 format
@@ -189,7 +191,12 @@ class RTorrentClient(TorrentClient):
                         continue
             else:
                 # Get all torrents
-                torrents_data = self.client.d.multicall2("", "main", *[f"{arg}=" for arg in arguments])
+                torrents_data = await asyncio.to_thread(
+                    self.client.d.multicall2,
+                    "",
+                    "main",
+                    *[f"{arg}=" for arg in arguments],
+                )
 
             result = []
             if not isinstance(torrents_data, list):
@@ -206,7 +213,7 @@ class RTorrentClient(TorrentClient):
                     # Handle additional multicalls if needed
                     torrent_hash = torrent_dict.get("d.hash", "")
                     directory = posixpath.basename(torrent_dict.get("d.directory", ""))
-                    self._populate_files_and_trackers(values, torrent_hash, directory, fields)
+                    await self._populate_files_and_trackers(values, torrent_hash, directory, fields)
 
                     # Create ClientTorrentInfo object
                     torrent_info = ClientTorrentInfo(**values)
@@ -222,10 +229,11 @@ class RTorrentClient(TorrentClient):
             logger.error("Error retrieving torrents from rTorrent: %s", e)
             return []
 
-    def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
+    async def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
         """Get torrent states for monitoring (optimized for rTorrent).
 
-        Uses xmlrpc.client's MultiCall to get only the required state information for monitoring.
+        Uses xmlrpc.client's MultiCall to get only the required state information
+        for monitoring.
 
         Args:
             torrent_hashes (set[str]): Set of torrent hashes to monitor.
@@ -247,7 +255,7 @@ class RTorrentClient(TorrentClient):
                     getattr(multicall, field)(torrent_hash.upper())
 
                 # Execute all calls at once
-                results = multicall()
+                results = await asyncio.to_thread(multicall)
 
                 is_active = results[0]
                 is_open = results[1]
@@ -264,8 +272,16 @@ class RTorrentClient(TorrentClient):
 
         return result
 
-    def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
-        """Get torrent information."""
+    async def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
+        """Get torrent information.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+            fields (list[str] | None): List of field names to include in the result.
+
+        Returns:
+            ClientTorrentInfo | None: Torrent information, or None if not found.
+        """
         try:
             # Get field configuration and required arguments
             field_config, arguments = self._get_field_config_and_arguments(fields)
@@ -279,7 +295,7 @@ class RTorrentClient(TorrentClient):
                 getattr(multicall, arg)(torrent_hash.upper())
 
             # Execute all calls at once
-            results = multicall()
+            results = await asyncio.to_thread(multicall)
 
             if not results:
                 return None
@@ -292,14 +308,14 @@ class RTorrentClient(TorrentClient):
 
             # Handle additional multicalls if needed
             directory = posixpath.basename(str(torrent_dict.get("d.directory", "")))
-            self._populate_files_and_trackers(values, torrent_hash, directory, fields)
+            await self._populate_files_and_trackers(values, torrent_hash, directory, fields)
 
             return ClientTorrentInfo(**values)
         except Exception as e:
             logger.error("Error retrieving torrent info from rTorrent: %s", e)
             return None
 
-    def _populate_files_and_trackers(
+    async def _populate_files_and_trackers(
         self, values: dict, torrent_hash: str, directory: str, fields: list[str] | None
     ) -> None:
         """Populate files and trackers information in values dict.
@@ -312,13 +328,13 @@ class RTorrentClient(TorrentClient):
         """
         # Handle files multicall if needed
         if fields is None or "files" in fields:
-            values["files"] = self._get_torrent_files(torrent_hash, directory)
+            values["files"] = await self._get_torrent_files(torrent_hash, directory)
 
         # Handle trackers multicall if needed
         if fields is None or "trackers" in fields:
-            values["trackers"] = self._get_torrent_trackers(torrent_hash)
+            values["trackers"] = await self._get_torrent_trackers(torrent_hash)
 
-    def _get_torrent_files(self, torrent_hash: str, directory: str) -> list[ClientTorrentFile]:
+    async def _get_torrent_files(self, torrent_hash: str, directory: str) -> list[ClientTorrentFile]:
         """Get files information for a torrent.
 
         Args:
@@ -329,16 +345,22 @@ class RTorrentClient(TorrentClient):
             List of ClientTorrentFile objects
         """
         try:
-            files_data = self.client.f.multicall(
-                torrent_hash.upper(), "", "f.path=", "f.size_bytes=", "f.completed_chunks=", "f.size_chunks="
+            files_data = await asyncio.to_thread(
+                self.client.f.multicall,
+                torrent_hash.upper(),
+                "",
+                "f.path=",
+                "f.size_bytes=",
+                "f.completed_chunks=",
+                "f.size_chunks=",
             )
             if not isinstance(files_data, list):
                 raise ValueError(f"Expected list of files data, got {type(files_data)}, data: {files_data}")
             return [
                 ClientTorrentFile(
-                    name=posixpath.join(directory, f[0]),  # f.path
-                    size=f[1],  # f.size_bytes
-                    progress=f[2] / f[3] if f[3] > 0 else 0.0,  # f.completed_chunks / f.size_chunks
+                    name=posixpath.join(directory, f[0]),
+                    size=f[1],
+                    progress=f[2] / f[3] if f[3] > 0 else 0.0,
                 )
                 for f in files_data
             ]
@@ -346,7 +368,7 @@ class RTorrentClient(TorrentClient):
             logger.error("Error retrieving torrent files: %s", e)
             return []
 
-    def _get_torrent_trackers(self, torrent_hash: str) -> list[str]:
+    async def _get_torrent_trackers(self, torrent_hash: str) -> list[str]:
         """Get tracker URLs for a torrent.
 
         Args:
@@ -356,7 +378,7 @@ class RTorrentClient(TorrentClient):
             List of tracker URLs
         """
         try:
-            trackers_data = self.client.t.multicall(torrent_hash.upper(), "", "t.url=")
+            trackers_data = await asyncio.to_thread(self.client.t.multicall, torrent_hash.upper(), "", "t.url=")
             if not isinstance(trackers_data, list):
                 raise ValueError(f"Expected list of trackers data, got {type(trackers_data)}, data: {trackers_data}")
             return [tracker[0] for tracker in trackers_data]
@@ -368,8 +390,17 @@ class RTorrentClient(TorrentClient):
 
     # region Abstract Methods - Internal Operations
 
-    def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
-        """Add torrent to rTorrent with optional fast resume support."""
+    async def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
+        """Add torrent to rTorrent with optional fast resume support.
+
+        Args:
+            torrent_data (bytes): Torrent file data.
+            download_dir (str): Download directory.
+            hash_match (bool): Whether this is a hash match, if True, skip verification.
+
+        Returns:
+            str: Torrent hash.
+        """
         # Parse torrent to get hash and info
         torrent_obj = Torrent.read_stream(torrent_data)
         info_hash = torrent_obj.infohash
@@ -390,14 +421,26 @@ class RTorrentClient(TorrentClient):
                 # Build file path
                 file_path = download_path / "/".join(torrent_file.parts[1:])
 
-                exists = file_path.is_file() and file_path.stat().st_size == torrent_file.size
-
-                if not exists:
+                # Use async file operations to avoid blocking the event loop
+                is_file = await aiofiles.os.path.isfile(file_path)
+                if not is_file:
                     logger.warning("Torrent is incomplete, fallback to not using fast resume")
                     torrent_completed = False
                     break
 
-                resume_files.append({"priority": 1, "completed": int(exists), "mtime": int(file_path.stat().st_mtime)})
+                file_stat = await aiofiles.os.stat(file_path)
+                if file_stat.st_size != torrent_file.size:
+                    logger.warning("Torrent is incomplete, fallback to not using fast resume")
+                    torrent_completed = False
+                    break
+
+                resume_files.append(
+                    {
+                        "priority": 1,
+                        "completed": 1,
+                        "mtime": int(file_stat.st_mtime),
+                    }
+                )
 
             # Set bitfield
             if torrent_completed:
@@ -406,7 +449,10 @@ class RTorrentClient(TorrentClient):
                 # Add resume data to metainfo
                 metainfo = {
                     **torrent_obj.metainfo,
-                    "libtorrent_resume": {"files": resume_files, "bitfield": torrent_obj.pieces},
+                    "libtorrent_resume": {
+                        "files": resume_files,
+                        "bitfield": torrent_obj.pieces,
+                    },
                 }
 
                 # Create new torrent with modified metainfo
@@ -427,13 +473,13 @@ class RTorrentClient(TorrentClient):
             # Load torrent in stopped state (paused)
             if torrent_completed:
                 # The only way to use fast resume information is to start downloading,
-                # so if auto_start_torrents = false is set, we can only start and then pause
-                self.client.load.raw_start("", *cmd)
+                # so if auto_start_torrents = false is set, we can only start then pause
+                await asyncio.to_thread(self.client.load.raw_start, "", *cmd)
                 if not config.cfg.global_config.auto_start_torrents:
-                    time.sleep(1)
-                    self.client.d.pause(info_hash.upper())
+                    await asyncio.sleep(1)
+                    await asyncio.to_thread(self.client.d.pause, info_hash.upper())
             else:
-                self.client.load.raw("", *cmd)
+                await asyncio.to_thread(self.client.load.raw, "", *cmd)
 
             return str(info_hash)
 
@@ -446,19 +492,31 @@ class RTorrentClient(TorrentClient):
             else:
                 raise
 
-    def _remove_torrent(self, torrent_hash: str):
-        """Remove torrent from rTorrent."""
+    async def _remove_torrent(self, torrent_hash: str) -> None:
+        """Remove torrent from rTorrent.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+        """
         try:
             # Erase torrent (without deleting files)
-            self.client.d.erase(torrent_hash.upper())
+            await asyncio.to_thread(self.client.d.erase, torrent_hash.upper())
         except Exception as e:
             logger.error(f"Error removing torrent from rTorrent: {e}")
 
-    def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str):
+    async def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str) -> None:
         """Rename entire torrent.
 
-        Since rTorrent supports specifying the final directory level when adding torrents,
-        there is no need to rename after adding the torrent.
+        Since rTorrent supports specifying the final directory level when adding
+        torrents, there is no need to rename after adding the torrent.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+            old_name (str): Old torrent name.
+            new_name (str): New torrent name.
+
+        Raises:
+            NotImplementedError: rTorrent does not support torrent renaming.
         """
         logger.error(
             f"Torrent renaming should not be called for rTorrent: {torrent_hash} from '{old_name}' to '{new_name}'"
@@ -467,11 +525,18 @@ class RTorrentClient(TorrentClient):
             "rTorrent torrent renaming is not supported - use directory specification during adding torrent instead"
         )
 
-    def _rename_file(self, torrent_hash: str, old_path: str, new_name: str):
+    async def _rename_file(self, torrent_hash: str, old_path: str, new_name: str) -> None:
         """Rename file within torrent.
 
         rTorrent does not support renaming individual files within a torrent.
-        This method will log an error and raise a NotImplementedError.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+            old_path (str): Old file path.
+            new_name (str): New file name.
+
+        Raises:
+            NotImplementedError: rTorrent does not support file renaming.
         """
         logger.error(
             f"rTorrent does not support renaming individual files. "
@@ -479,18 +544,21 @@ class RTorrentClient(TorrentClient):
         )
         raise NotImplementedError("rTorrent does not support renaming individual files within a torrent.")
 
-    def _verify_torrent(self, torrent_hash: str):
-        """Verify torrent integrity."""
+    async def _verify_torrent(self, torrent_hash: str) -> None:
+        """Verify torrent integrity.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+        """
         try:
-            self.client.d.check_hash(torrent_hash.upper())
+            await asyncio.to_thread(self.client.d.check_hash, torrent_hash.upper())
         except Exception as e:
             logger.error(f"Error verifying torrent in rTorrent: {e}")
 
-    def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
+    async def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
         """Process rename mapping to adapt to rTorrent.
 
         rTorrent does not support renaming individual files within a torrent.
-        This method will log an error and raise a NotImplementedError if rename_map is not empty.
 
         Args:
             torrent_hash (str): Torrent hash.
@@ -499,27 +567,46 @@ class RTorrentClient(TorrentClient):
 
         Returns:
             dict: Not implemented (rTorrent doesn't support file renaming).
+
+        Raises:
+            NotImplementedError: rTorrent does not support file renaming.
         """
         logger.error(
             "rTorrent does not support renaming individual files within a torrent. "
-            "File renaming will be skipped. Consider enabling linking mode for proper file mapping."
+            "File renaming will be skipped. "
+            "Consider enabling linking mode for proper file mapping."
         )
         raise NotImplementedError("rTorrent does not support renaming individual files within a torrent.")
 
-    def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
-        """Get torrent data from rTorrent."""
+    async def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
+        """Get torrent data from rTorrent.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+
+        Returns:
+            bytes | None: Torrent file data, or None if not available.
+        """
         try:
             torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
-            return torrent_path.read_bytes()
+            async with aiofiles.open(torrent_path, "rb") as f:
+                return await f.read()
         except Exception as e:
             logger.error(f"Error getting torrent data from rTorrent: {e}")
             return None
 
-    def _resume_torrent(self, torrent_hash: str) -> bool:
-        """Resume downloading a torrent in rTorrent."""
+    async def _resume_torrent(self, torrent_hash: str) -> bool:
+        """Resume downloading a torrent in rTorrent.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
         try:
             # Start torrent
-            self.client.d.start(torrent_hash.upper())
+            await asyncio.to_thread(self.client.d.start, torrent_hash.upper())
             return True
         except Exception as e:
             logger.error(f"Failed to resume torrent {torrent_hash}: {e}")

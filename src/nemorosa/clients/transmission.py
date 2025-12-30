@@ -3,10 +3,12 @@ Transmission client implementation.
 Provides integration with Transmission via its RPC interface.
 """
 
+import asyncio
 import base64
 import posixpath
 from pathlib import Path
 
+import aiofiles
 import msgspec
 import transmission_rpc
 from transmission_rpc.constants import RpcMethod
@@ -92,7 +94,7 @@ class TransmissionClient(TorrentClient):
 
     # region Abstract Methods - Public Operations
 
-    def get_torrents(
+    async def get_torrents(
         self, torrent_hashes: list[str] | None = None, fields: list[str] | None = None
     ) -> list[ClientTorrentInfo]:
         """Get all torrents from Transmission.
@@ -111,27 +113,37 @@ class TransmissionClient(TorrentClient):
             field_config, arguments = self._get_field_config_and_arguments(fields)
 
             # Get torrents from Transmission (filtered by hashes if provided)
-            torrents = self.client.get_torrents(ids=torrent_hashes, arguments=arguments)  # type: ignore[arg-type]
+            torrents = await asyncio.to_thread(
+                self.client.get_torrents,
+                ids=torrent_hashes,  # type: ignore[arg-type]
+                arguments=arguments,
+            )
 
             # Build ClientTorrentInfo objects
-            result = [
+            return [
                 ClientTorrentInfo(**{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()})
                 for torrent in torrents
             ]
-
-            return result
 
         except Exception as e:
             logger.error("Error retrieving torrents from Transmission: %s", e)
             return []
 
-    def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
-        """Get torrent information."""
+    async def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
+        """Get torrent information.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+            fields (list[str] | None): List of field names to include in the result.
+
+        Returns:
+            ClientTorrentInfo | None: Torrent information, or None if not found.
+        """
         try:
             # Get field configuration and required arguments
             field_config, arguments = self._get_field_config_and_arguments(fields)
 
-            torrent = self.client.get_torrent(torrent_hash, arguments=arguments)
+            torrent = await asyncio.to_thread(self.client.get_torrent, torrent_hash, arguments=arguments)
 
             # Build ClientTorrentInfo using field_config
             return ClientTorrentInfo(
@@ -141,7 +153,7 @@ class TransmissionClient(TorrentClient):
             logger.error("Error retrieving torrent info from Transmission: %s", e)
             return None
 
-    def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
+    async def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
         """Get torrent states for monitoring (optimized for Transmission).
 
         Uses Transmission's get_torrents with minimal fields to get only
@@ -158,17 +170,16 @@ class TransmissionClient(TorrentClient):
 
         try:
             # Get minimal torrent info - only hash and status
-            torrents = self.client.get_torrents(
+            torrents = await asyncio.to_thread(
+                self.client.get_torrents,
                 ids=list(torrent_hashes),
-                arguments=["hashString", "status"],  # Only get hash and status for efficiency
+                arguments=["hashString", "status"],
             )
 
-            result = {
+            return {
                 torrent.hash_string: TRANSMISSION_STATE_MAPPING.get(torrent.status.value, TorrentState.UNKNOWN)
                 for torrent in torrents
             }
-
-            return result
 
         except Exception as e:
             logger.error(f"Error getting torrent states for monitoring from Transmission: {e}")
@@ -178,13 +189,13 @@ class TransmissionClient(TorrentClient):
 
     # region Abstract Methods - Internal Operations
 
-    def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
+    async def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
         """Add torrent to Transmission.
 
         Args:
             torrent_data (bytes): Torrent file data.
             download_dir (str): Download directory.
-            hash_match (bool): Not used for Transmission (has fast verification by default).
+            hash_match (bool): Not used for Transmission (has fast verification).
 
         Returns:
             str: Torrent hash string.
@@ -203,7 +214,7 @@ class TransmissionClient(TorrentClient):
             "metainfo": torrent_data_b64,
         }
 
-        # Prepare labels: use tags if provided, otherwise use [label] if label is not None
+        # Prepare labels: use tags if provided, otherwise use [label] if not None
         if config.cfg.downloader.tags:
             kwargs["labels"] = config.cfg.downloader.tags
         elif config.cfg.downloader.label:
@@ -211,10 +222,14 @@ class TransmissionClient(TorrentClient):
 
         # Make direct RPC call to get raw response
         query = {"method": RpcMethod.TorrentAdd, "arguments": kwargs}
+
         # Note: Must use private method _http_query to access raw response data.
-        # transmission_rpc doesn't provide this capability, which is required to distinguish
-        # between torrent-added and torrent-duplicate responses.
-        http_data = self.client._http_query(query)  # noqa: SLF001
+        # transmission_rpc doesn't provide this capability, which is required to
+        # distinguish between torrent-added and torrent-duplicate responses.
+        http_data = await asyncio.to_thread(
+            self.client._http_query,  # noqa: SLF001
+            query,
+        )
 
         # Parse JSON response
         try:
@@ -223,10 +238,20 @@ class TransmissionClient(TorrentClient):
             raise ValueError("failed to parse response as json", query, http_data) from error
 
         if "result" not in data:
-            raise ValueError("Query failed, response data missing without result.", query, data, http_data)
+            raise ValueError(
+                "Query failed, response data missing without result.",
+                query,
+                data,
+                http_data,
+            )
 
         if data["result"] != "success":
-            raise ValueError(f'Query failed with result "{data["result"]}".', query, data, http_data)
+            raise ValueError(
+                f'Query failed with result "{data["result"]}".',
+                query,
+                data,
+                http_data,
+            )
 
         # Extract torrent info from arguments
         res = data["arguments"]
@@ -244,28 +269,63 @@ class TransmissionClient(TorrentClient):
 
         return torrent_info["hashString"]
 
-    def _remove_torrent(self, torrent_hash: str):
+    async def _remove_torrent(self, torrent_hash: str) -> None:
         """Remove torrent from Transmission.
 
         Args:
             torrent_hash (str): Torrent hash.
         """
-        self.client.remove_torrent(torrent_hash, delete_data=False)
+        await asyncio.to_thread(self.client.remove_torrent, torrent_hash, delete_data=False)
 
-    def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str):
-        """Rename entire torrent."""
-        self.client.rename_torrent_path(torrent_hash, location=old_name, name=new_name)
+    async def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str) -> None:
+        """Rename entire torrent.
 
-    def _rename_file(self, torrent_hash: str, old_path: str, new_name: str):
-        """Rename file within torrent."""
-        self.client.rename_torrent_path(torrent_hash, location=old_path, name=new_name)
+        Args:
+            torrent_hash (str): Torrent hash.
+            old_name (str): Old torrent name.
+            new_name (str): New torrent name.
+        """
+        await asyncio.to_thread(
+            self.client.rename_torrent_path,
+            torrent_hash,
+            location=old_name,
+            name=new_name,
+        )
 
-    def _verify_torrent(self, torrent_hash: str):
-        """Verify torrent integrity."""
-        self.client.verify_torrent(torrent_hash)
+    async def _rename_file(self, torrent_hash: str, old_path: str, new_name: str) -> None:
+        """Rename file within torrent.
 
-    def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
-        """Process rename mapping to adapt to Transmission."""
+        Args:
+            torrent_hash (str): Torrent hash.
+            old_path (str): Old file path.
+            new_name (str): New file name.
+        """
+        await asyncio.to_thread(
+            self.client.rename_torrent_path,
+            torrent_hash,
+            location=old_path,
+            name=new_name,
+        )
+
+    async def _verify_torrent(self, torrent_hash: str) -> None:
+        """Verify torrent integrity.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+        """
+        await asyncio.to_thread(self.client.verify_torrent, torrent_hash)
+
+    async def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
+        """Process rename mapping to adapt to Transmission.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+            base_path (str): Base path for files.
+            rename_map (dict): Original rename mapping.
+
+        Returns:
+            dict: Processed rename mapping for Transmission.
+        """
         temp_map = {}
         for torrent_name, local_name in rename_map.items():
             torrent_name_list = torrent_name.split("/")
@@ -283,19 +343,34 @@ class TransmissionClient(TorrentClient):
 
         return transmission_map
 
-    def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
-        """Get torrent data from Transmission."""
+    async def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
+        """Get torrent data from Transmission.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+
+        Returns:
+            bytes | None: Torrent file data, or None if not available.
+        """
         try:
             torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
-            return torrent_path.read_bytes()
+            async with aiofiles.open(torrent_path, "rb") as f:
+                return await f.read()
         except Exception as e:
             logger.error(f"Error getting torrent data from Transmission: {e}")
             return None
 
-    def _resume_torrent(self, torrent_hash: str) -> bool:
-        """Resume downloading a torrent in Transmission."""
+    async def _resume_torrent(self, torrent_hash: str) -> bool:
+        """Resume downloading a torrent in Transmission.
+
+        Args:
+            torrent_hash (str): Torrent hash.
+
+        Returns:
+            bool: True if successful, False otherwise.
+        """
         try:
-            self.client.start_torrent(torrent_hash)
+            await asyncio.to_thread(self.client.start_torrent, torrent_hash)
             return True
         except Exception as e:
             logger.error(f"Failed to resume torrent {torrent_hash}: {e}")

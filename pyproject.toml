@@ -21,24 +21,25 @@ classifiers = [
 ]
 requires-python = ">=3.11"
 dependencies = [
+    "aiofiles>=25.1.0",
+    "aiohttp[speedups]>=3.13.2",
+    "aiolimiter>=1.1.0",
     "apscheduler>=3.10.4",
     "beautifulsoup4[lxml]>=4.13.5",
+    "defusedxml>=0.7.1",
     "deluge-client>=1.10.2",
     "fastapi>=0.122.0",
-    "aiohttp[speedups]>=3.13.2",
     "humanfriendly>=10.0",
     "msgspec[yaml]>=0.20.0",
     "platformdirs>=4.4.0",
     "qbittorrent-api>=2025.7.0",
-    "aiolimiter>=1.1.0",
+    "reflink-copy>=0.3.2",
+    "sqlalchemy[aiosqlite]>=2.0.44",
     "torf>=4.3.0",
     "transmission-rpc>=7.0.11",
     "uvicorn[standard]>=0.35.0",
     "uvloop>=0.19.0; sys_platform != 'win32'",
     "winloop>=0.1.0; sys_platform == 'win32'",
-    "reflink-copy>=0.3.2",
-    "sqlalchemy[aiosqlite]>=2.0.44",
-    "defusedxml>=0.7.1",
 ]
 
 [project.urls]
