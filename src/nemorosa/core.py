@@ -24,6 +24,7 @@ from .filecompare import (
     select_search_filenames,
 )
 from .filelinking import create_file_links_for_torrent
+from .notifier import get_notifier
 
 if TYPE_CHECKING:
     from .api import GazelleGamesNet, GazelleJSONAPI, GazelleParser, TorrentSearchResult
@@ -616,6 +617,10 @@ class NemorosaCore:
         except Exception as e:
             logger.exception("Error processing torrents: %s", e)
         finally:
+            # Send scan complete notification if configured
+            if config.cfg.global_config.notification_urls and self.stats.scanned > 0:
+                await get_notifier().send_scan_complete(self.stats)
+
             logger.success("Torrent processing summary:")
             logger.success("Torrents scanned: %d", self.stats.scanned)
             logger.success("Matches found: %d", self.stats.found)
@@ -951,6 +956,14 @@ class NemorosaCore:
             if success:
                 logger.success("Torrent injected successfully")
                 await self.torrent_client.track_verification(torrent_object.infohash)
+
+                # Send announce success notification if configured
+                if config.cfg.global_config.notification_urls:
+                    await get_notifier().send_announce_success(
+                        torrent_name=torrent_name,
+                        torrent_url=torrent_link,
+                    )
+
                 return ProcessResponse(
                     status=ProcessStatus.SUCCESS,
                     message=f"Successfully processed reverse announce torrent: {torrent_name}",

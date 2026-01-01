@@ -20,6 +20,7 @@ from apscheduler.triggers.interval import IntervalTrigger
 from torf import Torrent
 
 from .. import config, db, filecompare, logger, scheduler
+from ..notifier import get_notifier
 
 
 def decode_bitfield_bytes(bitfield_data: bytes, piece_count: int) -> list[bool]:
@@ -745,6 +746,7 @@ class TorrentClient(ABC):
 
         current_name = str(torrent_object.name)
         name_differs = current_name != local_torrent_name
+        torrent_url = torrent_object.comment or ""
 
         if self.supports_final_directory:
             # rTorrent supports specifying the final directory level when adding torrents
@@ -813,6 +815,15 @@ class TorrentClient(ABC):
                     await asyncio.sleep(2)
                 else:
                     logger.error(f"Failed to inject torrent after {max_retries} attempts: {e}")
+
+                    # Send failure notification if configured
+                    if config.cfg.global_config.notification_urls:
+                        await get_notifier().send_inject_failure(
+                            torrent_name=local_torrent_name,
+                            torrent_url=torrent_url,
+                            reason=str(e),
+                        )
+
                     return False, False
 
         # This should never be reached, but just in case
@@ -949,6 +960,14 @@ class TorrentClient(ABC):
                         # Clear matched torrent information from database
                         await database.clear_matched_torrent_info(matched_torrent_hash)
                         result.status = "partial_removed"
+
+            # Send success notification if configured
+            if config.cfg.global_config.notification_urls and result.status in ("completed", "partial_kept"):
+                await get_notifier().send_inject_success(
+                    torrent_name=matched_torrent.name,
+                    torrent_hash=matched_torrent.hash,
+                    progress=matched_torrent.progress,
+                )
 
         except Exception as e:
             logger.error(f"Error processing torrent {matched_torrent_hash}: {e}")
