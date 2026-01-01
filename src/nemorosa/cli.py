@@ -9,6 +9,7 @@ from .api import cleanup_api, get_target_apis, init_api
 from .client_instance import get_torrent_client, init_torrent_client
 from .core import get_core, init_core
 from .db import cleanup_database, get_database, init_database
+from .notifier import get_notifier, init_notifier
 from .scheduler import init_job_manager
 from .webserver import run_webserver
 
@@ -65,6 +66,11 @@ def setup_argument_parser():
         "--post-process",
         action="store_true",
         help="post-process injected torrents",
+    )
+    mode_group.add_argument(
+        "--test-notification",
+        action="store_true",
+        help="send a test notification to configured services",
     )
 
     # Global options
@@ -204,6 +210,9 @@ async def async_init():
     # Initialize and start scheduler
     await init_job_manager()
 
+    # Initialize notifier
+    init_notifier(config.cfg.global_config.notification_urls)
+
 
 def main():
     """Main function."""
@@ -274,6 +283,16 @@ async def _async_main(args):
         elif args.post_process:
             # Post-process injected torrents only
             await processor.post_process_injected_torrents()
+        elif args.test_notification:
+            # Test notification
+            if config.cfg.global_config.notification_urls:
+                success = await get_notifier().send_test()
+                if success:
+                    logger.success("Test notification sent successfully")
+                else:
+                    logger.error("Failed to send test notification")
+            else:
+                logger.warning("No notification URLs configured")
         else:
             # Normal torrent processing flow
             await processor.process_torrents()

@@ -24,6 +24,7 @@ dependencies = [
     "aiofiles>=25.1.0",
     "aiohttp[speedups]>=3.13.2",
     "aiolimiter>=1.1.0",
+    "apprise>=1.9.6",
     "apscheduler>=3.10.4",
     "beautifulsoup4[lxml]>=4.13.5",
     "defusedxml>=0.7.1",

@@ -95,10 +95,15 @@ class GlobalConfig(msgspec.Struct):
     )
     check_music_only: bool = True
     auto_start_torrents: bool = True
+    notification_urls: list[str] = msgspec.field(default_factory=list)
 
     def __post_init__(self):
         # Validate check_trackers
         validate_string_list(self.check_trackers, "check_trackers")
+
+        for item in self.notification_urls:
+            if not item.strip():
+                raise ValueError("notification_urls cannot contain empty strings")
 
 
 class DownloaderConfig(msgspec.Struct):
@@ -293,6 +298,9 @@ global:
     - "52dic.vip"
   check_music_only: true # Whether to check music files only
   auto_start_torrents: true # Whether to automatically start torrents after successful injection
+  # Apprise notification URLs
+  # See: https://github.com/caronc/apprise/wiki
+  notification_urls: []
 
 linking:
   # File linking configuration
