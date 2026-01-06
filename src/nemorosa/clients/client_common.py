@@ -1196,8 +1196,8 @@ def parse_libtc_url(url: str) -> TorrentClientConfig:
         netloc = f"{parsed.hostname}:{parsed.port}" if parsed.port else (parsed.hostname or "")
         client_url = f"{scheme[-1]}://{netloc}{parsed.path}"
         return TorrentClientConfig(
-            username=unquote(parsed.username),
-            password=unquote(parsed.password),
+            username=unquote(parsed.username) if parsed.username else None,
+            password=unquote(parsed.password) if parsed.password else None,
             url=client_url,
             torrents_dir=torrents_dir,
         )
@@ -1210,8 +1210,8 @@ def parse_libtc_url(url: str) -> TorrentClientConfig:
         )
     else:
         return TorrentClientConfig(
-            username=unquote(parsed.username),
-            password=unquote(parsed.password),
+            username=unquote(parsed.username) if parsed.username else None,
+            password=unquote(parsed.password) if parsed.password else None,
             scheme=scheme[-1],
             host=parsed.hostname,
             port=parsed.port,
