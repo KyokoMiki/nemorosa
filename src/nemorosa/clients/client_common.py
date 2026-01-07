@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from enum import Enum
 from itertools import groupby
 from typing import Any
-from urllib.parse import parse_qs, urlparse, unquote
+from urllib.parse import parse_qs, unquote, urlparse
 
 import msgspec
 from apscheduler.triggers.date import DateTrigger
