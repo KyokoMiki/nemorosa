@@ -749,7 +749,7 @@ TRACKER_SPECS = {
     ),
     "https://gazellegames.net": TrackerSpec(
         api_type=GazelleGamesNet,
-        max_requests_per_10s=5,
+        max_requests_per_10s=4,
         source_flag="GGn",
         tracker_url="https://tracker.gazellegames.net",
         tracker_query="tracker.gazellegames.net",
