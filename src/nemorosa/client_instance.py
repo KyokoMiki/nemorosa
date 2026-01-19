@@ -7,8 +7,9 @@ It handles singleton pattern for the torrent client to ensure consistent access
 across the application.
 """
 
-import asyncio
 from urllib.parse import urlparse
+
+import anyio
 
 from .clients import DelugeClient, QBittorrentClient, RTorrentClient, TorrentClient, TransmissionClient
 
@@ -47,7 +48,7 @@ def create_torrent_client(url: str) -> TorrentClient:
 
 # Global torrent client instance
 _torrent_client_instance: TorrentClient | None = None
-_torrent_client_lock = asyncio.Lock()
+_torrent_client_lock = anyio.Lock()
 
 
 async def init_torrent_client(url: str) -> None:

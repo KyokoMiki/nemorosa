@@ -1,10 +1,10 @@
 """Scheduler module for nemorosa."""
 
-import asyncio
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from enum import Enum
 
+import anyio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from pydantic import BaseModel, Field
@@ -46,7 +46,7 @@ class JobManager:
         self.database = get_database()
         # Track running jobs
         self._running_jobs = set()
-        self._running_jobs_lock = asyncio.Lock()
+        self._running_jobs_lock = anyio.Lock()
 
     @asynccontextmanager
     async def _job_execution_context(self, job_name: str):
@@ -289,7 +289,7 @@ class JobManager:
 
 # Global job manager instance
 _job_manager_instance: JobManager | None = None
-_job_manager_lock = asyncio.Lock()
+_job_manager_lock = anyio.Lock()
 
 
 async def init_job_manager() -> None:

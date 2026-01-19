@@ -3,7 +3,6 @@ Gazelle API module for nemorosa.
 Provides API implementations for Gazelle-based torrent sites, including JSON API and HTML parsing.
 """
 
-import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Collection
 from html import unescape
@@ -11,6 +10,7 @@ from http.cookies import SimpleCookie
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlparse
 
+import anyio
 import msgspec
 from aiohttp import ClientSession, ClientTimeout, CookieJar
 from aiolimiter import AsyncLimiter
@@ -785,7 +785,7 @@ def get_api_instance(
 
 # Global target_apis instance
 _target_apis_instance: list[GazelleJSONAPI | GazelleParser | GazelleGamesNet] = []
-_target_apis_lock = asyncio.Lock()
+_target_apis_lock = anyio.Lock()
 
 
 async def init_api(target_sites: list[TargetSiteConfig]) -> None:

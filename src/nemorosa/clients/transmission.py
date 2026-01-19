@@ -3,14 +3,13 @@ Transmission client implementation.
 Provides integration with Transmission via its RPC interface.
 """
 
-import asyncio
 import base64
 import posixpath
-from pathlib import Path
 
-import aiofiles
 import msgspec
 import transmission_rpc
+from anyio import Path
+from asyncer import asyncify
 from transmission_rpc.constants import RpcMethod
 
 from .. import config, logger
@@ -113,8 +112,7 @@ class TransmissionClient(TorrentClient):
             field_config, arguments = self._get_field_config_and_arguments(fields)
 
             # Get torrents from Transmission (filtered by hashes if provided)
-            torrents = await asyncio.to_thread(
-                self.client.get_torrents,
+            torrents = await asyncify(self.client.get_torrents)(
                 ids=torrent_hashes,  # type: ignore[arg-type]
                 arguments=arguments,
             )
@@ -143,7 +141,7 @@ class TransmissionClient(TorrentClient):
             # Get field configuration and required arguments
             field_config, arguments = self._get_field_config_and_arguments(fields)
 
-            torrent = await asyncio.to_thread(self.client.get_torrent, torrent_hash, arguments=arguments)
+            torrent = await asyncify(self.client.get_torrent)(torrent_hash, arguments=arguments)
 
             # Build ClientTorrentInfo using field_config
             return ClientTorrentInfo(
@@ -170,8 +168,7 @@ class TransmissionClient(TorrentClient):
 
         try:
             # Get minimal torrent info - only hash and status
-            torrents = await asyncio.to_thread(
-                self.client.get_torrents,
+            torrents = await asyncify(self.client.get_torrents)(
                 ids=list(torrent_hashes),
                 arguments=["hashString", "status"],
             )
@@ -226,10 +223,7 @@ class TransmissionClient(TorrentClient):
         # Note: Must use private method _http_query to access raw response data.
         # transmission_rpc doesn't provide this capability, which is required to
         # distinguish between torrent-added and torrent-duplicate responses.
-        http_data = await asyncio.to_thread(
-            self.client._http_query,  # noqa: SLF001
-            query,
-        )
+        http_data = await asyncify(self.client._http_query)(query)  # noqa: SLF001
 
         # Parse JSON response
         try:
@@ -275,7 +269,7 @@ class TransmissionClient(TorrentClient):
         Args:
             torrent_hash (str): Torrent hash.
         """
-        await asyncio.to_thread(self.client.remove_torrent, torrent_hash, delete_data=False)
+        await asyncify(self.client.remove_torrent)(torrent_hash, delete_data=False)
 
     async def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str) -> None:
         """Rename entire torrent.
@@ -285,8 +279,7 @@ class TransmissionClient(TorrentClient):
             old_name (str): Old torrent name.
             new_name (str): New torrent name.
         """
-        await asyncio.to_thread(
-            self.client.rename_torrent_path,
+        await asyncify(self.client.rename_torrent_path)(
             torrent_hash,
             location=old_name,
             name=new_name,
@@ -300,8 +293,7 @@ class TransmissionClient(TorrentClient):
             old_path (str): Old file path.
             new_name (str): New file name.
         """
-        await asyncio.to_thread(
-            self.client.rename_torrent_path,
+        await asyncify(self.client.rename_torrent_path)(
             torrent_hash,
             location=old_path,
             name=new_name,
@@ -313,7 +305,7 @@ class TransmissionClient(TorrentClient):
         Args:
             torrent_hash (str): Torrent hash.
         """
-        await asyncio.to_thread(self.client.verify_torrent, torrent_hash)
+        await asyncify(self.client.verify_torrent)(torrent_hash)
 
     async def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
         """Process rename mapping to adapt to Transmission.
@@ -354,8 +346,7 @@ class TransmissionClient(TorrentClient):
         """
         try:
             torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
-            async with aiofiles.open(torrent_path, "rb") as f:
-                return await f.read()
+            return await torrent_path.read_bytes()
         except Exception as e:
             logger.error(f"Error getting torrent data from Transmission: {e}")
             return None
@@ -370,7 +361,7 @@ class TransmissionClient(TorrentClient):
             bool: True if successful, False otherwise.
         """
         try:
-            await asyncio.to_thread(self.client.start_torrent, torrent_hash)
+            await asyncify(self.client.start_torrent)(torrent_hash)
             return True
         except Exception as e:
             logger.error(f"Failed to resume torrent {torrent_hash}: {e}")

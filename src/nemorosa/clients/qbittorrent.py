@@ -3,13 +3,12 @@ qBittorrent client implementation.
 Provides integration with qBittorrent via its Web API.
 """
 
-import asyncio
 import posixpath
 import time
-from pathlib import Path
 
-import aiofiles
 import qbittorrentapi
+from anyio import Path
+from asyncer import asyncify
 from torf import Torrent
 
 from .. import config, logger
@@ -121,7 +120,7 @@ class QBittorrentClient(TorrentClient):
             field_config, _ = self._get_field_config_and_arguments(fields)
 
             # Get torrents from qBittorrent
-            torrents = await asyncio.to_thread(self.client.torrents_info, torrent_hashes=torrent_hashes)
+            torrents = await asyncify(self.client.torrents_info)(torrent_hashes=torrent_hashes)
 
             # Build ClientTorrentInfo objects
             return [
@@ -144,7 +143,7 @@ class QBittorrentClient(TorrentClient):
             ClientTorrentInfo | None: Torrent information, or None if not found.
         """
         try:
-            torrent_info = await asyncio.to_thread(self.client.torrents_info, torrent_hashes=torrent_hash)
+            torrent_info = await asyncify(self.client.torrents_info)(torrent_hashes=torrent_hash)
             if not torrent_info:
                 return None
 
@@ -180,7 +179,7 @@ class QBittorrentClient(TorrentClient):
         try:
             # Use qBittorrent's sync API for efficient monitoring
             # This returns only changed data since last request using RID
-            maindata = await asyncio.to_thread(self.client.sync_maindata, rid=self._last_rid)
+            maindata = await asyncify(self.client.sync_maindata)(rid=self._last_rid)
 
             # Update RID for next incremental request
             new_rid = maindata.get("rid", self._last_rid)
@@ -228,8 +227,7 @@ class QBittorrentClient(TorrentClient):
         """
         current_time = time.time()
 
-        result = await asyncio.to_thread(
-            self.client.torrents_add,
+        result = await asyncify(self.client.torrents_add)(
             torrent_files=torrent_data,
             save_path=download_dir,
             is_paused=True,
@@ -247,7 +245,7 @@ class QBittorrentClient(TorrentClient):
         if result != "Ok.":
             # Check if torrent already exists by comparing add time
             try:
-                torrent_info = await asyncio.to_thread(self.client.torrents_info, torrent_hashes=info_hash)
+                torrent_info = await asyncify(self.client.torrents_info)(torrent_hashes=info_hash)
                 if torrent_info:
                     # Get the first (and should be only) torrent with this hash
                     existing_torrent = torrent_info[0]
@@ -275,7 +273,7 @@ class QBittorrentClient(TorrentClient):
         Args:
             torrent_hash (str): Torrent hash.
         """
-        await asyncio.to_thread(self.client.torrents_delete, torrent_hashes=torrent_hash, delete_files=False)
+        await asyncify(self.client.torrents_delete)(torrent_hashes=torrent_hash, delete_files=False)
 
     async def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str) -> None:
         """Rename entire torrent.
@@ -286,13 +284,11 @@ class QBittorrentClient(TorrentClient):
             new_name (str): New torrent name.
         """
         try:
-            await asyncio.to_thread(
-                self.client.torrents_rename,
+            await asyncify(self.client.torrents_rename)(
                 torrent_hash=torrent_hash,
                 new_torrent_name=new_name,
             )
-            await asyncio.to_thread(
-                self.client.torrents_rename_folder,
+            await asyncify(self.client.torrents_rename_folder)(
                 torrent_hash=torrent_hash,
                 old_path=old_name,
                 new_path=new_name,
@@ -308,8 +304,7 @@ class QBittorrentClient(TorrentClient):
             old_path (str): Old file path.
             new_name (str): New file name.
         """
-        await asyncio.to_thread(
-            self.client.torrents_rename_file,
+        await asyncify(self.client.torrents_rename_file)(
             torrent_hash=torrent_hash,
             old_path=old_path,
             new_path=new_name,
@@ -321,7 +316,7 @@ class QBittorrentClient(TorrentClient):
         Args:
             torrent_hash (str): Torrent hash.
         """
-        await asyncio.to_thread(self.client.torrents_recheck, torrent_hashes=torrent_hash)
+        await asyncify(self.client.torrents_recheck)(torrent_hashes=torrent_hash)
 
     async def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
         """Process rename mapping to adapt to qBittorrent.
@@ -348,11 +343,10 @@ class QBittorrentClient(TorrentClient):
             bytes | None: Torrent file data, or None if not available.
         """
         try:
-            torrent_data = await asyncio.to_thread(self.client.torrents_export, torrent_hash=torrent_hash)
+            torrent_data = await asyncify(self.client.torrents_export)(torrent_hash=torrent_hash)
             if torrent_data is None:
                 torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
-                async with aiofiles.open(torrent_path, "rb") as f:
-                    return await f.read()
+                return await torrent_path.read_bytes()
             return torrent_data
         except Exception as e:
             logger.error(f"Error getting torrent data from qBittorrent: {e}")
@@ -368,7 +362,7 @@ class QBittorrentClient(TorrentClient):
             bool: True if successful, False otherwise.
         """
         try:
-            await asyncio.to_thread(self.client.torrents_resume, torrent_hashes=torrent_hash)
+            await asyncify(self.client.torrents_resume)(torrent_hashes=torrent_hash)
             return True
         except Exception as e:
             logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
