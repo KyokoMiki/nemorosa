@@ -3,14 +3,13 @@ Deluge client implementation.
 Provides integration with Deluge via its RPC interface.
 """
 
-import asyncio
 import base64
 import posixpath
 import re
-from pathlib import Path
 
-import aiofiles
 import deluge_client
+from anyio import Path
+from asyncer import asyncify
 
 from .. import config, logger
 from .client_common import (
@@ -112,8 +111,7 @@ class DelugeClient(TorrentClient):
             field_config, arguments = self._get_field_config_and_arguments(fields)
 
             # Get torrents from Deluge (filtered by hashes if provided)
-            torrent_details = await asyncio.to_thread(
-                self.client.call,
+            torrent_details = await asyncify(self.client.call)(
                 "core.get_torrents_status",
                 {"id": torrent_hashes} if torrent_hashes else {},
                 arguments,
@@ -150,8 +148,7 @@ class DelugeClient(TorrentClient):
 
         try:
             # Get minimal torrent status - only state
-            torrents_status = await asyncio.to_thread(
-                self.client.call,
+            torrents_status = await asyncify(self.client.call)(
                 "core.get_torrents_status",
                 {"id": list(torrent_hashes)},
                 ["state"],
@@ -184,8 +181,7 @@ class DelugeClient(TorrentClient):
             # Get field configuration and required arguments
             field_config, arguments = self._get_field_config_and_arguments(fields)
 
-            torrent_info = await asyncio.to_thread(
-                self.client.call,
+            torrent_info = await asyncify(self.client.call)(
                 "core.get_torrent_status",
                 torrent_hash,
                 arguments,
@@ -220,8 +216,7 @@ class DelugeClient(TorrentClient):
         """
         torrent_b64 = base64.b64encode(torrent_data).decode()
         try:
-            torrent_hash = await asyncio.to_thread(
-                self.client.call,
+            torrent_hash = await asyncify(self.client.call)(
                 "core.add_torrent_file",
                 None,
                 torrent_b64,
@@ -249,13 +244,13 @@ class DelugeClient(TorrentClient):
         label = config.cfg.downloader.label
         if label and torrent_hash:
             try:
-                await asyncio.to_thread(self.client.call, "label.set_torrent", torrent_hash, label)
+                await asyncify(self.client.call)("label.set_torrent", torrent_hash, label)
             except Exception as label_error:
                 # If setting label fails, try creating label first
                 if "Unknown Label" in str(label_error) or "label does not exist" in str(label_error).lower():
                     try:
-                        await asyncio.to_thread(self.client.call, "label.add", label)
-                        await asyncio.to_thread(self.client.call, "label.set_torrent", torrent_hash, label)
+                        await asyncify(self.client.call)("label.add", label)
+                        await asyncify(self.client.call)("label.set_torrent", torrent_hash, label)
                     except Exception as retry_error:
                         logger.warning(f"Failed to set label after creating it: {retry_error}")
 
@@ -267,7 +262,7 @@ class DelugeClient(TorrentClient):
         Args:
             torrent_hash (str): Torrent hash.
         """
-        await asyncio.to_thread(self.client.call, "core.remove_torrent", torrent_hash, False)
+        await asyncify(self.client.call)("core.remove_torrent", torrent_hash, False)
 
     async def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str) -> None:
         """Rename entire torrent.
@@ -277,8 +272,7 @@ class DelugeClient(TorrentClient):
             old_name (str): Old torrent name.
             new_name (str): New torrent name.
         """
-        await asyncio.to_thread(
-            self.client.call,
+        await asyncify(self.client.call)(
             "core.rename_folder",
             torrent_hash,
             old_name + "/",
@@ -294,8 +288,7 @@ class DelugeClient(TorrentClient):
             new_name (str): New file name.
         """
         try:
-            await asyncio.to_thread(
-                self.client.call,
+            await asyncify(self.client.call)(
                 "core.rename_files",
                 torrent_hash,
                 [(old_path, new_name)],
@@ -309,7 +302,7 @@ class DelugeClient(TorrentClient):
         Args:
             torrent_hash (str): Torrent hash.
         """
-        await asyncio.to_thread(self.client.call, "core.force_recheck", [torrent_hash])
+        await asyncify(self.client.call)("core.force_recheck", [torrent_hash])
 
     async def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
         """Process rename mapping to adapt to Deluge.
@@ -324,7 +317,7 @@ class DelugeClient(TorrentClient):
         Returns:
             dict: Processed rename mapping with file indices as keys.
         """
-        torrent_info = await asyncio.to_thread(self.client.call, "core.get_torrent_status", torrent_hash, ["files"])
+        torrent_info = await asyncify(self.client.call)("core.get_torrent_status", torrent_hash, ["files"])
         if not isinstance(torrent_info, dict):
             logger.debug("Invalid torrent info from Deluge: %s", torrent_info)
             return {}
@@ -347,8 +340,7 @@ class DelugeClient(TorrentClient):
         """
         try:
             torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
-            async with aiofiles.open(torrent_path, "rb") as f:
-                return await f.read()
+            return await torrent_path.read_bytes()
         except Exception as e:
             logger.error(f"Error getting torrent data from Deluge: {e}")
             return None
@@ -363,7 +355,7 @@ class DelugeClient(TorrentClient):
             bool: True if successful, False otherwise.
         """
         try:
-            await asyncio.to_thread(self.client.call, "core.resume_torrent", [torrent_hash])
+            await asyncify(self.client.call)("core.resume_torrent", [torrent_hash])
             return True
         except Exception as e:
             logger.error(f"Failed to resume torrent {torrent_hash}: {e}")

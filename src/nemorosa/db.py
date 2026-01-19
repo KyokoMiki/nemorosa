@@ -3,12 +3,12 @@ Database operation module.
 Provides SQLite storage functionality for torrent scan history, result mapping, URL records and other data.
 """
 
-import asyncio
 from collections.abc import Collection, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import anyio
 import msgspec
 from platformdirs import user_config_dir
 from sqlalchemy import Boolean, ForeignKey, Index, Integer, Row, String, delete, func, select, text, update
@@ -618,7 +618,7 @@ class NemorosaDatabase:
 
 # Global database instance
 _db_instance: NemorosaDatabase | None = None
-_db_lock = asyncio.Lock()
+_db_lock = anyio.Lock()
 
 
 async def init_database(db_path: str | None = None) -> None:

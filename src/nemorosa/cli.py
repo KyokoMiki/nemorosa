@@ -1,8 +1,9 @@
 """Command line interface for nemorosa."""
 
-import asyncio
 import sys
 from argparse import ArgumentParser
+
+import anyio
 
 from . import config, logger
 from .api import cleanup_api, get_target_apis, init_api
@@ -12,23 +13,6 @@ from .db import cleanup_database, get_database, init_database
 from .notifier import get_notifier, init_notifier
 from .scheduler import init_job_manager
 from .webserver import run_webserver
-
-
-def setup_event_loop():
-    """Setup the best available event loop for the current platform."""
-    try:
-        if sys.platform == "win32":
-            import winloop  # type: ignore[import]
-
-            winloop.install()
-        else:
-            import uvloop  # type: ignore[import]
-
-            uvloop.install()
-    except ImportError as e:
-        logger.warning(f"Event loop library not available: {e}, using default asyncio")
-    except Exception as e:
-        logger.warning(f"Event loop setup failed: {e}, using default asyncio")
 
 
 def setup_argument_parser():
@@ -218,7 +202,6 @@ def main():
     """Main function."""
     # Step 1: Setup event loop
     logger.init_logger()
-    setup_event_loop()
 
     # Step 2: Parse command line arguments
     parser = setup_argument_parser()
@@ -254,7 +237,7 @@ def main():
         # Server mode
         run_webserver()
     else:
-        asyncio.run(_async_main(args))
+        anyio.run(_async_main, args, backend_options={"use_uvloop": True})
 
     logger.section("===== Nemorosa Finished =====")
 

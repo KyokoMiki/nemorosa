@@ -3,7 +3,6 @@ Common torrent client functionality.
 Provides base classes, utilities and shared logic for all torrent client implementations.
 """
 
-import asyncio
 import posixpath
 import shutil
 from abc import ABC, abstractmethod
@@ -14,9 +13,11 @@ from itertools import groupby
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
+import anyio
 import msgspec
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
+from asyncer import asyncify
 from torf import Torrent
 
 from .. import config, db, filecompare, logger, scheduler
@@ -146,8 +147,7 @@ class TorrentClient(ABC):
         self.monitoring = False
         # key: torrent_hash, value: is_verifying (False=delayed, True=verifying)
         self._tracked_torrents: dict[str, bool] = {}
-        self._monitor_lock = asyncio.Lock()
-        self._torrents_processed_event = asyncio.Event()  # Event to signal when all torrents are processed
+        self._monitor_condition = anyio.Condition()
 
         # Job configuration
         self._monitor_job_id = "torrent_monitor"
@@ -339,27 +339,32 @@ class TorrentClient(ABC):
             if not torrents:
                 logger.debug("No torrents provided for cache sync")
                 # Clear all cached torrents if the new list is empty
-                await asyncio.shield(database.clear_client_torrents_cache())
+                with anyio.CancelScope(shield=True):
+                    await database.clear_client_torrents_cache()
                 return
 
             # Get current cached torrent hashes
-            cached_hashes = await asyncio.shield(database.get_all_cached_torrent_hashes())
+            cached_hashes: set[str] = set()
+            with anyio.CancelScope(shield=True):
+                cached_hashes = await database.get_all_cached_torrent_hashes()
             new_hashes = {torrent.hash for torrent in torrents}
 
             # Step 1: Batch delete torrents that no longer exist in client
             torrents_to_delete = cached_hashes - new_hashes
             if torrents_to_delete:
-                await asyncio.shield(database.delete_client_torrents(torrents_to_delete))
+                with anyio.CancelScope(shield=True):
+                    await database.delete_client_torrents(torrents_to_delete)
                 logger.debug(f"Deleted {len(torrents_to_delete)} torrents from cache")
 
             # Step 2: Update/insert torrents one by one
             for torrent in torrents:
-                await asyncio.shield(database.save_client_torrent_info(torrent))
-                await asyncio.sleep(0)  # Yield control to allow other async tasks to run
+                with anyio.CancelScope(shield=True):
+                    await database.save_client_torrent_info(torrent)
+                await anyio.sleep(0)  # Yield control to allow other async tasks to run
 
             logger.success(f"Synced {len(torrents)} torrents to database cache")
 
-        except asyncio.CancelledError:
+        except anyio.get_cancelled_exc_class():
             # During shutdown, exit gracefully - the sync will continue on the next run
             logger.debug("Cache sync cancelled during shutdown (expected)")
             return
@@ -754,7 +759,7 @@ class TorrentClient(ABC):
             if name_differs:
                 original_download_dir = posixpath.join(download_dir, current_name)
                 try:
-                    await asyncio.to_thread(shutil.move, original_download_dir, final_download_dir)
+                    await asyncify(shutil.move)(original_download_dir, final_download_dir)
                 except FileExistsError as e:
                     logger.warning(f"Download directory already exists, skipping rename: {e}")
                 except OSError as e:
@@ -804,7 +809,7 @@ class TorrentClient(ABC):
                 should_verify = name_differs or bool(rename_map) or (not hash_match and not self.supports_fast_resume)
                 if should_verify:
                     logger.debug("Verifying torrent after renaming")
-                    await asyncio.sleep(1)
+                    await anyio.sleep(1)
                     await self._verify_torrent(torrent_hash)
 
                 logger.success("Torrent injected successfully")
@@ -812,7 +817,7 @@ class TorrentClient(ABC):
             except Exception as e:
                 if attempt < max_retries - 1:
                     logger.debug(f"Error injecting torrent: {e}, retrying ({attempt + 1}/{max_retries})...")
-                    await asyncio.sleep(2)
+                    await anyio.sleep(2)
                 else:
                     logger.error(f"Failed to inject torrent after {max_retries} attempts: {e}")
 
@@ -1000,31 +1005,39 @@ class TorrentClient(ABC):
             logger.info("Torrent monitoring started")
 
     async def wait_for_monitoring_completion(self) -> None:
-        """Wait for monitoring to complete and all tracked torrents to finish processing."""
+        """Wait for monitoring to complete and all tracked torrents to finish processing.
+
+        This method waits up to 30 seconds for all tracked torrents to complete verification.
+        If timeout occurs, remaining torrents are logged and the method returns.
+        """
         if not self.monitoring:
             return
 
         self.monitoring = False
 
-        # Wait for all tracked torrents to be processed
-        async with self._monitor_lock:
-            has_tracked = bool(self._tracked_torrents)
-            if has_tracked:
-                logger.info(f"Waiting for {len(self._tracked_torrents)} tracked torrents to complete...")
-                # Clear the event to ensure we wait for current torrents
-                self._torrents_processed_event.clear()
+        try:
+            # Wait for all tracked torrents to be processed with 30s timeout
+            with anyio.move_on_after(30.0) as cancel_scope:
+                async with self._monitor_condition:
+                    if self._tracked_torrents:
+                        logger.info(f"Waiting for {len(self._tracked_torrents)} tracked torrents to complete...")
+                    # Wait until all torrents are processed (condition loop pattern)
+                    while self._tracked_torrents:
+                        await self._monitor_condition.wait()
 
-        if has_tracked:
-            try:
-                # Wait for the event to be set (all torrents processed) with timeout
-                await asyncio.wait_for(self._torrents_processed_event.wait(), timeout=30.0)
-                logger.info("All tracked torrents completed")
-            except TimeoutError:
-                async with self._monitor_lock:
+            if cancel_scope.cancelled_caught:
+                async with self._monitor_condition:
                     remaining = len(self._tracked_torrents)
                 logger.warning(f"Timeout waiting for {remaining} torrents to complete")
+            else:
+                logger.info("All tracked torrents completed")
 
-        logger.info("Torrent monitoring stopped")
+        except anyio.get_cancelled_exc_class():
+            # Handle cancellation during shutdown gracefully
+            logger.debug("Monitoring wait cancelled during shutdown")
+            return
+
+        logger.info("Torrent monitoring completed and stopped")
 
     async def _check_tracked_torrents(self) -> None:
         """Check tracked torrents for verification completion.
@@ -1065,20 +1078,20 @@ class TorrentClient(ABC):
                     # Remove from tracking
                     completed_torrents.add(torrent_hash)
 
-            # Check tracked torrents for completion
-            async with self._monitor_lock:
+            # Update tracked torrents and notify waiters if all done
+            async with self._monitor_condition:
                 # Remove completed torrents from tracking
                 for torrent_hash in completed_torrents:
                     self._tracked_torrents.pop(torrent_hash, None)
 
-                # If no more tracked torrents, set the event
+                # If no more tracked torrents, notify waiters and stop monitoring
                 if not self._tracked_torrents:
-                    self._torrents_processed_event.set()
+                    self._monitor_condition.notify_all()
                     self.monitoring = False
                     # Remove the job from the global scheduler
                     try:
                         scheduler.get_job_manager().scheduler.remove_job(self._monitor_job_id)
-                        logger.info("Torrent monitoring stopped")
+                        logger.debug("Torrent monitor job removed")
                     except Exception as e:
                         logger.warning(f"Error removing torrent monitor job: {e}")
 
@@ -1087,7 +1100,7 @@ class TorrentClient(ABC):
 
     async def track_verification(self, torrent_hash: str) -> None:
         """Start tracking a torrent for verification completion."""
-        async with self._monitor_lock:
+        async with self._monitor_condition:
             # Lazy start monitoring if not already started
             if not self.monitoring:
                 await self.start_monitoring()
@@ -1114,26 +1127,20 @@ class TorrentClient(ABC):
         It needs processing time to begin the actual verification process, and this processing
         time cannot be queried. The delay is now handled by APScheduler's DateTrigger.
         """
-        async with self._monitor_lock:
+        async with self._monitor_condition:
             # Update status to verifying (True)
             if torrent_hash in self._tracked_torrents:
                 self._tracked_torrents[torrent_hash] = True
                 logger.debug(f"Started tracking verification for torrent {torrent_hash}")
 
-    async def stop_tracking(self, torrent_hash: str) -> None:
-        """Stop tracking a torrent."""
-        async with self._monitor_lock:
-            self._tracked_torrents.pop(torrent_hash, None)
-            logger.debug(f"Stopped tracking torrent {torrent_hash}")
-
     async def is_tracking(self, torrent_hash: str) -> bool:
         """Check if a torrent is being tracked."""
-        async with self._monitor_lock:
+        async with self._monitor_condition:
             return torrent_hash in self._tracked_torrents
 
     async def get_tracked_count(self) -> int:
         """Get the number of torrents being tracked."""
-        async with self._monitor_lock:
+        async with self._monitor_condition:
             return len(self._tracked_torrents)
 
     # endregion

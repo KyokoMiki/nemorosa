@@ -3,15 +3,14 @@ rTorrent client implementation.
 Provides integration with rTorrent via XML-RPC interface using SCGI transport.
 """
 
-import asyncio
 import posixpath
 import xmlrpc.client  # nosec B411
-from pathlib import Path
 from urllib.parse import urlsplit
 
-import aiofiles
-import aiofiles.os
+import anyio
 import defusedxml.xmlrpc
+from anyio import Path
+from asyncer import asyncify
 from torf import Torrent
 
 from .. import config, logger
@@ -180,7 +179,7 @@ class RTorrentClient(TorrentClient):
                             getattr(multicall, arg)(torrent_hash.upper())
 
                         # Execute all calls at once
-                        results = await asyncio.to_thread(multicall)
+                        results = await asyncify(multicall)()
 
                         if results:
                             # Build result similar to d.multicall2 format
@@ -191,8 +190,7 @@ class RTorrentClient(TorrentClient):
                         continue
             else:
                 # Get all torrents
-                torrents_data = await asyncio.to_thread(
-                    self.client.d.multicall2,
+                torrents_data = await asyncify(self.client.d.multicall2)(
                     "",
                     "main",
                     *[f"{arg}=" for arg in arguments],
@@ -255,7 +253,7 @@ class RTorrentClient(TorrentClient):
                     getattr(multicall, field)(torrent_hash.upper())
 
                 # Execute all calls at once
-                results = await asyncio.to_thread(multicall)
+                results = await asyncify(multicall)()
 
                 is_active = results[0]
                 is_open = results[1]
@@ -295,7 +293,7 @@ class RTorrentClient(TorrentClient):
                 getattr(multicall, arg)(torrent_hash.upper())
 
             # Execute all calls at once
-            results = await asyncio.to_thread(multicall)
+            results = await asyncify(multicall)()
 
             if not results:
                 return None
@@ -345,8 +343,7 @@ class RTorrentClient(TorrentClient):
             List of ClientTorrentFile objects
         """
         try:
-            files_data = await asyncio.to_thread(
-                self.client.f.multicall,
+            files_data = await asyncify(self.client.f.multicall)(
                 torrent_hash.upper(),
                 "",
                 "f.path=",
@@ -378,7 +375,7 @@ class RTorrentClient(TorrentClient):
             List of tracker URLs
         """
         try:
-            trackers_data = await asyncio.to_thread(self.client.t.multicall, torrent_hash.upper(), "", "t.url=")
+            trackers_data = await asyncify(self.client.t.multicall)(torrent_hash.upper(), "", "t.url=")
             if not isinstance(trackers_data, list):
                 raise ValueError(f"Expected list of trackers data, got {type(trackers_data)}, data: {trackers_data}")
             return [tracker[0] for tracker in trackers_data]
@@ -422,13 +419,13 @@ class RTorrentClient(TorrentClient):
                 file_path = download_path / "/".join(torrent_file.parts[1:])
 
                 # Use async file operations to avoid blocking the event loop
-                is_file = await aiofiles.os.path.isfile(file_path)
+                is_file = await file_path.is_file()
                 if not is_file:
                     logger.warning("Torrent is incomplete, fallback to not using fast resume")
                     torrent_completed = False
                     break
 
-                file_stat = await aiofiles.os.stat(file_path)
+                file_stat = await file_path.stat()
                 if file_stat.st_size != torrent_file.size:
                     logger.warning("Torrent is incomplete, fallback to not using fast resume")
                     torrent_completed = False
@@ -474,12 +471,12 @@ class RTorrentClient(TorrentClient):
             if torrent_completed:
                 # The only way to use fast resume information is to start downloading,
                 # so if auto_start_torrents = false is set, we can only start then pause
-                await asyncio.to_thread(self.client.load.raw_start, "", *cmd)
+                await asyncify(self.client.load.raw_start)("", *cmd)
                 if not config.cfg.global_config.auto_start_torrents:
-                    await asyncio.sleep(1)
-                    await asyncio.to_thread(self.client.d.pause, info_hash.upper())
+                    await anyio.sleep(1)
+                    await asyncify(self.client.d.pause)(info_hash.upper())
             else:
-                await asyncio.to_thread(self.client.load.raw, "", *cmd)
+                await asyncify(self.client.load.raw)("", *cmd)
 
             return str(info_hash)
 
@@ -500,7 +497,7 @@ class RTorrentClient(TorrentClient):
         """
         try:
             # Erase torrent (without deleting files)
-            await asyncio.to_thread(self.client.d.erase, torrent_hash.upper())
+            await asyncify(self.client.d.erase)(torrent_hash.upper())
         except Exception as e:
             logger.error(f"Error removing torrent from rTorrent: {e}")
 
@@ -551,7 +548,7 @@ class RTorrentClient(TorrentClient):
             torrent_hash (str): Torrent hash.
         """
         try:
-            await asyncio.to_thread(self.client.d.check_hash, torrent_hash.upper())
+            await asyncify(self.client.d.check_hash)(torrent_hash.upper())
         except Exception as e:
             logger.error(f"Error verifying torrent in rTorrent: {e}")
 
@@ -589,8 +586,7 @@ class RTorrentClient(TorrentClient):
         """
         try:
             torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
-            async with aiofiles.open(torrent_path, "rb") as f:
-                return await f.read()
+            return await torrent_path.read_bytes()
         except Exception as e:
             logger.error(f"Error getting torrent data from rTorrent: {e}")
             return None
@@ -606,7 +602,7 @@ class RTorrentClient(TorrentClient):
         """
         try:
             # Start torrent
-            await asyncio.to_thread(self.client.d.start, torrent_hash.upper())
+            await asyncify(self.client.d.start)(torrent_hash.upper())
             return True
         except Exception as e:
             logger.error(f"Failed to resume torrent {torrent_hash}: {e}")

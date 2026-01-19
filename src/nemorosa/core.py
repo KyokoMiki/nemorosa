@@ -1,12 +1,13 @@
 """Core processing functions for nemorosa."""
 
-import asyncio
 import posixpath
 from enum import Enum
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
+import anyio
 import msgspec
+from asyncer import asyncify
 from pydantic import BaseModel, Field
 from torf import Torrent
 
@@ -387,8 +388,7 @@ class NemorosaCore:
             # Generate link map for file linking
             file_mapping = generate_link_map(local_torrent_info.fdict, matched_fdict)
             # File linking mode: create links first, then add torrent with linked directory
-            final_download_dir = await asyncio.to_thread(
-                create_file_links_for_torrent,
+            final_download_dir = await asyncify(create_file_links_for_torrent)(
                 matched_torrent,
                 local_torrent_info.download_dir,
                 local_torrent_info.name,
@@ -936,8 +936,7 @@ class NemorosaCore:
                 # Generate link map for file linking
                 file_mapping = generate_link_map(matched_torrent.fdict, fdict_torrent)
                 # File linking mode: create links first, then add torrent with linked directory
-                final_download_dir = await asyncio.to_thread(
-                    create_file_links_for_torrent,
+                final_download_dir = await asyncify(create_file_links_for_torrent)(
                     torrent_object,
                     matched_torrent.download_dir,
                     matched_torrent.name,
@@ -982,7 +981,7 @@ class NemorosaCore:
 
 # Global core instance
 _core_instance: NemorosaCore | None = None
-_core_lock = asyncio.Lock()
+_core_lock = anyio.Lock()
 
 
 async def init_core() -> None:
