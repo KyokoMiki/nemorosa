@@ -801,13 +801,16 @@ async def init_api(target_sites: list[TargetSiteConfig]) -> None:
             site_cookies = SimpleCookie(site.cookie) if site.cookie else None
 
             logger.debug(f"Connecting to target site {i + 1}/{len(target_sites)}: {site.server}")
+            api_instance = get_api_instance(server=site.server, api_key=site.api_key, cookies=site_cookies)
             try:
-                api_instance = get_api_instance(server=site.server, api_key=site.api_key, cookies=site_cookies)
                 await api_instance.auth()
                 target_apis.append(api_instance)
                 logger.success(f"API connection established for {site.server}")
             except Exception as e:
                 logger.error(f"API connection failed for {site.server}: {str(e)}")
+                # Close the failed instance to prevent resource leak
+                with suppress(Exception):
+                    await api_instance.close()
                 # Continue processing other sites, don't exit program
 
         if not target_apis:
