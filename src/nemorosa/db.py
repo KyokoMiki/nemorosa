@@ -282,7 +282,7 @@ class NemorosaDatabase:
             )
             result_set = await session.execute(stmt)
             # Use cast to tell type checker that we've filtered out None values in the query
-            return cast(Sequence[str], result_set.scalars().unique().all())
+            return cast("Sequence[str]", result_set.scalars().unique().all())
 
     async def update_scan_result_checked(self, matched_torrent_hash: str, checked: bool):
         """Update checked status for a scan result.

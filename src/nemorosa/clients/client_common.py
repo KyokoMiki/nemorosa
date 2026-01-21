@@ -3,6 +3,7 @@ Common torrent client functionality.
 Provides base classes, utilities and shared logic for all torrent client implementations.
 """
 
+import logging
 import posixpath
 import shutil
 from abc import ABC, abstractmethod
@@ -18,6 +19,7 @@ import msgspec
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from asyncer import asyncify
+from tenacity import before_sleep_log, retry, stop_after_attempt, wait_fixed
 from torf import Torrent
 
 from .. import config, db, filecompare, logger, scheduler
@@ -512,33 +514,9 @@ class TorrentClient(ABC):
 
             logger.debug(f"Found torrent: {target_torrent.name} ({infohash})")
 
-            # Check if torrent meets basic conditions (same as get_filtered_torrents)
-            check_trackers_list = config.cfg.global_config.check_trackers
-            if check_trackers_list and not any(
-                any(check_str in url for check_str in check_trackers_list) for url in target_torrent.trackers
-            ):
-                logger.debug(f"Torrent {target_torrent.name} filtered out: tracker not in check_trackers list")
-                logger.debug(f"Torrent trackers: {target_torrent.trackers}")
-                logger.debug(f"Required trackers: {check_trackers_list}")
+            # Check if torrent meets basic conditions
+            if not self._should_include_torrent(target_torrent):
                 return None
-
-            # Filter MP3 files (based on configuration)
-            if config.cfg.global_config.exclude_mp3:
-                has_mp3 = any(posixpath.splitext(file.name)[1].lower() == ".mp3" for file in target_torrent.files)
-                if has_mp3:
-                    logger.debug(f"Torrent {target_torrent.name} filtered out: contains MP3 files (exclude_mp3=true)")
-                    return None
-
-            # Check if torrent contains music files (if check_music_only is enabled)
-            if config.cfg.global_config.check_music_only:
-                has_music = any(filecompare.is_music_file(file.name) for file in target_torrent.files)
-                if not has_music:
-                    logger.debug(
-                        f"Torrent {target_torrent.name} filtered out: no music files found (check_music_only=true)"
-                    )
-                    file_extensions = [posixpath.splitext(f.name)[1].lower() for f in target_torrent.files]
-                    logger.debug(f"File extensions in torrent: {file_extensions}")
-                    return None
 
             # Collect which target trackers this content already exists on
             # (by checking all torrents with the same content name)
@@ -566,6 +544,98 @@ class TorrentClient(ABC):
         except Exception as e:
             logger.error("Error retrieving single torrent: %s", e)
             return None
+
+    def _should_include_torrent(self, torrent: ClientTorrentInfo) -> bool:
+        """Check if a torrent meets all filter conditions.
+
+        Evaluates check_trackers, exclude_mp3, and check_music_only configuration
+        to determine whether a torrent should be included in filtered results.
+
+        Args:
+            torrent: Torrent information to check.
+
+        Returns:
+            True if the torrent passes all filters, False otherwise.
+        """
+        # Check tracker filter
+        check_trackers_list = config.cfg.global_config.check_trackers
+        if check_trackers_list and not any(
+            any(check_str in url for check_str in check_trackers_list) for url in torrent.trackers
+        ):
+            logger.debug(f"Torrent {torrent.name} filtered out: tracker not in check_trackers list")
+            logger.debug(f"Torrent trackers: {torrent.trackers}")
+            logger.debug(f"Required trackers: {check_trackers_list}")
+            return False
+
+        # Check MP3 exclusion filter
+        if config.cfg.global_config.exclude_mp3:
+            has_mp3 = any(posixpath.splitext(file.name)[1].lower() == ".mp3" for file in torrent.files)
+            if has_mp3:
+                logger.debug(f"Torrent {torrent.name} filtered out: contains MP3 files (exclude_mp3=true)")
+                return False
+
+        # Check music only filter
+        if config.cfg.global_config.check_music_only:
+            has_music = any(filecompare.is_music_file(file.name) for file in torrent.files)
+            if not has_music:
+                logger.debug(f"Torrent {torrent.name} filtered out: no music files found (check_music_only=true)")
+                file_extensions = [posixpath.splitext(f.name)[1].lower() for f in torrent.files]
+                logger.debug(f"File extensions in torrent: {file_extensions}")
+                return False
+
+        return True
+
+    def _group_torrents_by_content(
+        self,
+        torrents: list[ClientTorrentInfo],
+        target_trackers: list[str],
+    ) -> tuple[dict[str, set[str]], dict[str, ClientTorrentInfo]]:
+        """Group torrents by content name and collect tracker mappings.
+
+        This method filters torrents using _should_include_torrent, groups them
+        by content name (torrent.name), and tracks which target trackers each
+        content already exists on.
+
+        Args:
+            torrents: List of torrents to process.
+            target_trackers: List of target tracker names to check.
+
+        Returns:
+            A tuple of (content_tracker_mapping, valid_torrents) where:
+                - content_tracker_mapping: Maps content name to set of target trackers it exists on
+                - valid_torrents: Maps content name to the best torrent for that content
+        """
+        content_tracker_mapping: dict[str, set[str]] = {}
+        valid_torrents: dict[str, ClientTorrentInfo] = {}
+
+        for torrent in torrents:
+            # Apply all filter conditions
+            if not self._should_include_torrent(torrent):
+                continue
+
+            content_name = torrent.name
+
+            # Record which trackers this content exists on
+            if content_name not in content_tracker_mapping:
+                content_tracker_mapping[content_name] = set()
+
+            for tracker_url in torrent.trackers:
+                for target_tracker in target_trackers:
+                    if target_tracker in tracker_url:
+                        content_tracker_mapping[content_name].add(target_tracker)
+
+            # Save torrent info (if duplicated, choose better version)
+            if content_name not in valid_torrents:
+                valid_torrents[content_name] = torrent
+            else:
+                # Choose version with fewer files or smaller size
+                existing = valid_torrents[content_name]
+                if len(torrent.files) < len(existing.files) or (
+                    len(torrent.files) == len(existing.files) and torrent.total_size < existing.total_size
+                ):
+                    valid_torrents[content_name] = torrent
+
+        return content_tracker_mapping, valid_torrents
 
     async def get_filtered_torrents(self, target_trackers: list[str]) -> dict[str, ClientTorrentInfo]:
         """Get filtered torrent list and rebuild cache.
@@ -600,51 +670,8 @@ class TorrentClient(ABC):
                 max_instances=1,
             )
 
-            # Step 1: Group by content name, collect which trackers each content exists on
-            content_tracker_mapping: dict[str, set[str]] = {}
-            valid_torrents: dict[str, ClientTorrentInfo] = {}
-
-            for torrent in torrents:
-                # Only process torrents that meet CHECK_TRACKERS conditions
-                check_trackers_list = config.cfg.global_config.check_trackers
-                if check_trackers_list and not any(
-                    any(check_str in url for check_str in check_trackers_list) for url in torrent.trackers
-                ):
-                    continue
-
-                # Filter MP3 files (based on configuration)
-                if config.cfg.global_config.exclude_mp3:
-                    has_mp3 = any(posixpath.splitext(file.name)[1].lower() == ".mp3" for file in torrent.files)
-                    if has_mp3:
-                        continue
-
-                # Check if torrent contains music files (if check_music_only is enabled)
-                if config.cfg.global_config.check_music_only:
-                    has_music = any(filecompare.is_music_file(file.name) for file in torrent.files)
-                    if not has_music:
-                        continue
-
-                content_name = torrent.name
-
-                # Record which trackers this content exists on
-                if content_name not in content_tracker_mapping:
-                    content_tracker_mapping[content_name] = set()
-
-                for tracker_url in torrent.trackers:
-                    for target_tracker in target_trackers:
-                        if target_tracker in tracker_url:
-                            content_tracker_mapping[content_name].add(target_tracker)
-
-                # Save torrent info (if duplicated, choose better version)
-                if content_name not in valid_torrents:
-                    valid_torrents[content_name] = torrent
-                else:
-                    # Choose version with fewer files or smaller size
-                    existing = valid_torrents[content_name]
-                    if len(torrent.files) < len(existing.files) or (
-                        len(torrent.files) == len(existing.files) and torrent.total_size < existing.total_size
-                    ):
-                        valid_torrents[content_name] = torrent
+            # Group by content name, collect which trackers each content exists on
+            content_tracker_mapping, valid_torrents = self._group_torrents_by_content(torrents, target_trackers)
 
             # Step 2: Filter out content that already exists on all target trackers
             filtered_torrents = {}
@@ -746,9 +773,6 @@ class TorrentClient(ABC):
                 - success: True if injection successful, False otherwise
                 - verified: True if verification was performed, False otherwise
         """
-        # Flag to track if rename map has been processed
-        rename_map_processed = False
-
         current_name = str(torrent_object.name)
         name_differs = current_name != local_torrent_name
         torrent_url = torrent_object.comment or ""
@@ -779,60 +803,93 @@ class TorrentClient(ABC):
             )
             raise
 
-        max_retries = 8
-        for attempt in range(max_retries):
-            try:
-                # Rename entire torrent
-                if current_name != local_torrent_name:
-                    await self._rename_torrent(torrent_hash, current_name, local_torrent_name)
-                    logger.debug(f"Renamed torrent from {current_name} to {local_torrent_name}")
+        try:
+            should_verify = await self._perform_torrent_rename_and_verify(
+                torrent_hash=torrent_hash,
+                current_name=current_name,
+                local_torrent_name=local_torrent_name,
+                rename_map=rename_map,
+                name_differs=name_differs,
+                hash_match=hash_match,
+            )
+            logger.success("Torrent injected successfully")
+            return True, should_verify
+        except Exception as e:
+            logger.error(f"Failed to inject torrent after retries: {e}")
 
-                if not config.cfg.linking.enable_linking:
-                    # Process rename map only once
-                    if not rename_map_processed:
-                        rename_map = await self._process_rename_map(
-                            torrent_hash=torrent_hash, base_path=local_torrent_name, rename_map=rename_map
-                        )
-                        rename_map_processed = True
+            # Send failure notification if configured
+            if config.cfg.global_config.notification_urls:
+                await get_notifier().send_inject_failure(
+                    torrent_name=local_torrent_name,
+                    torrent_url=torrent_url,
+                    reason=str(e),
+                )
 
-                    # Rename files
-                    if rename_map:
-                        for torrent_file_name, local_file_name in rename_map.items():
-                            await self._rename_file(
-                                torrent_hash,
-                                torrent_file_name,
-                                local_file_name,
-                            )
-                            logger.debug(f"Renamed torrent file {torrent_file_name} to {local_file_name}")
+            return False, False
 
-                # Verify torrent (if renaming was performed or not hash match for clients without fast resume)
-                should_verify = name_differs or bool(rename_map) or (not hash_match and not self.supports_fast_resume)
-                if should_verify:
-                    logger.debug("Verifying torrent after renaming")
-                    await anyio.sleep(1)
-                    await self._verify_torrent(torrent_hash)
+    @retry(
+        stop=stop_after_attempt(8),
+        wait=wait_fixed(2),
+        before_sleep=before_sleep_log(logging.getLogger("nemorosa"), logging.DEBUG),
+        reraise=True,
+    )
+    async def _perform_torrent_rename_and_verify(
+        self,
+        torrent_hash: str,
+        current_name: str,
+        local_torrent_name: str,
+        rename_map: dict[str, str],
+        name_differs: bool,
+        hash_match: bool,
+    ) -> bool:
+        """Perform torrent rename and verification with retry logic.
 
-                logger.success("Torrent injected successfully")
-                return True, should_verify
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    logger.debug(f"Error injecting torrent: {e}, retrying ({attempt + 1}/{max_retries})...")
-                    await anyio.sleep(2)
-                else:
-                    logger.error(f"Failed to inject torrent after {max_retries} attempts: {e}")
+        This method handles renaming the torrent and its files, then verifies
+        the torrent if needed. Uses tenacity for automatic retries.
 
-                    # Send failure notification if configured
-                    if config.cfg.global_config.notification_urls:
-                        await get_notifier().send_inject_failure(
-                            torrent_name=local_torrent_name,
-                            torrent_url=torrent_url,
-                            reason=str(e),
-                        )
+        Args:
+            torrent_hash: Hash of the added torrent.
+            current_name: Current name of the torrent.
+            local_torrent_name: Target name for the torrent.
+            rename_map: File rename mapping.
+            name_differs: Whether the torrent name differs from local name.
+            hash_match: Whether this is a hash match.
 
-                    return False, False
+        Returns:
+            True if verification was performed, False otherwise.
 
-        # This should never be reached, but just in case
-        return False, False
+        Raises:
+            Exception: If all retry attempts fail.
+        """
+        # Rename entire torrent
+        if current_name != local_torrent_name:
+            await self._rename_torrent(torrent_hash, current_name, local_torrent_name)
+            logger.debug(f"Renamed torrent from {current_name} to {local_torrent_name}")
+
+        if not config.cfg.linking.enable_linking:
+            # Process rename map
+            rename_map = await self._process_rename_map(
+                torrent_hash=torrent_hash, base_path=local_torrent_name, rename_map=rename_map
+            )
+
+            # Rename files
+            if rename_map:
+                for torrent_file_name, local_file_name in rename_map.items():
+                    await self._rename_file(
+                        torrent_hash,
+                        torrent_file_name,
+                        local_file_name,
+                    )
+                    logger.debug(f"Renamed torrent file {torrent_file_name} to {local_file_name}")
+
+        # Verify torrent (if renaming was performed or not hash match for clients without fast resume)
+        should_verify = name_differs or bool(rename_map) or (not hash_match and not self.supports_fast_resume)
+        if should_verify:
+            logger.debug("Verifying torrent after renaming")
+            await anyio.sleep(1)
+            await self._verify_torrent(torrent_hash)
+
+        return should_verify
 
     async def reverse_inject_torrent(
         self, matched_torrents: list[ClientTorrentInfo], new_name: str, reverse_rename_map: dict
