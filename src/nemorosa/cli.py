@@ -220,7 +220,7 @@ def main():
     logger.section("===== Configuration Summary =====")
     logger.debug(f"Config file: {args.config or 'auto-detected'}")
     logger.debug(f"No download: {config.cfg.global_config.no_download}")
-    logger.debug(f"Log level: {config.cfg.global_config.loglevel.value}")
+    logger.debug(f"Log level: {config.cfg.global_config.loglevel}")
     logger.debug(f"Client URL: {logger.redact_url_password(config.cfg.downloader.client)}")
     check_trackers = config.cfg.global_config.check_trackers
     logger.debug(f"CHECK_TRACKERS: {check_trackers if check_trackers else 'All trackers allowed'}")

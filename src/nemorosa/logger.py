@@ -5,7 +5,7 @@ Provides colored logging functionality with custom log levels and formatters.
 
 import logging
 import sys
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 REDACTED_MSG = "[REDACTED]"
 
 
-class LogColor(Enum):
+class LogColor(StrEnum):
     """Log color enumeration for custom log types.
 
     Note: INFO messages use the default color (no styling applied).
@@ -92,7 +92,7 @@ def init_logger(loglevel: "LogLevel | None" = None) -> None:
     logger = logging.getLogger("nemorosa")
 
     # Set log level
-    logger.setLevel(loglevel.value.upper() if loglevel else logging.INFO)
+    logger.setLevel(loglevel.upper() if loglevel else logging.INFO)
 
     # Remove existing handlers to avoid duplicate logs
     logger.handlers.clear()
@@ -119,7 +119,7 @@ def set_log_level(loglevel: "LogLevel") -> None:
         RuntimeError: If logger has not been initialized.
     """
     logger = get_logger()
-    logger.setLevel(loglevel.value.upper())
+    logger.setLevel(loglevel.upper())
 
 
 def get_logger() -> logging.Logger:
@@ -140,35 +140,35 @@ def get_logger() -> logging.Logger:
 
 # Convenience functions for colored logging
 def success(msg, *args, **kwargs):
-    get_logger().info(click.style(str(msg), fg=LogColor.SUCCESS.value), *args, **kwargs)
+    get_logger().info(click.style(str(msg), fg=LogColor.SUCCESS), *args, **kwargs)
 
 
 def header(msg, *args, **kwargs):
-    get_logger().info(click.style(str(msg), fg=LogColor.HEADER.value), *args, **kwargs)
+    get_logger().info(click.style(str(msg), fg=LogColor.HEADER), *args, **kwargs)
 
 
 def section(msg, *args, **kwargs):
-    get_logger().info(click.style(str(msg), fg=LogColor.SECTION.value), *args, **kwargs)
+    get_logger().info(click.style(str(msg), fg=LogColor.SECTION), *args, **kwargs)
 
 
 def prompt(msg, *args, **kwargs):
-    get_logger().info(click.style(str(msg), fg=LogColor.PROMPT.value), *args, **kwargs)
+    get_logger().info(click.style(str(msg), fg=LogColor.PROMPT), *args, **kwargs)
 
 
 def error(msg, *args, **kwargs):
-    get_logger().error(click.style(str(msg), fg=LogColor.ERROR.value), *args, **kwargs)
+    get_logger().error(click.style(str(msg), fg=LogColor.ERROR), *args, **kwargs)
 
 
 def critical(msg, *args, **kwargs):
-    get_logger().critical(click.style(str(msg), fg=LogColor.CRITICAL.value), *args, **kwargs)
+    get_logger().critical(click.style(str(msg), fg=LogColor.CRITICAL), *args, **kwargs)
 
 
 def debug(msg, *args, **kwargs):
-    get_logger().debug(click.style(str(msg), fg=LogColor.DEBUG.value), *args, **kwargs)
+    get_logger().debug(click.style(str(msg), fg=LogColor.DEBUG), *args, **kwargs)
 
 
 def warning(msg, *args, **kwargs):
-    get_logger().warning(click.style(str(msg), fg=LogColor.WARNING.value), *args, **kwargs)
+    get_logger().warning(click.style(str(msg), fg=LogColor.WARNING), *args, **kwargs)
 
 
 def info(msg, *args, **kwargs):
@@ -178,4 +178,4 @@ def info(msg, *args, **kwargs):
 
 def exception(msg, *args, **kwargs):
     """Log exception message with traceback and error color."""
-    get_logger().exception(click.style(str(msg), fg=LogColor.ERROR.value), *args, **kwargs)
+    get_logger().exception(click.style(str(msg), fg=LogColor.ERROR), *args, **kwargs)

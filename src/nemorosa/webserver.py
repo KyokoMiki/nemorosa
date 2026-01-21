@@ -388,7 +388,7 @@ def run_webserver():
     # Use config values if not provided
     host = config.cfg.server.host
     port = config.cfg.server.port
-    log_level = config.cfg.global_config.loglevel.value
+    log_level = config.cfg.global_config.loglevel
 
     # Log server startup
     logger.info(f"Starting Nemorosa web server on {host if host is not None else 'all interfaces (IPv4/IPv6)'}:{port}")

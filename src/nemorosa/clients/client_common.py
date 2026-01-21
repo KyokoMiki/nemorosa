@@ -9,7 +9,7 @@ import shutil
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from itertools import groupby
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
@@ -53,10 +53,21 @@ def decode_bitfield_bytes(bitfield_data: bytes, piece_count: int) -> list[bool]:
     return piece_progress
 
 
+class PostProcessStatus(StrEnum):
+    """Status of post-processing an injected torrent."""
+
+    COMPLETED = "completed"
+    PARTIAL_KEPT = "partial_kept"
+    PARTIAL_REMOVED = "partial_removed"
+    NOT_FOUND = "not_found"
+    CHECKING = "checking"
+    ERROR = "error"
+
+
 class PostProcessResult(msgspec.Struct):
     """Result of processing a single injected torrent."""
 
-    status: str = "not_found"  # 'completed', 'partial_kept', 'partial_removed', 'not_found', 'checking', 'error'
+    status: PostProcessStatus = PostProcessStatus.NOT_FOUND
     started_downloading: bool = False
     error_message: str | None = None
 
@@ -78,7 +89,7 @@ class FieldSpec(msgspec.Struct):
             return set()
 
 
-class TorrentState(Enum):
+class TorrentState(StrEnum):
     """Torrent download state enumeration."""
 
     UNKNOWN = "unknown"
@@ -92,10 +103,6 @@ class TorrentState(Enum):
     MOVING = "moving"
     ALLOCATING = "allocating"
     METADATA_DOWNLOADING = "metadata_downloading"
-
-    def __bool__(self) -> bool:
-        """Make UNKNOWN state falsy for boolean checks."""
-        return self != TorrentState.UNKNOWN
 
 
 class TorrentConflictError(Exception):
@@ -973,13 +980,13 @@ class TorrentClient(ABC):
             )
             if not matched_torrent:
                 logger.debug(f"Matched torrent {matched_torrent_hash} not found in client, skipping")
-                result.status = "not_found"
+                result.status = PostProcessStatus.NOT_FOUND
                 return result
 
             # Skip if matched torrent is checking
             if matched_torrent.state == TorrentState.CHECKING:
                 logger.debug(f"Matched torrent {matched_torrent.name} is checking, skipping")
-                result.status = "checking"
+                result.status = PostProcessStatus.CHECKING
                 return result
 
             # If matched torrent is 100% complete, start downloading
@@ -996,7 +1003,7 @@ class TorrentClient(ABC):
                     result.started_downloading = False
                 # Mark as checked since it's 100% complete
                 await database.update_scan_result_checked(matched_torrent_hash, True)
-                result.status = "completed"
+                result.status = PostProcessStatus.COMPLETED
             # If matched torrent is not 100% complete, check file progress patterns
             else:
                 logger.debug(
@@ -1009,22 +1016,25 @@ class TorrentClient(ABC):
                     logger.debug(f"Keeping partial torrent {matched_torrent.name} - valid pattern")
                     # Mark as checked since we're keeping the partial torrent
                     await database.update_scan_result_checked(matched_torrent_hash, True)
-                    result.status = "partial_kept"
+                    result.status = PostProcessStatus.PARTIAL_KEPT
                 else:
                     if config.cfg.linking.link_type in (config.LinkType.REFLINK, config.LinkType.REFLINK_OR_COPY):
                         # Keep partial torrent explicitly due to reflink being enabled
                         logger.info(f"Keeping partial torrent {matched_torrent.name} - kept due to reflink enabled")
                         await database.update_scan_result_checked(matched_torrent_hash, True)
-                        result.status = "partial_kept"
+                        result.status = PostProcessStatus.PARTIAL_KEPT
                     else:
                         logger.warning(f"Removing torrent {matched_torrent.name} - failed validation")
                         await self._remove_torrent(matched_torrent.hash)
                         # Clear matched torrent information from database
                         await database.clear_matched_torrent_info(matched_torrent_hash)
-                        result.status = "partial_removed"
+                        result.status = PostProcessStatus.PARTIAL_REMOVED
 
             # Send success notification if configured
-            if config.cfg.global_config.notification_urls and result.status in ("completed", "partial_kept"):
+            if config.cfg.global_config.notification_urls and result.status in (
+                PostProcessStatus.COMPLETED,
+                PostProcessStatus.PARTIAL_KEPT,
+            ):
                 await get_notifier().send_inject_success(
                     torrent_name=matched_torrent.name,
                     torrent_hash=matched_torrent.hash,
@@ -1033,7 +1043,7 @@ class TorrentClient(ABC):
 
         except Exception as e:
             logger.error(f"Error processing torrent {matched_torrent_hash}: {e}")
-            result.status = "error"
+            result.status = PostProcessStatus.ERROR
             result.error_message = str(e)
 
         return result
