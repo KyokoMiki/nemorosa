@@ -153,6 +153,114 @@ class NemorosaCore:
 
         return None, None
 
+    async def _prepare_linked_download_dir(
+        self,
+        torrent_object: Torrent,
+        local_fdict: dict[str, int],
+        matched_fdict: dict[str, int],
+        download_dir: str,
+        torrent_name: str,
+    ) -> str:
+        """Prepare download directory with file linking if enabled.
+
+        Args:
+            torrent_object: Torrent object to create links for.
+            local_fdict: Local file dictionary.
+            matched_fdict: Matched torrent file dictionary.
+            download_dir: Original download directory.
+            torrent_name: Name of the torrent.
+
+        Returns:
+            Final download directory path (linked or original).
+        """
+        if not config.cfg.linking.enable_linking:
+            return download_dir
+
+        file_mapping = generate_link_map(local_fdict, matched_fdict)
+        final_dir = await asyncify(create_file_links_for_torrent)(
+            torrent_object, download_dir, torrent_name, file_mapping
+        )
+        if final_dir is None:
+            logger.error("Failed to create file links, falling back to original directory")
+            return download_dir
+        return final_dir
+
+    async def _search_single_filename(
+        self,
+        fname: str,
+        fdict: dict[str, int],
+        tsize: int,
+        scan_querys: list[str],
+        api: "GazelleJSONAPI | GazelleParser | GazelleGamesNet",
+    ) -> tuple[int | None, bool]:
+        """Search for torrent match using a single filename.
+
+        Args:
+            fname: Filename to search for.
+            fdict: File dictionary mapping filename to size.
+            tsize: Total size of the torrent.
+            scan_querys: List of all search query filenames.
+            api: API instance for the target site.
+
+        Returns:
+            Tuple of (torrent_id, should_continue_loop).
+            - torrent_id: Found torrent ID or None.
+            - should_continue_loop: False if search should stop (match found or music file).
+        """
+        logger.debug(f"Searching for file: {fname}")
+        fname_query = fname
+        try:
+            torrents = await api.search_torrent_by_filename(fname_query)
+        except Exception as e:
+            logger.error(f"Error searching for file '{fname_query}': {e}")
+            raise
+
+        logger.debug(f"Found {len(torrents)} potential matches for file '{fname_query}'")
+
+        # If no results found and it's a music file, try fallback search
+        if len(torrents) == 0 and is_music_file(fname):
+            fname_query = make_search_query(posixpath.basename(fname))
+            if fname_query != fname:
+                logger.debug(f"No results found for '{fname}', trying fallback search with basename: '{fname_query}'")
+                try:
+                    fallback_torrents = await api.search_torrent_by_filename(fname_query)
+                    if fallback_torrents:
+                        torrents = fallback_torrents
+                        logger.debug(f"Fallback search found {len(torrents)} potential matches for '{fname_query}'")
+                    else:
+                        logger.debug(f"Fallback search also found no results for '{fname_query}'")
+                except Exception as e:
+                    logger.error(f"Error in fallback search for file basename '{fname_query}': {e}")
+                    raise
+
+        # Match by total size
+        tid = next((t.torrent_id for t in torrents if t.size == tsize), None)
+        if tid is not None:
+            logger.success(f"Size match found! Torrent ID: {tid} (Size: {tsize})")
+            return tid, False  # Found match, stop loop
+
+        # Handle cases with too many results
+        if len(torrents) > MAX_SEARCH_RESULTS:
+            logger.warning(f"Too many results found for file '{fname_query}' ({len(torrents)}). Skipping.")
+            return None, True  # Continue to next filename
+
+        # Match by file content
+        logger.debug(f"No size match found. Checking file contents for '{fname_query}'")
+        tid = await self.match_by_file_content(
+            torrents=torrents, fname=fname, fdict=fdict, scan_querys=scan_querys, api=api
+        )
+
+        if tid is not None:
+            logger.debug(f"Match found with file '{fname}'. Stopping search.")
+            return tid, False  # Found match, stop loop
+
+        logger.debug(f"No more results for file '{fname}'")
+        if is_music_file(fname):
+            logger.debug("Stopping search as music file match is not found")
+            return None, False  # Music file not found, stop loop
+
+        return None, True  # Continue to next filename
+
     async def filename_search(
         self,
         *,
@@ -175,71 +283,8 @@ class NemorosaCore:
         scan_querys = select_search_filenames(fdict.keys())
 
         for fname in scan_querys:
-            logger.debug(f"Searching for file: {fname}")
-            fname_query = fname
-            try:
-                torrents = await api.search_torrent_by_filename(fname_query)
-            except Exception as e:
-                logger.error(f"Error searching for file '{fname_query}': {e}")
-                raise
-
-            # Record the number of results found
-            logger.debug(f"Found {len(torrents)} potential matches for file '{fname_query}'")
-
-            # If no results found and it's a music file, try make search query and search again
-            if len(torrents) == 0 and is_music_file(fname):
-                fname_query = make_search_query(posixpath.basename(fname))
-                if fname_query != fname:
-                    logger.debug(
-                        f"No results found for '{fname}', trying fallback search with basename: '{fname_query}'"
-                    )
-                    try:
-                        fallback_torrents = await api.search_torrent_by_filename(fname_query)
-                        if fallback_torrents:
-                            torrents = fallback_torrents
-                            logger.debug(f"Fallback search found {len(torrents)} potential matches for '{fname_query}'")
-                        else:
-                            logger.debug(f"Fallback search also found no results for '{fname_query}'")
-                    except Exception as e:
-                        logger.error(f"Error in fallback search for file basename '{fname_query}': {e}")
-                        raise
-
-            # Match by total size
-            size_match_found = False
-            for t in torrents:
-                if tsize == t.size:
-                    tid = t.torrent_id
-                    size_match_found = True
-                    logger.success(f"Size match found! Torrent ID: {tid} (Size: {tsize})")
-                    break
-
-            if size_match_found:
-                break
-
-            # Handle cases with too many results
-            if len(torrents) > MAX_SEARCH_RESULTS:
-                logger.warning(f"Too many results found for file '{fname_query}' ({len(torrents)}). Skipping.")
-                continue
-
-            # Match by file content
-            if tid is None:
-                logger.debug(f"No size match found. Checking file contents for '{fname_query}'")
-                tid = await self.match_by_file_content(
-                    torrents=torrents,
-                    fname=fname,
-                    fdict=fdict,
-                    scan_querys=scan_querys,
-                    api=api,
-                )
-
-            # If match found, exit early
-            if tid is not None:
-                logger.debug(f"Match found with file '{fname}'. Stopping search.")
-                break
-
-            logger.debug(f"No more results for file '{fname}'")
-            if is_music_file(fname):
-                logger.debug("Stopping search as music file match is not found")
+            tid, should_continue = await self._search_single_filename(fname, fdict, tsize, scan_querys, api)
+            if tid is not None or not should_continue:
                 break
 
         if tid is None:
@@ -384,22 +429,13 @@ class NemorosaCore:
         rename_map = generate_rename_map(local_torrent_info.fdict, matched_fdict)
 
         # Handle file linking and rename map based on configuration
-        if config.cfg.linking.enable_linking:
-            # Generate link map for file linking
-            file_mapping = generate_link_map(local_torrent_info.fdict, matched_fdict)
-            # File linking mode: create links first, then add torrent with linked directory
-            final_download_dir = await asyncify(create_file_links_for_torrent)(
-                matched_torrent,
-                local_torrent_info.download_dir,
-                local_torrent_info.name,
-                file_mapping,
-            )
-            if final_download_dir is None:
-                logger.error("Failed to create file links, falling back to original directory")
-                final_download_dir = local_torrent_info.download_dir
-        else:
-            # Normal mode: generate rename map for file renaming
-            final_download_dir = local_torrent_info.download_dir
+        final_download_dir = await self._prepare_linked_download_dir(
+            matched_torrent,
+            local_torrent_info.fdict,
+            matched_fdict,
+            local_torrent_info.download_dir,
+            local_torrent_info.name,
+        )
 
         logger.debug(f"Attempting to inject torrent: {local_torrent_info.name}")
         logger.debug(f"Download directory: {final_download_dir}")
@@ -410,6 +446,50 @@ class NemorosaCore:
             matched_torrent, final_download_dir, local_torrent_info.name, rename_map, hash_match
         )
         return success
+
+    async def _search_torrent_match(
+        self,
+        torrent_details: ClientTorrentInfo,
+        api: "GazelleJSONAPI | GazelleParser | GazelleGamesNet",
+        torrent_object: Torrent | None,
+    ) -> tuple[int | None, Torrent | None, bool, bool]:
+        """Search for matching torrent using hash and filename search.
+
+        Args:
+            torrent_details: Torrent details from client.
+            api: API instance for the target site.
+            torrent_object: Original torrent object for hash search.
+
+        Returns:
+            Tuple of (torrent_id, matched_torrent, hash_match, search_success).
+        """
+        tid = None
+        matched_torrent = None
+        hash_match = True
+        search_success = True
+
+        # Try hash-based search first if torrent object is available
+        if torrent_object:
+            try:
+                logger.debug("Trying hash-based search first")
+                tid, matched_torrent = await self.hash_based_search(torrent_object=torrent_object, api=api)
+            except Exception as e:
+                logger.error(f"Hash-based search failed: {e}")
+                search_success = False
+
+        # If hash search didn't find anything, try filename search
+        if tid is None:
+            try:
+                logger.debug("No torrent found by hash, falling back to filename search")
+                tid, matched_torrent = await self.filename_search(
+                    fdict=torrent_details.fdict, tsize=torrent_details.total_size, api=api
+                )
+                hash_match = False
+            except Exception as e:
+                logger.error(f"Filename search failed: {e}")
+                search_success = False
+
+        return tid, matched_torrent, hash_match, search_success
 
     async def process_torrent_search(
         self,
@@ -433,31 +513,10 @@ class NemorosaCore:
         """
         self.stats.scanned += 1
 
-        tid = None
-        matched_torrent = None
-        hash_match = True
-        search_success = True  # Track if search completed without errors
-
-        # Try hash-based search first if torrent object is available
-        if torrent_object:
-            try:
-                logger.debug("Trying hash-based search first")
-                tid, matched_torrent = await self.hash_based_search(torrent_object=torrent_object, api=api)
-            except Exception as e:
-                logger.error(f"Hash-based search failed: {e}")
-                search_success = False
-
-        # If hash search didn't find anything, try filename search
-        if tid is None:
-            try:
-                logger.debug("No torrent found by hash, falling back to filename search")
-                tid, matched_torrent = await self.filename_search(
-                    fdict=torrent_details.fdict, tsize=torrent_details.total_size, api=api
-                )
-                hash_match = False
-            except Exception as e:
-                logger.error(f"Filename search failed: {e}")
-                search_success = False
+        # Search for matching torrent
+        tid, matched_torrent, hash_match, search_success = await self._search_torrent_match(
+            torrent_details, api, torrent_object
+        )
 
         # Handle no match found case
         if tid is None:
@@ -816,6 +875,95 @@ class NemorosaCore:
             logger.error(f"Error processing single torrent {infohash}: {str(e)}")
             return ProcessResponse(status=ProcessStatus.ERROR, message=f"Error processing torrent: {str(e)}")
 
+    async def _get_torrent_api_and_info(
+        self,
+        torrent_link: str,
+        tid: str,
+    ) -> tuple["GazelleJSONAPI | GazelleParser | GazelleGamesNet", dict[str, int]] | ProcessResponse:
+        """Get torrent API instance and torrent info from link.
+
+        Args:
+            torrent_link: Torrent link containing site information.
+            tid: Torrent ID to fetch info for.
+
+        Returns:
+            Tuple of (torrent_api, fdict_torrent) on success, or ProcessResponse on failure.
+        """
+        parsed_link = urlparse(torrent_link)
+        site_host = parsed_link.hostname
+        if not site_host:
+            return ProcessResponse(
+                status=ProcessStatus.ERROR,
+                message=f"Invalid torrent link (missing hostname): {torrent_link}",
+            )
+        torrent_api = get_api_by_site_host(site_host)
+        if not torrent_api:
+            return ProcessResponse(
+                status=ProcessStatus.ERROR,
+                message=f"Could not find API instance for site: {site_host}",
+            )
+
+        try:
+            torrent_info = await torrent_api.torrent(tid)
+            if not torrent_info:
+                return ProcessResponse(
+                    status=ProcessStatus.ERROR,
+                    message=f"Failed to get torrent info for ID: {tid}",
+                )
+        except Exception as e:
+            logger.error(f"Failed to get torrent info: {e}")
+            return ProcessResponse(
+                status=ProcessStatus.ERROR,
+                message=f"Failed to get torrent info: {str(e)}",
+            )
+
+        fdict_torrent = torrent_info.get("fileList", {})
+        return torrent_api, fdict_torrent
+
+    async def _find_reverse_announce_match(
+        self,
+        torrent_name: str,
+        fdict_torrent: dict[str, int],
+        torrent_api: "GazelleJSONAPI | GazelleParser | GazelleGamesNet",
+        tid: str,
+    ) -> ClientTorrentInfo | ProcessResponse:
+        """Find matching torrent for reverse announce and validate against trump.
+
+        Args:
+            torrent_name: Name of the torrent for logging.
+            fdict_torrent: File dictionary from the incoming torrent.
+            torrent_api: API instance for the incoming torrent.
+            tid: Torrent ID for logging.
+
+        Returns:
+            ClientTorrentInfo on success, or ProcessResponse on failure.
+        """
+        # Search for matching torrents
+        matched_torrents = await self._search_torrent_by_filename_in_client(fdict_torrent)
+
+        if not matched_torrents:
+            return ProcessResponse(
+                status=ProcessStatus.NOT_FOUND,
+                message=f"No matching torrent found in client for: {torrent_name}",
+            )
+
+        # Check if incoming torrent may trump local torrent
+        for matched_torrent in matched_torrents:
+            matched_api = get_api_by_tracker(matched_torrent.trackers)
+            if matched_api is not None and matched_api == torrent_api:
+                logger.warning(
+                    f"Incoming torrent {tid} may trump local torrent {matched_torrent.hash}, skipping processing"
+                )
+                return ProcessResponse(
+                    status=ProcessStatus.SKIPPED_POTENTIAL_TRUMP,
+                    message=f"Local torrent {matched_torrent.hash} may be trumped, skipping processing",
+                )
+
+        # Select the torrent with the most files
+        matched_torrent = max(matched_torrents, key=lambda x: len(x.files))
+        logger.success(f"Found matching torrent in client: {matched_torrent.name}")
+        return matched_torrent
+
     async def process_reverse_announce_torrent(
         self,
         torrent_name: str,
@@ -842,11 +990,10 @@ class NemorosaCore:
 
             logger.debug(f"Extracted torrent ID: {tid} from link: {torrent_link}")
 
-            # First, try to search by album name
+            # Validate album keywords
             album_keywords = make_search_query(album_name).split()
             logger.debug(f"Searching for album: {album_name} with keywords: {album_keywords}")
 
-            # Validate album keywords to avoid unfiltered query
             if len(album_keywords) == 0:
                 logger.debug(f"No valid album keywords extracted for album: {album_name}")
                 return ProcessResponse(
@@ -854,10 +1001,8 @@ class NemorosaCore:
                     message=f"No valid album keywords extracted for album: {album_name}",
                 )
 
-            # Refresh client torrent cache
+            # Refresh client torrent cache and search
             await self.torrent_client.refresh_client_torrents_cache()
-
-            # Search in database by album name
             has_album_match = await self.database.search_torrent_by_album_name(album_keywords)
             if not has_album_match:
                 return ProcessResponse(
@@ -865,58 +1010,17 @@ class NemorosaCore:
                     message=f"No matching torrent found in client for album: {album_name}",
                 )
 
-            # Get API instance from torrent link
-            site_host = str(parsed_link.hostname)
-            torrent_api = get_api_by_site_host(site_host)
+            # Get API instance and torrent info
+            api_result = await self._get_torrent_api_and_info(torrent_link, tid)
+            if isinstance(api_result, ProcessResponse):
+                return api_result
+            torrent_api, fdict_torrent = api_result
 
-            if not torrent_api:
-                return ProcessResponse(
-                    status=ProcessStatus.ERROR,
-                    message=f"Could not find API instance for site: {site_host}",
-                )
-
-            # Get torrent info from API to extract file list
-            try:
-                torrent_info = await torrent_api.torrent(tid)
-                if not torrent_info:
-                    return ProcessResponse(
-                        status=ProcessStatus.ERROR,
-                        message=f"Failed to get torrent info for ID: {tid}",
-                    )
-            except Exception as e:
-                logger.error(f"Failed to get torrent info: {e}")
-                return ProcessResponse(
-                    status=ProcessStatus.ERROR,
-                    message=f"Failed to get torrent info: {str(e)}",
-                )
-
-            # Extract file list from torrent info
-            fdict_torrent = torrent_info.get("fileList", {})
-
-            # Search for matching torrents using database (no need to load all torrents)
-            matched_torrents = await self._search_torrent_by_filename_in_client(fdict_torrent)
-
-            if not matched_torrents:
-                return ProcessResponse(
-                    status=ProcessStatus.NOT_FOUND,
-                    message=f"No matching torrent found in client for: {torrent_name}",
-                )
-
-            # Check if incoming torrent may trump local torrent
-            for matched_torrent in matched_torrents:
-                matched_api = get_api_by_tracker(matched_torrent.trackers)
-                if matched_api is not None and matched_api == torrent_api:
-                    logger.warning(
-                        f"Incoming torrent {tid} may trump local torrent {matched_torrent.hash}, skipping processing"
-                    )
-                    return ProcessResponse(
-                        status=ProcessStatus.SKIPPED_POTENTIAL_TRUMP,
-                        message=f"Local torrent {matched_torrent.hash} may be trumped, skipping processing",
-                    )
-
-            # Select the torrent with the most files (only after checking all don't conflict)
-            matched_torrent = max(matched_torrents, key=lambda x: len(x.files))
-            logger.success(f"Found matching torrent in client: {matched_torrent.name}")
+            # Find matching torrent with trump validation
+            match_result = await self._find_reverse_announce_match(torrent_name, fdict_torrent, torrent_api, tid)
+            if isinstance(match_result, ProcessResponse):
+                return match_result
+            matched_torrent = match_result
 
             # Download torrent data from API (only after finding a match)
             try:
@@ -931,23 +1035,14 @@ class NemorosaCore:
             # Use client's file dictionary
             rename_map = generate_rename_map(matched_torrent.fdict, fdict_torrent)
 
-            # Handle file linking and rename map based on configuration
-            if config.cfg.linking.enable_linking:
-                # Generate link map for file linking
-                file_mapping = generate_link_map(matched_torrent.fdict, fdict_torrent)
-                # File linking mode: create links first, then add torrent with linked directory
-                final_download_dir = await asyncify(create_file_links_for_torrent)(
-                    torrent_object,
-                    matched_torrent.download_dir,
-                    matched_torrent.name,
-                    file_mapping,
-                )
-                if final_download_dir is None:
-                    logger.error("Failed to create file links, falling back to original directory")
-                    final_download_dir = matched_torrent.download_dir
-            else:
-                # Normal mode: use original download directory
-                final_download_dir = matched_torrent.download_dir
+            # Handle file linking and prepare download directory
+            final_download_dir = await self._prepare_linked_download_dir(
+                torrent_object,
+                matched_torrent.fdict,
+                fdict_torrent,
+                matched_torrent.download_dir,
+                matched_torrent.name,
+            )
 
             success, _ = await self.torrent_client.inject_torrent(
                 torrent_object, final_download_dir, matched_torrent.name, rename_map, False

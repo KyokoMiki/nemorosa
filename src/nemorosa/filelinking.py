@@ -24,6 +24,34 @@ def _safe_stat_dev(path: str) -> int | None:
         return None
 
 
+def _find_link_dir_by_device(source_dev: int, link_dirs: list[str]) -> str | None:
+    """Find link directory by matching device ID.
+
+    On Windows, st_dev always returns 0, so this method will not find a match.
+    If duplicate devices are found among link directories, returns None.
+
+    Args:
+        source_dev: Device ID of the source path.
+        link_dirs: List of link directories to check.
+
+    Returns:
+        Matching link directory path, or None if no match found.
+    """
+    if source_dev == 0:
+        return None
+
+    # Build device to directory mapping, abort if duplicates found
+    dev_to_dir: dict[int, str] = {}
+    for link_dir in link_dirs:
+        if st_dev := _safe_stat_dev(link_dir):
+            if st_dev in dev_to_dir:
+                # Duplicate device found, cannot use device matching
+                return None
+            dev_to_dir[st_dev] = link_dir
+
+    return dev_to_dir.get(source_dev)
+
+
 def get_link_directory(source_path: str) -> str | None:
     """Get the appropriate link directory for a source path.
 
@@ -46,21 +74,8 @@ def get_link_directory(source_path: str) -> str | None:
         source_dev = source_stat.st_dev
 
         # Strategy 1: Try device-based matching (like cross-seed)
-        # On Windows, st_dev always returns 0, so this will be skipped
-        if source_dev != 0:
-            # Build device to directory mapping, abort if duplicates found
-            dev_to_dir = {}
-            for link_dir in config.cfg.linking.link_dirs:
-                if st_dev := _safe_stat_dev(link_dir):
-                    if st_dev in dev_to_dir:
-                        # Duplicate device found, cannot use device matching
-                        dev_to_dir = {}
-                        break
-                    dev_to_dir[st_dev] = link_dir
-
-            # Try to find matching device
-            if source_dev in dev_to_dir:
-                return dev_to_dir[source_dev]
+        if link_dir := _find_link_dir_by_device(source_dev, config.cfg.linking.link_dirs):
+            return link_dir
 
         # Strategy 2: Test actual linking capability in each directory
         # This works for Docker mounts, Windows, and other cases where st_dev is not reliable

@@ -387,6 +387,59 @@ class RTorrentClient(TorrentClient):
 
     # region Abstract Methods - Internal Operations
 
+    async def _build_fast_resume_data(self, torrent_obj: Torrent, download_dir: str) -> bytes | None:
+        """Build fast resume data for a torrent if all files are complete.
+
+        Args:
+            torrent_obj: Parsed torrent object.
+            download_dir: Download directory path.
+
+        Returns:
+            Modified torrent bytes with fast resume data, or None if torrent is incomplete.
+        """
+        resume_files = []
+        download_path = Path(download_dir)
+
+        # Iterate through files using torf's filetree
+        for torrent_file in torrent_obj.files:
+            # Build file path
+            file_path = download_path / "/".join(torrent_file.parts[1:])
+
+            # Use async file operations to avoid blocking the event loop
+            try:
+                file_stat = await file_path.stat()
+            except (OSError, FileNotFoundError):
+                logger.warning("Torrent is incomplete, fallback to not using fast resume")
+                return None
+
+            if file_stat.st_size != torrent_file.size:
+                logger.warning("Torrent is incomplete, fallback to not using fast resume")
+                return None
+
+            resume_files.append(
+                {
+                    "priority": 1,
+                    "completed": 1,
+                    "mtime": int(file_stat.st_mtime),
+                }
+            )
+
+        logger.info("Torrent is complete, setting bitfield to piece count")
+
+        # Add resume data to metainfo
+        metainfo = {
+            **torrent_obj.metainfo,
+            "libtorrent_resume": {
+                "files": resume_files,
+                "bitfield": torrent_obj.pieces,
+            },
+        }
+
+        # Create new torrent with modified metainfo
+        modified_torrent = Torrent()
+        modified_torrent._metainfo = metainfo  # type: ignore[attr-defined]
+        return modified_torrent.dump()
+
     async def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
         """Add torrent to rTorrent with optional fast resume support.
 
@@ -407,56 +460,10 @@ class RTorrentClient(TorrentClient):
         # If hash_match is True, add fast resume data
         if hash_match:
             logger.info("Adding fast resume data for hash-matched torrent")
-            torrent_completed = True
-
-            # Build libtorrent_resume data
-            resume_files = []
-            download_path = Path(download_dir)
-
-            # Iterate through files using torf's filetree
-            for torrent_file in torrent_obj.files:
-                # Build file path
-                file_path = download_path / "/".join(torrent_file.parts[1:])
-
-                # Use async file operations to avoid blocking the event loop
-                is_file = await file_path.is_file()
-                if not is_file:
-                    logger.warning("Torrent is incomplete, fallback to not using fast resume")
-                    torrent_completed = False
-                    break
-
-                file_stat = await file_path.stat()
-                if file_stat.st_size != torrent_file.size:
-                    logger.warning("Torrent is incomplete, fallback to not using fast resume")
-                    torrent_completed = False
-                    break
-
-                resume_files.append(
-                    {
-                        "priority": 1,
-                        "completed": 1,
-                        "mtime": int(file_stat.st_mtime),
-                    }
-                )
-
-            # Set bitfield
-            if torrent_completed:
-                logger.info("Torrent is complete, setting bitfield to piece count")
-
-                # Add resume data to metainfo
-                metainfo = {
-                    **torrent_obj.metainfo,
-                    "libtorrent_resume": {
-                        "files": resume_files,
-                        "bitfield": torrent_obj.pieces,
-                    },
-                }
-
-                # Create new torrent with modified metainfo
-                modified_torrent = Torrent()
-                modified_torrent._metainfo = metainfo  # type: ignore[attr-defined]
-                encoded_torrent = modified_torrent.dump()
-                torrent_bytes = encoded_torrent
+            fast_resume_bytes = await self._build_fast_resume_data(torrent_obj, download_dir)
+            if fast_resume_bytes:
+                torrent_bytes = fast_resume_bytes
+                torrent_completed = True
 
         try:
             # Build command arguments for load.raw

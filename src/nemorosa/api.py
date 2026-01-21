@@ -5,6 +5,7 @@ Provides API implementations for Gazelle-based torrent sites, including JSON API
 
 from abc import ABC, abstractmethod
 from collections.abc import Collection
+from contextlib import suppress
 from html import unescape
 from http.cookies import SimpleCookie
 from typing import Any
@@ -457,6 +458,33 @@ class GazelleParser(GazelleBase):
 
         return torrents
 
+    def _parse_torrent_size(self, cells: list[Tag]) -> int:
+        """Parse torrent size from table cells.
+
+        Args:
+            cells: List of table cells from torrent row.
+
+        Returns:
+            Parsed size in bytes, or 0 if parsing fails.
+        """
+        # Try column 4 first (standard structure)
+        if len(cells) > 4:
+            with suppress(InvalidSize, ValueError):
+                size_text = cells[4].get_text(strip=True).replace(",", "")
+                return parse_size(size_text, binary=True)
+
+        # Fallback: search for a cell that parses as size
+        time_words = ("ago", "hour", "day", "week", "month", "year", "minute")
+        for cell in cells:
+            size_text = cell.get_text(strip=True).replace(",", "")
+            # Skip cells that look like time/date strings
+            if any(time_word in size_text.lower() for time_word in time_words):
+                continue
+            with suppress(InvalidSize, ValueError):
+                return parse_size(size_text, binary=True)
+
+        return 0
+
     def parse_torrent_row(self, row: Tag) -> TorrentSearchResult | None:
         """Parse single torrent row.
 
@@ -486,38 +514,13 @@ class GazelleParser(GazelleBase):
             self.authkey = query_params.get("authkey", [None])[0]
             self.passkey = query_params.get("torrent_pass", [None])[0]
 
-            # Get all table cells
+            # Get all table cells and parse size
             cells = row.select("td")
             title = f"Torrent {torrent_id}"
+            size = self._parse_torrent_size(cells)
 
-            # Parse size from the appropriate cell
-            # Structure: td[0]=colspan5 (download/title), td[1]=files, td[2]=empty, td[3]=time, td[4]=size
-            size = None
-            if len(cells) > 4:
-                try:
-                    size_text = cells[4].get_text(strip=True).replace(",", "")
-                    size = parse_size(size_text, binary=True)
-                except (InvalidSize, ValueError):
-                    pass
-
-            # If column 4 didn't work, search for a cell that parses as size
-            if size is None:
-                time_words = ("ago", "hour", "day", "week", "month", "year", "minute")
-                for cell in cells:
-                    size_text = cell.get_text(strip=True).replace(",", "")
-                    # Skip cells that look like time/date strings
-                    if any(time_word in size_text.lower() for time_word in time_words):
-                        continue
-                    try:
-                        size = parse_size(size_text, binary=True)
-                        break
-                    except (InvalidSize, ValueError):
-                        continue
-
-            # If we still couldn't find a valid size, set it to 0
-            if size is None:
+            if size == 0:
                 logger.warning(f"Could not parse size for torrent {torrent_id}, setting to 0")
-                size = 0
 
             return TorrentSearchResult(
                 torrent_id=int(torrent_id),
