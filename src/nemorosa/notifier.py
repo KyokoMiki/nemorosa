@@ -26,10 +26,14 @@ class Notifier:
 
         for url in urls:
             if not self.apprise.add(url):
-                raise ValueError(f"Invalid notification URL: {logger.redact_url_password(url)}")
-            logger.debug(f"Added notification URL: {logger.redact_url_password(url)}")
+                raise ValueError(
+                    f"Invalid notification URL: {logger.redact_url_password(url)}"
+                )
+            logger.debug("Added notification URL: %s", logger.redact_url_password(url))
 
-        logger.info(f"Notifier initialized with {len(self.apprise)} notification service(s)")
+        logger.info(
+            "Notifier initialized with %d notification service(s)", len(self.apprise)
+        )
 
     async def notify(
         self,
@@ -56,12 +60,12 @@ class Notifier:
                 notify_type=notify_type,
             )
             if result:
-                logger.debug(f"Notification sent: {title}")
+                logger.debug("Notification sent: %s", title)
             else:
-                logger.warning(f"Failed to send notification: {title}")
+                logger.warning("Failed to send notification: %s", title)
             return bool(result)
         except Exception as e:
-            logger.error(f"Error sending notification: {e}")
+            logger.error("Error sending notification: %s", e)
             return False
 
     async def send_test(self) -> bool:
@@ -95,7 +99,11 @@ class Notifier:
         progress_pct = f"{progress * 100:.1f}%"
         return await self.notify(
             title="nemorosa - Torrent Injected",
-            body=f"✅ Injected: {torrent_name}\nHash: {torrent_hash}\nProgress: {progress_pct}",
+            body=(
+                f"✅ Injected: {torrent_name}\n"
+                f"Hash: {torrent_hash}\n"
+                f"Progress: {progress_pct}"
+            ),
             notify_type=apprise.NotifyType.SUCCESS,
         )
 
@@ -117,7 +125,9 @@ class Notifier:
         """
         return await self.notify(
             title="nemorosa - Injection Failed",
-            body=f"❌ Failed: {torrent_name}\nPermalink: {torrent_url}\nReason: {reason}",
+            body=(
+                f"❌ Failed: {torrent_name}\nPermalink: {torrent_url}\nReason: {reason}"
+            ),
             notify_type=apprise.NotifyType.FAILURE,
         )
 

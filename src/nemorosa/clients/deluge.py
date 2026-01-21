@@ -42,19 +42,28 @@ DELUGE_STATE_MAPPING = {
 _DELUGE_FIELD_SPECS = {
     "hash": FieldSpec(_request_arguments="hash", extractor=lambda t: t["hash"]),
     "name": FieldSpec(_request_arguments="name", extractor=lambda t: t["name"]),
-    "progress": FieldSpec(_request_arguments="progress", extractor=lambda t: t["progress"] / 100.0),
-    "total_size": FieldSpec(_request_arguments="total_size", extractor=lambda t: t["total_size"]),
+    "progress": FieldSpec(
+        _request_arguments="progress", extractor=lambda t: t["progress"] / 100.0
+    ),
+    "total_size": FieldSpec(
+        _request_arguments="total_size", extractor=lambda t: t["total_size"]
+    ),
     "files": FieldSpec(
         _request_arguments={"files", "file_progress"},
         extractor=lambda t: [
-            ClientTorrentFile(name=f["path"], size=f["size"], progress=t["file_progress"][f["index"]])
+            ClientTorrentFile(
+                name=f["path"], size=f["size"], progress=t["file_progress"][f["index"]]
+            )
             for f in t["files"]
         ],
     ),
     "trackers": FieldSpec(
-        _request_arguments="trackers", extractor=lambda t: [tracker["url"] for tracker in t["trackers"]]
+        _request_arguments="trackers",
+        extractor=lambda t: [tracker["url"] for tracker in t["trackers"]],
     ),
-    "download_dir": FieldSpec(_request_arguments="save_path", extractor=lambda t: t["save_path"]),
+    "download_dir": FieldSpec(
+        _request_arguments="save_path", extractor=lambda t: t["save_path"]
+    ),
     "state": FieldSpec(
         _request_arguments="state",
         extractor=lambda t: DELUGE_STATE_MAPPING.get(t["state"], TorrentState.UNKNOWN),
@@ -98,10 +107,10 @@ class DelugeClient(TorrentClient):
         """Get all torrents from Deluge.
 
         Args:
-            torrent_hashes (list[str] | None): Optional list of torrent hashes to filter.
-                If None, all torrents will be returned.
-            fields (list[str] | None): List of field names to include in the result.
-                If None, all available fields will be included.
+            torrent_hashes (list[str] | None): Optional list of torrent hashes
+                to filter. If None, all torrents will be returned.
+            fields (list[str] | None): List of field names to include in the
+                result. If None, all available fields will be included.
 
         Returns:
             list[ClientTorrentInfo]: List of torrent information.
@@ -118,12 +127,19 @@ class DelugeClient(TorrentClient):
             )
 
             if not isinstance(torrent_details, dict):
-                logger.error("Invalid torrents details from Deluge: %s", torrent_details)
+                logger.error(
+                    "Invalid torrents details from Deluge: %s", torrent_details
+                )
                 return []
 
             # Build ClientTorrentInfo objects
             return [
-                ClientTorrentInfo(**{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()})
+                ClientTorrentInfo(
+                    **{
+                        field_name: spec.extractor(torrent)
+                        for field_name, spec in field_config.items()
+                    }
+                )
                 for torrent in torrent_details.values()
             ]
 
@@ -131,7 +147,9 @@ class DelugeClient(TorrentClient):
             logger.error("Error retrieving torrents from Deluge: %s", e)
             return []
 
-    async def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
+    async def get_torrents_for_monitoring(
+        self, torrent_hashes: set[str]
+    ) -> dict[str, TorrentState]:
         """Get torrent states for monitoring (optimized for Deluge).
 
         Uses Deluge's get_torrents_status with minimal fields to get only
@@ -159,15 +177,21 @@ class DelugeClient(TorrentClient):
                 return {}
 
             return {
-                torrent_hash: DELUGE_STATE_MAPPING.get(status.get("state"), TorrentState.UNKNOWN)
+                torrent_hash: DELUGE_STATE_MAPPING.get(
+                    status.get("state"), TorrentState.UNKNOWN
+                )
                 for torrent_hash, status in torrents_status.items()
             }
 
         except Exception as e:
-            logger.error(f"Error getting torrent states for monitoring from Deluge: {e}")
+            logger.error(
+                "Error getting torrent states for monitoring from Deluge: %s", e
+            )
             return {}
 
-    async def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
+    async def get_torrent_info(
+        self, torrent_hash: str, fields: list[str] | None
+    ) -> ClientTorrentInfo | None:
         """Get torrent information.
 
         Args:
@@ -193,7 +217,10 @@ class DelugeClient(TorrentClient):
 
             # Build ClientTorrentInfo using field_config
             return ClientTorrentInfo(
-                **{field_name: spec.extractor(torrent_info) for field_name, spec in field_config.items()}
+                **{
+                    field_name: spec.extractor(torrent_info)
+                    for field_name, spec in field_config.items()
+                }
             )
         except Exception as e:
             logger.error("Error retrieving torrent info from Deluge: %s", e)
@@ -203,7 +230,9 @@ class DelugeClient(TorrentClient):
 
     # region Abstract Methods - Internal Operations
 
-    async def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
+    async def _add_torrent(
+        self, torrent_data: bytes, download_dir: str, hash_match: bool
+    ) -> str:
         """Add torrent to Deluge.
 
         Args:
@@ -232,7 +261,10 @@ class DelugeClient(TorrentClient):
                 match = re.search(r"\(([a-f0-9]{40})\)", str(e))
                 if match:
                     torrent_hash = match.group(1)
-                    error_msg = f"The torrent to be injected cannot coexist with local torrent {torrent_hash}"
+                    error_msg = (
+                        f"The torrent to be injected cannot coexist with "
+                        f"local torrent {torrent_hash}"
+                    )
                     logger.error(error_msg)
                     raise TorrentConflictError(error_msg) from e
                 else:
@@ -244,15 +276,24 @@ class DelugeClient(TorrentClient):
         label = config.cfg.downloader.label
         if label and torrent_hash:
             try:
-                await asyncify(self.client.call)("label.set_torrent", torrent_hash, label)
+                await asyncify(self.client.call)(
+                    "label.set_torrent", torrent_hash, label
+                )
             except Exception as label_error:
                 # If setting label fails, try creating label first
-                if "Unknown Label" in str(label_error) or "label does not exist" in str(label_error).lower():
+                if (
+                    "Unknown Label" in str(label_error)
+                    or "label does not exist" in str(label_error).lower()
+                ):
                     try:
                         await asyncify(self.client.call)("label.add", label)
-                        await asyncify(self.client.call)("label.set_torrent", torrent_hash, label)
+                        await asyncify(self.client.call)(
+                            "label.set_torrent", torrent_hash, label
+                        )
                     except Exception as retry_error:
-                        logger.warning(f"Failed to set label after creating it: {retry_error}")
+                        logger.warning(
+                            "Failed to set label after creating it: %s", retry_error
+                        )
 
         return str(torrent_hash)
 
@@ -264,7 +305,9 @@ class DelugeClient(TorrentClient):
         """
         await asyncify(self.client.call)("core.remove_torrent", torrent_hash, False)
 
-    async def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str) -> None:
+    async def _rename_torrent(
+        self, torrent_hash: str, old_name: str, new_name: str
+    ) -> None:
         """Rename entire torrent.
 
         Args:
@@ -279,7 +322,9 @@ class DelugeClient(TorrentClient):
             new_name + "/",
         )
 
-    async def _rename_file(self, torrent_hash: str, old_path: str, new_name: str) -> None:
+    async def _rename_file(
+        self, torrent_hash: str, old_path: str, new_name: str
+    ) -> None:
         """Rename file within torrent.
 
         Args:
@@ -294,7 +339,7 @@ class DelugeClient(TorrentClient):
                 [(old_path, new_name)],
             )
         except Exception as e:
-            logger.warning(f"Failed to rename file in Deluge: {e}")
+            logger.warning("Failed to rename file in Deluge: %s", e)
 
     async def _verify_torrent(self, torrent_hash: str) -> None:
         """Verify torrent integrity.
@@ -304,7 +349,9 @@ class DelugeClient(TorrentClient):
         """
         await asyncify(self.client.call)("core.force_recheck", [torrent_hash])
 
-    async def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
+    async def _process_rename_map(
+        self, torrent_hash: str, base_path: str, rename_map: dict
+    ) -> dict:
         """Process rename mapping to adapt to Deluge.
 
         Deluge needs to use index to rename files.
@@ -317,7 +364,9 @@ class DelugeClient(TorrentClient):
         Returns:
             dict: Processed rename mapping with file indices as keys.
         """
-        torrent_info = await asyncify(self.client.call)("core.get_torrent_status", torrent_hash, ["files"])
+        torrent_info = await asyncify(self.client.call)(
+            "core.get_torrent_status", torrent_hash, ["files"]
+        )
         if not isinstance(torrent_info, dict):
             logger.debug("Invalid torrent info from Deluge: %s", torrent_info)
             return {}
@@ -342,7 +391,7 @@ class DelugeClient(TorrentClient):
             torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
             return await torrent_path.read_bytes()
         except Exception as e:
-            logger.error(f"Error getting torrent data from Deluge: {e}")
+            logger.error("Error getting torrent data from Deluge: %s", e)
             return None
 
     async def _resume_torrent(self, torrent_hash: str) -> bool:
@@ -358,7 +407,7 @@ class DelugeClient(TorrentClient):
             await asyncify(self.client.call)("core.resume_torrent", [torrent_hash])
             return True
         except Exception as e:
-            logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
+            logger.error("Failed to resume torrent %s: %s", torrent_hash, e)
             return False
 
     # endregion

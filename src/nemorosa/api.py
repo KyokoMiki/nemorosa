@@ -1,6 +1,8 @@
 """
 Gazelle API module for nemorosa.
-Provides API implementations for Gazelle-based torrent sites, including JSON API and HTML parsing.
+
+Provides API implementations for Gazelle-based torrent sites, including JSON
+API and HTML parsing.
 """
 
 import logging
@@ -79,11 +81,16 @@ class GazelleBase(ABC):
 
         headers = {
             "Accept-Charset": "utf-8",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko)"
-            " Chrome/137.0.0.0 Safari/537.36 Edg/137.0.0.0",
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/137.0.0.0 Safari/537.36 Edg/137.0.0.0"
+            ),
         }
         self.cookie_jar = CookieJar()
-        self.client = ClientSession(timeout=timeout, headers=headers, cookie_jar=self.cookie_jar)
+        self.client = ClientSession(
+            timeout=timeout, headers=headers, cookie_jar=self.cookie_jar
+        )
         self.server = server
         self.authkey = None
         self.passkey = None
@@ -130,20 +137,26 @@ class GazelleBase(ABC):
             dict[str, Any]: Torrent object data, empty dict on error.
         """
         torrent_object = {}
-        logger.debug(f"Getting torrent by id: {torrent_id}")
+        logger.debug("Getting torrent by id: %s", torrent_id)
         try:
             torrent_lookup = await self._get_torrent_data(torrent_id)
         except Exception as e:
-            logger.error(f"Failed to get torrent by id {torrent_id}. Error: {e}")
+            logger.error("Failed to get torrent by id %s. Error: %s", torrent_id, e)
             return torrent_object  # return empty dict on error
 
         torrent_lookup_status = torrent_lookup.get("status", None)
         if torrent_lookup_status == "success":
-            logger.debug(f"Torrent lookup successful for id: {torrent_id}")
+            logger.debug("Torrent lookup successful for id: %s", torrent_id)
             torrent_object = torrent_lookup["response"]["torrent"]
-            torrent_object["fileList"] = self.parse_file_list(torrent_object.get("fileList", ""))
+            torrent_object["fileList"] = self.parse_file_list(
+                torrent_object.get("fileList", "")
+            )
         else:
-            logger.error(f"Torrent lookup failed for id: {torrent_id}. Status: {torrent_lookup_status}")
+            logger.error(
+                "Torrent lookup failed for id: %s. Status: %s",
+                torrent_id,
+                torrent_lookup_status,
+            )
         return torrent_object
 
     async def _get_torrent_data(self, torrent_id: int | str) -> dict[str, Any]:
@@ -186,7 +199,7 @@ class GazelleBase(ABC):
                 filesize = parts[1].removesuffix("}}}").strip()
                 file_list[filename] = int(filesize)
             else:
-                logger.warning(f"Malformed entry in file list: {entry}")
+                logger.warning("Malformed entry in file list: %s", entry)
 
         return file_list
 
@@ -201,12 +214,14 @@ class GazelleBase(ABC):
         """
         if self.auth_method == AuthMethod.API_KEY:
             ajaxpage = self.server + "/ajax.php"
-            response = await self.request(ajaxpage, params={"action": "download", "id": torrent_id})
+            response = await self.request(
+                ajaxpage, params={"action": "download", "id": torrent_id}
+            )
         else:
             torrent_link = self.get_torrent_link(torrent_id)
             response = await self.request(torrent_link)
 
-        logger.debug(f"Torrent {torrent_id} downloaded successfully")
+        logger.debug("Torrent %s downloaded successfully", torrent_id)
         return Torrent.read_stream(response)
 
     def get_torrent_url(self, torrent_id: int | str) -> str:
@@ -237,7 +252,9 @@ class GazelleBase(ABC):
         )
 
     @abstractmethod
-    async def search_torrent_by_filename(self, filename: str) -> list[TorrentSearchResult]:
+    async def search_torrent_by_filename(
+        self, filename: str
+    ) -> list[TorrentSearchResult]:
         """Search torrents by filename - subclasses must implement specific logic.
 
         Args:
@@ -254,24 +271,32 @@ class GazelleBase(ABC):
             torrent_hash (str): Torrent hash to search for.
 
         Returns:
-            dict[str, Any] | None: Search result with torrent information, or None if not found.
+            dict[str, Any] | None: Search result with torrent info, or None
+                if not found.
         """
         try:
             response = await self.api("torrent", hash=torrent_hash)
             if response.get("status") == "success":
-                logger.debug(f"Hash search successful for hash '{torrent_hash}'")
+                logger.debug("Hash search successful for hash '%s'", torrent_hash)
                 return response
             else:
                 if response.get("error") in ("bad parameters", "bad hash parameter"):
-                    logger.debug(f"No torrent found matching hash '{torrent_hash}'")
+                    logger.debug("No torrent found matching hash '%s'", torrent_hash)
                     return None
                 else:
-                    logger.error(f"Error searching for torrent by hash '{torrent_hash}': {response.get('error')}")
+                    logger.error(
+                        "Error searching for torrent by hash '%s': %s",
+                        torrent_hash,
+                        response.get("error"),
+                    )
                     raise RequestException(
-                        f"Error searching for torrent by hash '{torrent_hash}': {response.get('error')}"
+                        f"Error searching for torrent by hash "
+                        f"'{torrent_hash}': {response.get('error')}"
                     )
         except Exception as e:
-            logger.error(f"Error searching for torrent by hash '{torrent_hash}': {e}")
+            logger.error(
+                "Error searching for torrent by hash '%s': %s", torrent_hash, e
+            )
             raise
 
     async def api(self, action: str, **kwargs: Any) -> dict[str, Any]:
@@ -294,8 +319,11 @@ class GazelleBase(ABC):
         params.update(kwargs)
 
         try:
-            # Do not check status code, because Gazelle API may return valid JSON on error
-            content = await self.request(apipage, params=params, check_status_code=False)
+            # Do not check status code, because Gazelle API may return valid
+            # JSON on error
+            content = await self.request(
+                apipage, params=params, check_status_code=False
+            )
             return msgspec.json.decode(content)
         except (ValueError, msgspec.DecodeError) as e:
             raise RequestException from e
@@ -311,7 +339,8 @@ class GazelleBase(ABC):
         Args:
             url (str): Request URL.
             params (dict[str, Any] | None, optional): Query parameters.
-            check_status_code (bool): If True, raise exception for non-200 status. Defaults to True.
+            check_status_code (bool): If True, raise exception for non-200
+                status. Defaults to True.
 
         Returns:
             bytes: Response content.
@@ -332,13 +361,15 @@ class GazelleBase(ABC):
                     status = aio_response.status
             except TooManyRedirects as e:
                 # Too many redirects usually means invalid/expired cookies
-                raise InvalidCredentialsException(f"Too many redirects (likely invalid cookies): {e}") from e
+                raise InvalidCredentialsException(
+                    f"Too many redirects (likely invalid cookies): {e}"
+                ) from e
             except Exception as e:
                 raise RequestException(f"Request error: {e}") from e
 
             if status != 200 and check_status_code:
-                logger.debug(f"Status of request is {status}. Aborting...")
-                logger.debug(f"Response content (first 500 bytes): {content[:500]}")
+                logger.debug("Status of request is %s. Aborting...", status)
+                logger.debug("Response content (first 500 bytes): %s", content[:500])
                 raise RequestException(f"HTTP {status}: {content[:500]}")
 
             return content
@@ -387,16 +418,22 @@ class GazelleJSONAPI(GazelleBase):
         params = {"auth": self.authkey}
         await self.request(logoutpage, params=params)
 
-    async def search_torrent_by_filename(self, filename: str) -> list[TorrentSearchResult]:
+    async def search_torrent_by_filename(
+        self, filename: str
+    ) -> list[TorrentSearchResult]:
         params = {"filelist": filename}
         try:
             response = await self.api("browse", **params)
             # Log API response status
             if response.get("status") != "success":
-                logger.warning(f"API failure for file '{filename}': {msgspec.json.encode(response).decode()}")
+                logger.warning(
+                    "API failure for file '%s': %s",
+                    filename,
+                    msgspec.json.encode(response).decode(),
+                )
                 return []
             else:
-                logger.debug(f"API search successful for file '{filename}'")
+                logger.debug("API search successful for file '%s'", filename)
 
             # Process search results
             results = []
@@ -410,7 +447,9 @@ class GazelleJSONAPI(GazelleBase):
                         continue
 
                     size = int(torrent.get("size", 0))
-                    title = f"{group_name} - {torrent.get('remasterTitle', '')}".strip(" -")
+                    title = f"{group_name} - {torrent.get('remasterTitle', '')}".strip(
+                        " -"
+                    )
 
                     results.append(
                         TorrentSearchResult(
@@ -422,7 +461,9 @@ class GazelleJSONAPI(GazelleBase):
 
             return results
         except Exception as e:
-            logger.error(f"Error searching for torrent by filename '{filename}': {e}")
+            logger.error(
+                "Error searching for torrent by filename '%s': %s", filename, e
+            )
             raise
 
 
@@ -451,10 +492,12 @@ class GazelleParser(GazelleBase):
         try:
             await self.search_torrent_by_filename("")
         except RequestException as e:
-            logger.error(f"Failed to authenticate: {e}")
+            logger.error("Failed to authenticate: %s", e)
             raise
 
-    async def search_torrent_by_filename(self, filename: str) -> list[TorrentSearchResult]:
+    async def search_torrent_by_filename(
+        self, filename: str
+    ) -> list[TorrentSearchResult]:
         """Execute search and return torrent list.
 
         Args:
@@ -465,13 +508,17 @@ class GazelleParser(GazelleBase):
         """
         # For HTML parser trackers, use HTML parsing
         params = {"action": "advanced", "filelist": filename}
-        logger.debug(f"Filename search: requesting torrents.php with params: {params}")
+        logger.debug("Filename search: requesting torrents.php with params: %s", params)
         content = await self.request("torrents.php", params=params)
         torrents = self.parse_search_results(content)
-        logger.debug(f"Filename search for '{filename}': found {len(torrents)} torrent(s)")
+        logger.debug(
+            "Filename search for '%s': found %d torrent(s)", filename, len(torrents)
+        )
         return torrents
 
-    def parse_search_results(self, html_content: bytes | str) -> list[TorrentSearchResult]:
+    def parse_search_results(
+        self, html_content: bytes | str
+    ) -> list[TorrentSearchResult]:
         """Parse search results page.
 
         Args:
@@ -484,9 +531,13 @@ class GazelleParser(GazelleBase):
 
         # Find all torrents under albums
         torrent_rows = soup.select("tr.group_torrent")
-        logger.debug(f"Found {len(torrent_rows)} torrent row(s) in HTML")
+        logger.debug("Found %d torrent row(s) in HTML", len(torrent_rows))
 
-        torrents = [torrent for torrent_row in torrent_rows if (torrent := self.parse_torrent_row(torrent_row))]
+        torrents = [
+            torrent
+            for torrent_row in torrent_rows
+            if (torrent := self.parse_torrent_row(torrent_row))
+        ]
 
         return torrents
 
@@ -524,11 +575,14 @@ class GazelleParser(GazelleBase):
             row (Tag): BeautifulSoup Tag object representing a torrent row.
 
         Returns:
-            TorrentSearchResult | None: Parsed torrent information, or None if parsing fails.
+            TorrentSearchResult | None: Parsed torrent info, or None if
+                parsing fails.
         """
         try:
             # Get download link
-            download_link = row.select_one('a[href^="torrents.php?action=download&id="]')
+            download_link = row.select_one(
+                'a[href^="torrents.php?action=download&id="]'
+            )
             if not download_link:
                 return None
 
@@ -552,7 +606,9 @@ class GazelleParser(GazelleBase):
             size = self._parse_torrent_size(cells)
 
             if size == 0:
-                logger.warning(f"Could not parse size for torrent {torrent_id}, setting to 0")
+                logger.warning(
+                    "Could not parse size for torrent %s, setting to 0", torrent_id
+                )
 
             return TorrentSearchResult(
                 torrent_id=int(torrent_id),
@@ -560,7 +616,7 @@ class GazelleParser(GazelleBase):
                 title=title,
             )
         except Exception as e:
-            logger.error(f"Error parsing torrent row: {e}")
+            logger.error("Error parsing torrent row: %s", e)
             return None
 
 
@@ -602,7 +658,10 @@ class GazelleGamesNet(GazelleBase):
         """
         # GGN requires authkey and passkey for download
         if not self.authkey or not self.passkey:
-            raise RequestException("GGN requires authkey and passkey for torrent download (should be set during auth)")
+            raise RequestException(
+                "GGN requires authkey and passkey for torrent download "
+                "(should be set during auth)"
+            )
         download_url = self.get_torrent_link(torrent_id)
         response = await self.request(download_url)
         return Torrent.read_stream(response)
@@ -613,14 +672,18 @@ class GazelleGamesNet(GazelleBase):
         GGN requires uppercase hash for search.
 
         Args:
-            torrent_hash (str): Torrent hash to search for (can be lowercase or uppercase).
+            torrent_hash (str): Torrent hash to search for (can be lowercase
+                or uppercase).
 
         Returns:
-            dict[str, Any] | None: Search result with torrent information, or None if not found.
+            dict[str, Any] | None: Search result with torrent info, or None
+                if not found.
         """
         return await super().search_torrent_by_hash(torrent_hash.upper())
 
-    async def search_torrent_by_filename(self, filename: str) -> list[TorrentSearchResult]:
+    async def search_torrent_by_filename(
+        self, filename: str
+    ) -> list[TorrentSearchResult]:
         """Execute search using GGN's JSON API and return torrent list.
 
         Args:
@@ -631,12 +694,17 @@ class GazelleGamesNet(GazelleBase):
         """
         try:
             json_response = await self.api(
-                "search", search_type="torrents", filelist=filename, **{"filter_cat[4]": "1"}
+                "search",
+                search_type="torrents",
+                filelist=filename,
+                **{"filter_cat[4]": "1"},
             )
 
             if json_response.get("status") != "success":
                 error_msg = json_response.get("error", "unknown error")
-                logger.warning(f"GGN API search failed for '{filename}': {error_msg}")
+                logger.warning(
+                    "GGN API search failed for '%s': %s", filename, error_msg
+                )
                 return []
 
             response_data = json_response.get("response", {})
@@ -651,7 +719,11 @@ class GazelleGamesNet(GazelleBase):
                 for torrent_id, torrent_data in group_torrents.items():
                     size = int(torrent_data.get("Size", 0))
                     release_title = torrent_data.get("ReleaseTitle", "")
-                    title = f"{group_name} - {release_title}".strip(" -") if release_title else group_name
+                    title = (
+                        f"{group_name} - {release_title}".strip(" -")
+                        if release_title
+                        else group_name
+                    )
 
                     results.append(
                         TorrentSearchResult(
@@ -661,13 +733,15 @@ class GazelleGamesNet(GazelleBase):
                         )
                     )
 
-            logger.debug(f"Filename search for '{filename}': found {len(results)} torrent(s)")
+            logger.debug(
+                "Filename search for '%s': found %d torrent(s)", filename, len(results)
+            )
             return results
         except (RequestException, ValueError, msgspec.DecodeError) as e:
-            logger.error(f"GGN API search error for '{filename}': {e}")
+            logger.error("GGN API search error for '%s': %s", filename, e)
             return []
         except Exception as e:
-            logger.error(f"GGN API search unexpected error for '{filename}': {e}")
+            logger.error("GGN API search unexpected error for '%s': %s", filename, e)
             return []
 
     def parse_file_list(self, file_list_str: list[dict[str, Any]]) -> dict[str, int]:
@@ -800,14 +874,21 @@ async def init_api(target_sites: list[TargetSiteConfig]) -> None:
             # Parse cookie string to SimpleCookie if present
             site_cookies = SimpleCookie(site.cookie) if site.cookie else None
 
-            logger.debug(f"Connecting to target site {i + 1}/{len(target_sites)}: {site.server}")
-            api_instance = get_api_instance(server=site.server, api_key=site.api_key, cookies=site_cookies)
+            logger.debug(
+                "Connecting to target site %s/%s: %s",
+                i + 1,
+                len(target_sites),
+                site.server,
+            )
+            api_instance = get_api_instance(
+                server=site.server, api_key=site.api_key, cookies=site_cookies
+            )
             try:
                 await api_instance.auth()
                 target_apis.append(api_instance)
-                logger.success(f"API connection established for {site.server}")
+                logger.success("API connection established for %s", site.server)
             except Exception as e:
-                logger.error(f"API connection failed for {site.server}: {str(e)}")
+                logger.error("API connection failed for %s: %s", site.server, str(e))
                 # Close the failed instance to prevent resource leak
                 with suppress(Exception):
                     await api_instance.close()
@@ -817,7 +898,7 @@ async def init_api(target_sites: list[TargetSiteConfig]) -> None:
             logger.critical("No API connections were successful")
             raise RuntimeError("Failed to establish any API connections")
 
-        logger.success(f"Successfully connected to {len(target_apis)} target site(s)")
+        logger.success("Successfully connected to %d target site(s)", len(target_apis))
         _target_apis_instance = target_apis
 
 
@@ -843,7 +924,8 @@ def get_api_by_tracker(
     """Get API instance by matching tracker query string.
 
     Args:
-        trackers (str | Collection[str]): A single tracker URL string or a collection of tracker URLs.
+        trackers (str | Collection[str]): A single tracker URL string or a
+            collection of tracker URLs.
 
     Returns:
         GazelleJSONAPI | GazelleParser | GazelleGamesNet | None: The first matching API
@@ -876,7 +958,8 @@ def get_api_by_site_host(
         site_host (str): Site hostname (e.g., 'redacted.sh', 'orpheus.network').
 
     Returns:
-        GazelleJSONAPI | GazelleParser | None: The matching API instance, or None if no match is found.
+        GazelleJSONAPI | GazelleParser | None: The matching API instance, or
+            None if no match is found.
 
     Raises:
         RuntimeError: If target APIs have not been initialized.
@@ -905,13 +988,13 @@ async def cleanup_api() -> None:
             logger.debug("No API instances to cleanup")
             return
 
-        logger.debug(f"Cleaning up {len(_target_apis_instance)} API client(s)...")
+        logger.debug("Cleaning up %d API client(s)...", len(_target_apis_instance))
         cleanup_errors = []
 
         for api_instance in _target_apis_instance:
             try:
                 await api_instance.close()
-                logger.debug(f"Closed API client for {api_instance.server}")
+                logger.debug("Closed API client for %s", api_instance.server)
             except Exception as e:
                 error_msg = f"Error closing API client for {api_instance.server}: {e}"
                 logger.warning(error_msg)
@@ -921,6 +1004,8 @@ async def cleanup_api() -> None:
         _target_apis_instance = []
 
         if cleanup_errors:
-            logger.warning(f"API cleanup completed with {len(cleanup_errors)} error(s)")
+            logger.warning(
+                "API cleanup completed with %d error(s)", len(cleanup_errors)
+            )
         else:
             logger.debug("All API clients closed successfully")

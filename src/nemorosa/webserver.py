@@ -69,14 +69,19 @@ async def lifespan(_: FastAPI):
 # Create FastAPI app
 app = FastAPI(
     title="Nemorosa Web Server",
-    description="Music torrent cross-seeding tool with automatic file mapping and seamless injection",
+    description=(
+        "Music torrent cross-seeding tool "
+        "with automatic file mapping and seamless injection"
+    ),
     version=__version__,
     lifespan=lifespan,
 )
 
 
 def verify_api_key(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(HTTPBearer(auto_error=False))],
+    credentials: Annotated[
+        HTTPAuthorizationCredentials | None, Depends(HTTPBearer(auto_error=False))
+    ],
 ) -> bool:
     """Verify API key."""
     # Check if API key is configured in server config
@@ -86,7 +91,9 @@ def verify_api_key(
         return True
 
     if not credentials or not secrets.compare_digest(credentials.credentials, api_key):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key"
+        )
 
     return True
 
@@ -98,9 +105,9 @@ ApiKeyDep = Annotated[bool, Depends(verify_api_key)]
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     """Log all requests."""
-    logger.debug(f"Incoming request: {request.method} {request.url}")
+    logger.debug("Incoming request: %s %s", request.method, request.url)
     response = await call_next(request)
-    logger.debug(f"Response: {response.status_code}")
+    logger.debug("Response: %s", response.status_code)
     return response
 
 
@@ -137,7 +144,10 @@ async def favicon():
     },
 )
 async def webhook(
-    infohash: Annotated[str, Query(min_length=1, description="Torrent infohash (40-character hex string)")],
+    infohash: Annotated[
+        str,
+        Query(min_length=1, description="Torrent infohash (40-character hex string)"),
+    ],
     response: Response,
     _: ApiKeyDep,
 ) -> ProcessResponse:
@@ -168,17 +178,18 @@ async def webhook(
         if result.status == ProcessStatus.NOT_FOUND:
             # No matches found
             response.status_code = status.HTTP_204_NO_CONTENT
-            logger.info(f"No matches found for webhook: {infohash}")
+            logger.info("No matches found for webhook: %s", infohash)
         elif result.status == ProcessStatus.ERROR:
             # Processing error
-            logger.error(f"Error processing webhook: {infohash} - {result.message}")
+            logger.error("Error processing webhook: %s - %s", infohash, result.message)
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Processing error: {result.message}"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Processing error: {result.message}",
             )
         else:
             # Successfully processed (SUCCESS, SKIPPED, etc.)
             response.status_code = status.HTTP_200_OK
-            logger.info(f"Processed webhook: {infohash} (status: 200)")
+            logger.info("Processed webhook: %s (status: 200)", infohash)
 
         # Return the result directly
         return result
@@ -186,9 +197,10 @@ async def webhook(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing torrent {infohash}: {str(e)}")
+        logger.error("Error processing torrent %s: %s", infohash, str(e))
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}",
         ) from e
 
 
@@ -228,7 +240,9 @@ async def announce(
 
     try:
         # Log the announce
-        logger.info(f"Received announce for torrent: {request.name} from {request.link}")
+        logger.info(
+            "Received announce for torrent: %s from %s", request.name, request.link
+        )
 
         # Process the torrent for cross-seeding using the reverse announce function
         processor = get_core()
@@ -241,17 +255,22 @@ async def announce(
         if result.status == ProcessStatus.NOT_FOUND:
             # No matches found
             response.status_code = status.HTTP_204_NO_CONTENT
-            logger.info(f"No matches found for announce: {request.name}")
+            logger.info("No matches found for announce: %s", request.name)
         elif result.status == ProcessStatus.ERROR:
             # Processing error
-            logger.error(f"Error processing announce: {request.name} - {result.message}")
+            logger.error(
+                "Error processing announce: %s - %s", request.name, result.message
+            )
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Processing error: {result.message}"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Processing error: {result.message}",
             )
         elif result.status == ProcessStatus.SUCCESS:
             # Successfully processed
             response.status_code = status.HTTP_200_OK
-            logger.info(f"Successfully processed announce: {request.name} (status: 200)")
+            logger.info(
+                "Successfully processed announce: %s (status: 200)", request.name
+            )
         else:
             # Default case - no specific action was taken (SKIPPED, etc.)
             response.status_code = status.HTTP_204_NO_CONTENT
@@ -262,9 +281,10 @@ async def announce(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error processing torrent announce {request.name}: {str(e)}")
+        logger.error("Error processing torrent announce %s: %s", request.name, str(e))
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}",
         ) from e
 
 
@@ -305,9 +325,13 @@ async def trigger_job(
 
         # Map internal status to HTTP status codes
         if result.status == "not_found":
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=result.message)
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail=result.message
+            )
         elif result.status == "conflict":
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=result.message)
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT, detail=result.message
+            )
 
         return result
 
@@ -315,7 +339,7 @@ async def trigger_job(
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
-        logger.error(f"Error triggering job {job_type}: {str(e)}")
+        logger.error("Error triggering job %s: %s", job_type, str(e))
         # Let FastAPI handle the 500 error automatically
         raise
 
@@ -358,9 +382,10 @@ async def get_job_status(
         # Re-raise HTTP exceptions as-is
         raise
     except Exception as e:
-        logger.error(f"Error getting job status for {job_type}: {str(e)}")
+        logger.error("Error getting job status for %s: %s", job_type, str(e))
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Internal server error: {str(e)}"
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Internal server error: {str(e)}",
         ) from e
 
 
@@ -376,9 +401,9 @@ def setup_event_loop():
 
             uvloop.install()
     except ImportError as e:
-        logger.warning(f"Event loop library not available: {e}, using default asyncio")
+        logger.warning("Event loop library not available: %s, using default asyncio", e)
     except Exception as e:
-        logger.warning(f"Event loop setup failed: {e}, using default asyncio")
+        logger.warning("Event loop setup failed: %s, using default asyncio", e)
 
 
 def run_webserver():
@@ -391,9 +416,16 @@ def run_webserver():
     log_level = config.cfg.global_config.loglevel
 
     # Log server startup
-    logger.info(f"Starting Nemorosa web server on {host if host is not None else 'all interfaces (IPv4/IPv6)'}:{port}")
-    logger.info(f"Using torrent client: {logger.redact_url_password(config.cfg.downloader.client)}")
-    logger.info(f"Target sites: {len(config.cfg.target_sites)}")
+    logger.info(
+        "Starting Nemorosa web server on %s:%s",
+        host if host is not None else "all interfaces (IPv4/IPv6)",
+        port,
+    )
+    logger.info(
+        "Using torrent client: %s",
+        logger.redact_url_password(config.cfg.downloader.client),
+    )
+    logger.info("Target sites: %d", len(config.cfg.target_sites))
 
     # Check if API key is configured
     api_key = config.cfg.server.api_key
@@ -418,10 +450,13 @@ def run_webserver():
     from uvicorn.config import LOGGING_CONFIG
 
     # Override uvicorn log format to match nemorosa log format
-    LOGGING_CONFIG["formatters"]["default"]["fmt"] = "%(asctime)s | %(levelprefix)s %(message)s"
+    LOGGING_CONFIG["formatters"]["default"]["fmt"] = (
+        "%(asctime)s | %(levelprefix)s %(message)s"
+    )
     LOGGING_CONFIG["formatters"]["default"]["datefmt"] = "%Y-%m-%d %H:%M:%S"
     LOGGING_CONFIG["formatters"]["access"]["fmt"] = (
-        '%(asctime)s | %(levelprefix)s %(client_addr)s - "%(request_line)s" %(status_code)s'
+        "%(asctime)s | %(levelprefix)s %(client_addr)s - "
+        '"%(request_line)s" %(status_code)s'
     )
     LOGGING_CONFIG["formatters"]["access"]["datefmt"] = "%Y-%m-%d %H:%M:%S"
 

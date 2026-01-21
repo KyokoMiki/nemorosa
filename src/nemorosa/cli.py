@@ -22,7 +22,10 @@ def setup_argument_parser():
         ArgumentParser: Configured argument parser.
     """
     parser = ArgumentParser(
-        description="Music torrent cross-seeding tool with automatic file mapping and seamless injection"
+        description=(
+            "Music torrent cross-seeding tool with automatic file mapping "
+            "and seamless injection"
+        )
     )
 
     # Operation modes
@@ -110,7 +113,7 @@ def setup_config(config_path):
         config.init_config(config_path)
         logger.info("Configuration loaded successfully")
     except ValueError as e:
-        logger.error(f"Configuration error: {e}")
+        logger.error("Configuration error: %s", e)
         logger.error("Please check your configuration file and try again")
         sys.exit(1)
 
@@ -143,7 +146,7 @@ def override_config_with_args(args):
 
 
 async def async_init():
-    """Initialize core components asynchronously (database, API connections, scheduler, torrent client).
+    """Initialize core components asynchronously.
 
     This function is used by both CLI and webserver modes to set up the application.
     """
@@ -153,7 +156,10 @@ async def async_init():
     logger.info("Database initialized successfully")
 
     # Initialize torrent client
-    logger.debug("Connecting to torrent client at %s...", logger.redact_url_password(config.cfg.downloader.client))
+    logger.debug(
+        "Connecting to torrent client at %s...",
+        logger.redact_url_password(config.cfg.downloader.client),
+    )
     await init_torrent_client(config.cfg.downloader.client)
     logger.info("Successfully connected to torrent client")
 
@@ -165,7 +171,9 @@ async def async_init():
     if cached_client_url != current_client_url:
         logger.debug(
             "Client URL changed from %s to %s",
-            logger.redact_url_password(cached_client_url) if cached_client_url else "None",
+            logger.redact_url_password(cached_client_url)
+            if cached_client_url
+            else "None",
             logger.redact_url_password(current_client_url),
         )
         logger.info("Rebuilding client torrents cache...")
@@ -178,14 +186,18 @@ async def async_init():
 
         # Rebuild cache
         await app_torrent_client.rebuild_client_torrents_cache(all_torrents)
-        logger.success(f"Rebuilt cache with {len(all_torrents)} torrents from new client")
+        logger.success(
+            "Rebuilt cache with %s torrents from new client", len(all_torrents)
+        )
 
         # Update cached client URL
         await database.set_metadata("client_url", current_client_url)
 
     # Initialize API connections
     await init_api(config.cfg.target_sites)
-    logger.info(f"API connections established for {len(get_target_apis())} target sites")
+    logger.info(
+        "API connections established for %s target sites", len(get_target_apis())
+    )
 
     # Initialize core processor
     await init_core()
@@ -218,17 +230,22 @@ def main():
 
     # Log configuration summary
     logger.section("===== Configuration Summary =====")
-    logger.debug(f"Config file: {args.config or 'auto-detected'}")
-    logger.debug(f"No download: {config.cfg.global_config.no_download}")
-    logger.debug(f"Log level: {config.cfg.global_config.loglevel}")
-    logger.debug(f"Client URL: {logger.redact_url_password(config.cfg.downloader.client)}")
+    logger.debug("Config file: %s", args.config or "auto-detected")
+    logger.debug("No download: %s", config.cfg.global_config.no_download)
+    logger.debug("Log level: %s", config.cfg.global_config.loglevel)
+    logger.debug(
+        "Client URL: %s", logger.redact_url_password(config.cfg.downloader.client)
+    )
     check_trackers = config.cfg.global_config.check_trackers
-    logger.debug(f"CHECK_TRACKERS: {check_trackers if check_trackers else 'All trackers allowed'}")
+    logger.debug(
+        "CHECK_TRACKERS: %s",
+        check_trackers if check_trackers else "All trackers allowed",
+    )
 
     # Display target sites configuration
-    logger.debug(f"Target sites configured: {len(config.cfg.target_sites)}")
+    logger.debug("Target sites configured: %d", len(config.cfg.target_sites))
     for i, site in enumerate(config.cfg.target_sites, 1):
-        logger.debug(f"  Site {i}: {site.server}")
+        logger.debug("  Site %d: %s", i, site.server)
 
     logger.section("===== Nemorosa Starting =====")
 
@@ -254,12 +271,12 @@ async def _async_main(args):
 
         if args.torrent:
             # Single torrent mode
-            logger.debug(f"Processing single torrent: {args.torrent}")
+            logger.debug("Processing single torrent: %s", args.torrent)
             result = await processor.process_single_torrent(args.torrent)
 
             # Print result
-            logger.debug(f"Processing result: {result.status}")
-            logger.debug(f"Message: {result.message}")
+            logger.debug("Processing result: %s", result.status)
+            logger.debug("Message: %s", result.message)
         elif args.retry_undownloaded:
             # Re-download undownloaded torrents
             await processor.retry_undownloaded_torrents()
@@ -283,7 +300,10 @@ async def _async_main(args):
         # Wait for torrent monitoring to complete all tracked torrents
         client = get_torrent_client()
         if client and client.monitoring:
-            logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
+            logger.debug(
+                "Stopping torrent monitoring and waiting for tracked "
+                "torrents to complete..."
+            )
             await client.wait_for_monitoring_completion()
 
         # Close all API client sessions

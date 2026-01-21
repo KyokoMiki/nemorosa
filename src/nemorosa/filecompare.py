@@ -1,6 +1,8 @@
 """
 File comparison and matching module for nemorosa.
-Provides functionality to compare torrent files and find matches between client torrents and tracker torrents.
+
+Provides functionality to compare torrent files and find matches between
+client torrents and tracker torrents.
 """
 
 import posixpath
@@ -26,10 +28,18 @@ def is_music_file(filename: str) -> bool:
     Returns:
         bool: True if the file is a music file, False otherwise.
     """
-    return posixpath.splitext(filename)[1].lower() in (".flac", ".mp3", ".dsf", ".dff", ".m4a")
+    return posixpath.splitext(filename)[1].lower() in (
+        ".flac",
+        ".mp3",
+        ".dsf",
+        ".dff",
+        ".m4a",
+    )
 
 
-def select_search_filenames(filenames: Collection[str], max_count: int = 5) -> list[str]:
+def select_search_filenames(
+    filenames: Collection[str], max_count: int = 5
+) -> list[str]:
     """Select top filenames for search queries.
 
     Selects the longest filenames, prioritizing the first file and any music files.
@@ -67,7 +77,6 @@ def make_search_query(text: str) -> str:
         str: Cleaned search query string.
     """
     # Replace common garbled characters and special symbols with equal-length spaces
-    # Including: question marks, Chinese question marks, consecutive underscores, brackets, etc.
     sanitized_name = re.sub(
         r'[?？�_\-.·~`!@#$%^&*+=|\\:";\'<>,/\u200b\u200c\u200d\u2060\ufeff\u00a0\u180e\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\u0000-\u001f\u007f-\u009f]',
         " ",
@@ -133,9 +142,13 @@ def get_diff_result(names: list[str]) -> DiffResult | None:
         return None
 
     for i in range(len(names) - 1):
-        for j in range(len(names) - 1, i, -1):  # Start from end to avoid two names too similar
+        for j in range(
+            len(names) - 1, i, -1
+        ):  # Start from end to avoid two names too similar
             prefix = find_common_prefix(names[i], names[j])
-            suffix = find_common_suffix(names[i][len(prefix) :], names[j][len(prefix) :])
+            suffix = find_common_suffix(
+                names[i][len(prefix) :], names[j][len(prefix) :]
+            )
 
             if prefix:  # If common prefix found
                 return DiffResult(prefix, suffix)
@@ -168,7 +181,11 @@ def extract_match_key_by_diff(diff: DiffResult | None, filename: str) -> str:
 def calculate_file_keys(files: list[str]) -> dict:
     """Calculate match keys for file list."""
     # Get filenames without extensions
-    filenames = [name for file in files if (name := (file.rsplit(".", 1)[0] if "." in file else file))]
+    filenames = [
+        name
+        for file in files
+        if (name := (file.rsplit(".", 1)[0] if "." in file else file))
+    ]
 
     if not filenames:
         return {}
@@ -177,13 +194,21 @@ def calculate_file_keys(files: list[str]) -> dict:
     diff = get_diff_result(filenames)
 
     # Extract match key for each file
-    result = {file: extract_match_key_by_diff(diff, file.rsplit(".", 1)[0] if "." in file else file) for file in files}
+    result = {
+        file: extract_match_key_by_diff(
+            diff, file.rsplit(".", 1)[0] if "." in file else file
+        )
+        for file in files
+    }
 
     return result
 
 
 def filename_match(torrent_name: str, local_names: list[str]) -> str | None:
-    """Use pattern-based algorithm to match filenames, replacing simple similarity comparison."""
+    """Use pattern-based algorithm to match filenames.
+
+    Replaces simple similarity comparison.
+    """
     if not local_names:
         return None
 
@@ -228,7 +253,12 @@ def check_conflicts(fdict_local, fdict_torrent):
     """
     for name, size in fdict_torrent.items():
         if name in fdict_local and fdict_local[name] != size:
-            logger.error(f"File conflict detected! File: {name}, Local size: {fdict_local[name]}, Torrent size: {size}")
+            logger.error(
+                "File conflict detected! File: %s, Local size: %s, Torrent size: %s",
+                name,
+                fdict_local[name],
+                size,
+            )
             return True
     return False
 
@@ -241,7 +271,8 @@ def generate_rename_map(fdict_local, fdict_torrent):
         fdict_torrent (dict): Remote torrent file dictionary.
 
     Returns:
-        dict: Rename mapping dictionary, format like {"1.flac": "1-1.flac", "2.flac": "1-2.flac"}.
+        dict: Rename mapping dictionary,
+            format like {"1.flac": "1-1.flac", "2.flac": "1-2.flac"}.
     """
     # Step 1: Create remaining file dictionary (remove same-name files)
     remaining_local = fdict_local.copy()
@@ -291,7 +322,7 @@ def generate_rename_map(fdict_local, fdict_torrent):
 
 
 def should_keep_partial_torrent(torrent: "ClientTorrentInfo") -> bool:
-    """Check if a partial torrent should be kept based on piece and file progress patterns.
+    """Check if a partial torrent should be kept based on progress patterns.
 
     Compares the number of continuous undownloaded blocks with the number of files
     that have zero progress. If there are more undownloaded blocks than zero-progress
@@ -308,11 +339,18 @@ def should_keep_partial_torrent(torrent: "ClientTorrentInfo") -> bool:
 
     # Count continuous blocks of undownloaded pieces (False values)
     # Note: piece_progress maintains the sequential order of pieces in the torrent
-    undownloaded_blocks_count = sum(1 for value, _ in groupby(torrent.piece_progress) if not value)
+    undownloaded_blocks_count = sum(
+        1 for value, _ in groupby(torrent.piece_progress) if not value
+    )
 
     # Count continuous blocks of files with zero progress (completely undownloaded)
-    # Note: torrent.files maintains the sequential order as defined in the torrent structure
-    zero_progress_count = sum(1 for value, _ in groupby(torrent.files, key=lambda f: f.progress == 0.0) if value)
+    # Note: torrent.files maintains the sequential order
+    # as defined in the torrent structure
+    zero_progress_count = sum(
+        1
+        for value, _ in groupby(torrent.files, key=lambda f: f.progress == 0.0)
+        if value
+    )
 
     # Check for conflicts: number of continuous undownloaded blocks should not exceed
     # the number of files with zero progress
