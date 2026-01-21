@@ -3,6 +3,7 @@ Gazelle API module for nemorosa.
 Provides API implementations for Gazelle-based torrent sites, including JSON API and HTML parsing.
 """
 
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Collection
 from contextlib import suppress
@@ -13,22 +14,39 @@ from urllib.parse import parse_qs, urljoin, urlparse
 
 import anyio
 import msgspec
-from aiohttp import ClientSession, ClientTimeout, CookieJar
+from aiohttp import ClientSession, ClientTimeout, CookieJar, TooManyRedirects
 from aiolimiter import AsyncLimiter
 from bs4 import BeautifulSoup, Tag
 from humanfriendly import InvalidSize, parse_size
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 from torf import Torrent
 
 from . import logger
 from .config import TargetSiteConfig
 
 
-class LoginException(Exception):
+class InvalidCredentialsException(Exception):
     pass
 
 
 class RequestException(Exception):
     pass
+
+
+# Reusable retry decorator for API calls
+_auth_retry = retry(
+    stop=stop_after_attempt(8),
+    wait=wait_exponential(multiplier=0.4, max=60),
+    before_sleep=before_sleep_log(logging.getLogger("nemorosa"), logging.WARNING),
+    retry=retry_if_exception_type(RequestException),
+    reraise=True,
+)
 
 
 class TorrentSearchResult(msgspec.Struct):
@@ -62,6 +80,11 @@ class GazelleBase(ABC):
         self.authkey = None
         self.passkey = None
         self.auth_method = "cookies"  # Default authentication method
+
+        # API configuration - subclasses can override these
+        self._api_endpoint = "/ajax.php"
+        self._api_action_key = "action"
+        self._auth_action = "index"  # Action name for authentication API call
 
         spec = TRACKER_SPECS[server]
         self._rate_limiter = None
@@ -256,17 +279,16 @@ class GazelleBase(ABC):
         Raises:
             RequestException: If the request fails.
         """
-        apipage = self.server + "/ajax.php"
-        params = {"action": action}
-        if self.authkey:
+        apipage = self.server + self._api_endpoint
+        params = {self._api_action_key: action}
+        if self.auth_method != "api_key" and self.authkey:
             params["auth"] = self.authkey
         params.update(kwargs)
 
         try:
-            # For AJAX requests, do not check status code, because Gazelle API may return valid JSON on error
+            # Do not check status code, because Gazelle API may return valid JSON on error
             content = await self.request(apipage, params=params, check_status_code=False)
-            json_response = msgspec.json.decode(content)
-            return json_response
+            return msgspec.json.decode(content)
         except (ValueError, msgspec.DecodeError) as e:
             raise RequestException from e
 
@@ -300,6 +322,9 @@ class GazelleBase(ABC):
                         chunks.append(chunk)
                     content = b"".join(chunks)
                     status = aio_response.status
+            except TooManyRedirects as e:
+                # Too many redirects usually means invalid/expired cookies
+                raise InvalidCredentialsException(f"Too many redirects (likely invalid cookies): {e}") from e
             except Exception as e:
                 raise RequestException(f"Request error: {e}") from e
 
@@ -310,13 +335,25 @@ class GazelleBase(ABC):
 
             return content
 
-    @abstractmethod
+    @_auth_retry
     async def auth(self) -> None:
-        """Authenticate with the server - subclasses must implement specific logic.
+        """Authenticate with the server and get authkey/passkey.
 
         Raises:
-            RequestException: If authentication fails.
+            InvalidCredentialsException: If credentials are invalid.
+            RequestException: If authentication fails for other reasons.
         """
+        accountinfo = await self.api(self._auth_action)
+        if accountinfo.get("status") != "success":
+            error = accountinfo.get("error", "unknown error")
+            if error in ("bad credentials", "invalid token", "APIKey is not valid."):
+                raise InvalidCredentialsException(f"Invalid credentials: {error}")
+            raise RequestException(f"Authentication failed: {error}")
+        try:
+            self.authkey = accountinfo["response"]["authkey"]
+            self.passkey = accountinfo["response"]["passkey"]
+        except KeyError as e:
+            raise RequestException(f"Invalid response format: missing {e}") from e
 
 
 class GazelleJSONAPI(GazelleBase):
@@ -335,20 +372,6 @@ class GazelleJSONAPI(GazelleBase):
 
         if api_key is None and cookies:
             self.cookie_jar.update_cookies(cookies)
-
-    async def auth(self) -> None:
-        """Get auth key from server.
-
-        Raises:
-            RequestException: If authentication fails.
-        """
-        try:
-            accountinfo = await self.api("index")
-            self.authkey = accountinfo["response"]["authkey"]
-            self.passkey = accountinfo["response"]["passkey"]
-        except Exception as e:
-            logger.error(f"Authentication failed: {e}")
-            raise
 
     async def logout(self) -> None:
         """Log out user."""
@@ -410,6 +433,7 @@ class GazelleParser(GazelleBase):
         else:
             logger.warning("No cookies provided")
 
+    @_auth_retry
     async def auth(self) -> None:
         """Get authkey and passkey from server by performing a blank search.
 
@@ -547,63 +571,17 @@ class GazelleGamesNet(GazelleBase):
     ) -> None:
         super().__init__(server)
 
+        # GGN uses different API configuration
+        self._api_endpoint = "/api.php"
+        self._api_action_key = "request"
+        self._auth_action = "quick_user"
+
         if api_key:
             # GGN API documentation specifies X-API-Key header (not Authorization)
             self.client.headers["X-API-Key"] = api_key
             self.auth_method = "api_key"
-            logger.debug("Using API key for GGN authentication (X-API-Key header)")
         else:
             logger.warning("No API key provided for GGN")
-
-    async def api(self, action: str, **kwargs: Any) -> dict[str, Any]:
-        """Make an API request at api.php endpoint.
-
-        Args:
-            action (str): The action to perform.
-            **kwargs (Any): Additional parameters for the request.
-
-        Returns:
-            dict[str, Any]: JSON response from the server.
-
-        Raises:
-            RequestException: If the request fails.
-        """
-        apipage = self.server + "/api.php"
-        params = {"request": action}
-        params.update(kwargs)
-
-        try:
-            # For API requests, do not check status code, because Gazelle API may return valid JSON on error
-            content = await self.request(apipage, params=params, check_status_code=False)
-            json_response = msgspec.json.decode(content)
-            return json_response
-        except (ValueError, msgspec.DecodeError) as e:
-            raise RequestException from e
-
-    async def auth(self) -> None:
-        """Get authkey and passkey from GGN's quick_user endpoint.
-
-        Raises:
-            RequestException: If authentication fails.
-        """
-        try:
-            json_response = await self.api("quick_user")
-
-            if json_response.get("status") == "success":
-                user_data = json_response.get("response", {})
-                self.authkey = user_data.get("authkey")
-                self.passkey = user_data.get("passkey")
-                if not self.authkey or not self.passkey:
-                    raise RequestException("GGN API did not return valid authkey/passkey")
-            else:
-                error_msg = json_response.get("error", "unknown error")
-                logger.error(f"GGN API authentication failed: {error_msg}")
-                raise RequestException(f"GGN API authentication failed: {error_msg}")
-        except RequestException:
-            raise
-        except Exception as e:
-            logger.error(f"Failed to authenticate with GGN API: {e}")
-            raise RequestException(f"GGN API authentication error: {e}") from e
 
     async def download_torrent(self, torrent_id: int | str) -> Torrent:
         """Download a torrent by its ID using GGN's torrents.php endpoint.
