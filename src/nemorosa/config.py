@@ -1,7 +1,7 @@
 """Nemorosa configuration processing module."""
 
 import sys
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from secrets import token_urlsafe
 
@@ -14,7 +14,7 @@ from . import logger
 APPNAME = "nemorosa"
 
 
-class LinkType(Enum):
+class LinkType(StrEnum):
     """Link type enumeration."""
 
     SYMLINK = "symlink"
@@ -23,7 +23,7 @@ class LinkType(Enum):
     REFLINK_OR_COPY = "reflink_or_copy"
 
 
-class LogLevel(Enum):
+class LogLevel(StrEnum):
     """Log level enumeration."""
 
     DEBUG = "debug"

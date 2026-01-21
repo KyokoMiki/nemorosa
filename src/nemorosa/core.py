@@ -1,7 +1,7 @@
 """Core processing functions for nemorosa."""
 
 import posixpath
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING
 from urllib.parse import parse_qs, urlparse
 
@@ -14,7 +14,7 @@ from torf import Torrent
 from . import config, logger
 from .api import get_api_by_site_host, get_api_by_tracker, get_target_apis
 from .client_instance import get_torrent_client
-from .clients import ClientTorrentInfo, TorrentConflictError
+from .clients import ClientTorrentInfo, PostProcessStatus, TorrentConflictError
 from .db import get_database
 from .filecompare import (
     check_conflicts,
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 MAX_SEARCH_RESULTS = 20
 
 
-class ProcessStatus(Enum):
+class ProcessStatus(StrEnum):
     """Status enumeration for process operations."""
 
     SUCCESS = "success"
@@ -63,7 +63,6 @@ class PostProcessStats(msgspec.Struct):
     matches_checked: int = 0
     matches_completed: int = 0
     matches_started_downloading: int = 0
-    matches_already_downloading: int = 0
     matches_failed: int = 0
 
 
@@ -799,14 +798,14 @@ class NemorosaCore:
                 result = await self.torrent_client.post_process_single_injected_torrent(matched_torrent_hash)
 
                 # Update stats based on result
-                if result.status == "completed":
+                if result.status == PostProcessStatus.COMPLETED:
                     stats.matches_completed += 1
                     if result.started_downloading:
                         stats.matches_started_downloading += 1
-                elif result.status == "partial_kept":
+                elif result.status == PostProcessStatus.PARTIAL_KEPT:
                     # Partial torrent kept, no action needed
                     pass
-                elif result.status in ("partial_removed", "error"):
+                elif result.status in (PostProcessStatus.PARTIAL_REMOVED, PostProcessStatus.ERROR):
                     stats.matches_failed += 1
                 # For "not_found" and "checking" status, no stats update needed
 
@@ -817,7 +816,6 @@ class NemorosaCore:
             logger.success("Matches checked: %d", stats.matches_checked)
             logger.success("Matches completed: %d", stats.matches_completed)
             logger.success("Matches started downloading: %d", stats.matches_started_downloading)
-            logger.success("Matches already downloading: %d", stats.matches_already_downloading)
             logger.success("Matches failed: %d", stats.matches_failed)
             logger.section("===== Injected Torrents Post-Processing Complete =====")
 

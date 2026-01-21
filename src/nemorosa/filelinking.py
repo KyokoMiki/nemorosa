@@ -88,8 +88,7 @@ def get_link_directory(source_path: str) -> str | None:
             return config.cfg.linking.link_dirs[0]
 
         logger.warning(
-            f"No suitable link directory found for {source_path}. "
-            f"Linking may fail for {config.cfg.linking.link_type.value}"
+            f"No suitable link directory found for {source_path}. Linking may fail for {config.cfg.linking.link_type}"
         )
         return None
 
@@ -162,13 +161,13 @@ def create_file_link(source_path: str, dest_path: str, link_type: LinkType | Non
             # Reflink with fallback to copy
             reflink_or_copy(resolved_source, dest_path)
 
-        logger.debug(f"Created {link_type.value} link: {source_path} -> {dest_path}")
+        logger.debug(f"Created {link_type} link: {source_path} -> {dest_path}")
         return True
 
     except OSError as e:
         if e.errno == errno.EEXIST:
             return True  # File already exists
-        logger.error(f"Failed to create {link_type.value} link {source_path} -> {dest_path}: {e}")
+        logger.error(f"Failed to create {link_type} link {source_path} -> {dest_path}: {e}")
         return False
     except Exception as e:
         logger.error(f"Unexpected error creating link {source_path} -> {dest_path}: {e}")

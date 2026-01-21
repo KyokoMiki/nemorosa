@@ -7,6 +7,7 @@ import logging
 from abc import ABC, abstractmethod
 from collections.abc import Collection
 from contextlib import suppress
+from enum import StrEnum
 from html import unescape
 from http.cookies import SimpleCookie
 from typing import Any
@@ -29,6 +30,13 @@ from torf import Torrent
 
 from . import logger
 from .config import TargetSiteConfig
+
+
+class AuthMethod(StrEnum):
+    """Authentication method enumeration."""
+
+    COOKIES = "cookies"
+    API_KEY = "api_key"
 
 
 class InvalidCredentialsException(Exception):
@@ -79,7 +87,7 @@ class GazelleBase(ABC):
         self.server = server
         self.authkey = None
         self.passkey = None
-        self.auth_method = "cookies"  # Default authentication method
+        self.auth_method = AuthMethod.COOKIES  # Default authentication method
 
         # API configuration - subclasses can override these
         self._api_endpoint = "/ajax.php"
@@ -191,7 +199,7 @@ class GazelleBase(ABC):
         Returns:
             Torrent: The parsed torrent object.
         """
-        if self.auth_method == "api_key":
+        if self.auth_method == AuthMethod.API_KEY:
             ajaxpage = self.server + "/ajax.php"
             response = await self.request(ajaxpage, params={"action": "download", "id": torrent_id})
         else:
@@ -281,7 +289,7 @@ class GazelleBase(ABC):
         """
         apipage = self.server + self._api_endpoint
         params = {self._api_action_key: action}
-        if self.auth_method != "api_key" and self.authkey:
+        if self.auth_method != AuthMethod.API_KEY and self.authkey:
             params["auth"] = self.authkey
         params.update(kwargs)
 
@@ -368,7 +376,7 @@ class GazelleJSONAPI(GazelleBase):
         # Add API key to headers (if provided)
         if api_key:
             self.client.headers["Authorization"] = api_key
-            self.auth_method = "api_key"
+            self.auth_method = AuthMethod.API_KEY
 
         if api_key is None and cookies:
             self.cookie_jar.update_cookies(cookies)
@@ -579,7 +587,7 @@ class GazelleGamesNet(GazelleBase):
         if api_key:
             # GGN API documentation specifies X-API-Key header (not Authorization)
             self.client.headers["X-API-Key"] = api_key
-            self.auth_method = "api_key"
+            self.auth_method = AuthMethod.API_KEY
         else:
             logger.warning("No API key provided for GGN")
 

@@ -2,7 +2,7 @@
 
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 
 import anyio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -29,7 +29,7 @@ class JobResponse(BaseModel):
     }
 
 
-class JobType(Enum):
+class JobType(StrEnum):
     """Job type enumeration."""
 
     SEARCH = "search"
@@ -106,7 +106,7 @@ class JobManager:
             self.scheduler.add_job(
                 self._run_search_job,
                 trigger=IntervalTrigger(seconds=int(interval)),
-                id=JobType.SEARCH.value,
+                id=JobType.SEARCH,
                 name="Search Job",
                 misfire_grace_time=None,
                 max_instances=1,
@@ -125,7 +125,7 @@ class JobManager:
             self.scheduler.add_job(
                 self._run_cleanup_job,
                 trigger=IntervalTrigger(seconds=int(interval)),
-                id=JobType.CLEANUP.value,
+                id=JobType.CLEANUP,
                 name="Cleanup Job",
                 misfire_grace_time=None,
                 max_instances=1,
@@ -138,13 +138,13 @@ class JobManager:
 
     async def _run_search_job(self):
         """Run search job."""
-        job_name = JobType.SEARCH.value
+        job_name = JobType.SEARCH
         logger.debug(f"Starting {job_name} job")
 
         async with self._job_execution_context(job_name) as start_time:
             # Get next run time from APScheduler
             next_run_time = None
-            job = self.scheduler.get_job(JobType.SEARCH.value)
+            job = self.scheduler.get_job(job_name)
             if job and job.next_run_time:
                 next_run_time = job.next_run_time
 
@@ -163,13 +163,13 @@ class JobManager:
 
     async def _run_cleanup_job(self):
         """Run cleanup job."""
-        job_name = JobType.CLEANUP.value
+        job_name = JobType.CLEANUP
         logger.debug(f"Starting {job_name} job")
 
         async with self._job_execution_context(job_name) as start_time:
             # Get next run time from APScheduler
             next_run_time = None
-            job = self.scheduler.get_job(JobType.CLEANUP.value)
+            job = self.scheduler.get_job(job_name)
             if job and job.next_run_time:
                 next_run_time = job.next_run_time
 
@@ -193,49 +193,48 @@ class JobManager:
         Returns:
             JobResponse: Job trigger result.
         """
-        job_name = job_type.value
-        logger.debug(f"Triggering {job_name} job early")
+        logger.debug(f"Triggering {job_type} job early")
 
         try:
             # Check if job exists and is enabled
-            job = self.scheduler.get_job(job_name)
+            job = self.scheduler.get_job(job_type)
             if not job:
-                logger.warning(f"Job {job_name} not found or not enabled")
+                logger.warning(f"Job {job_type} not found or not enabled")
                 return JobResponse(
                     status="not_found",
-                    message=f"Job {job_name} not found or not enabled",
-                    job_name=job_name,
+                    message=f"Job {job_type} not found or not enabled",
+                    job_name=job_type,
                 )
 
             # Check if job is already running
             async with self._running_jobs_lock:
-                is_running = job_name in self._running_jobs
+                is_running = job_type in self._running_jobs
 
             if is_running:
-                logger.warning(f"Job {job_name} is already running")
+                logger.warning(f"Job {job_type} is already running")
                 return JobResponse(
                     status="conflict",
-                    message=f"Job {job_name} is currently running",
-                    job_name=job_name,
+                    message=f"Job {job_type} is currently running",
+                    job_name=job_type,
                 )
 
-            self.scheduler.modify_job(job_name, next_run_time=datetime.now(UTC))
+            self.scheduler.modify_job(job_type, next_run_time=datetime.now(UTC))
 
-            logger.debug(f"Successfully triggered {job_name} job")
+            logger.debug(f"Successfully triggered {job_type} job")
             result = JobResponse(
                 status="success",
-                message=f"Job {job_name} triggered successfully",
-                job_name=job_name,
+                message=f"Job {job_type} triggered successfully",
+                job_name=job_type,
             )
 
             return result
 
         except Exception as e:
-            logger.error(f"Error triggering {job_name} job: {e}")
+            logger.error(f"Error triggering {job_type} job: {e}")
             return JobResponse(
                 status="error",
                 message=f"Error triggering job: {str(e)}",
-                job_name=job_name,
+                job_name=job_type,
             )
 
     async def get_job_status(self, job_type: JobType) -> JobResponse:
@@ -247,36 +246,35 @@ class JobManager:
         Returns:
             JobResponse: Job status information.
         """
-        job_name = job_type.value
-        job = self.scheduler.get_job(job_name)
+        job = self.scheduler.get_job(job_type)
 
         if not job:
             return JobResponse(
                 status="not_found",
-                message=f"Job {job_name} not found",
-                job_name=job_name,
+                message=f"Job {job_type} not found",
+                job_name=job_type,
             )
 
         # Check if job is currently running
         async with self._running_jobs_lock:
-            is_running = job_name in self._running_jobs
+            is_running = job_type in self._running_jobs
 
         # Get last run time from database
-        last_run_dt = await self.database.get_job_last_run(job_name)
+        last_run_dt = await self.database.get_job_last_run(job_type)
         last_run = last_run_dt.isoformat() if last_run_dt else None
 
         # Determine status based on running state
         if is_running:
             status = "running"
-            message = f"Job {job_name} is currently running"
+            message = f"Job {job_type} is currently running"
         else:
             status = "active"
-            message = f"Job {job_name} is active"
+            message = f"Job {job_type} is active"
 
         return JobResponse(
             status=status,
             message=message,
-            job_name=job_name,
+            job_name=job_type,
             next_run=job.next_run_time.isoformat() if job.next_run_time else None,
             last_run=last_run,
         )
