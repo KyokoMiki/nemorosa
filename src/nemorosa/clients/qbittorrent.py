@@ -56,22 +56,33 @@ _QBITTORRENT_FIELD_SPECS = {
     "total_size": FieldSpec(_request_arguments=None, extractor=lambda t: t.size),
     "files": FieldSpec(
         _request_arguments=None,
-        extractor=lambda t: [ClientTorrentFile(name=f.name, size=f.size, progress=f.progress) for f in t.files],
+        extractor=lambda t: [
+            ClientTorrentFile(name=f.name, size=f.size, progress=f.progress)
+            for f in t.files
+        ],
     ),
     "trackers": FieldSpec(
         _request_arguments=None,
         extractor=lambda t: [t.tracker]
         if t.trackers_count == 1
         else [
-            tracker.url for tracker in t.trackers if tracker.url not in ("** [DHT] **", "** [PeX] **", "** [LSD] **")
+            tracker.url
+            for tracker in t.trackers
+            if tracker.url not in ("** [DHT] **", "** [PeX] **", "** [LSD] **")
         ],
     ),
     "download_dir": FieldSpec(_request_arguments=None, extractor=lambda t: t.save_path),
     "state": FieldSpec(
-        _request_arguments=None, extractor=lambda t: QBITTORRENT_STATE_MAPPING.get(t.state, TorrentState.UNKNOWN)
+        _request_arguments=None,
+        extractor=lambda t: QBITTORRENT_STATE_MAPPING.get(
+            t.state, TorrentState.UNKNOWN
+        ),
     ),
     "piece_progress": FieldSpec(
-        _request_arguments=None, extractor=lambda t: [piece == 2 for piece in t.pieceStates] if t.pieceStates else []
+        _request_arguments=None,
+        extractor=lambda t: [piece == 2 for piece in t.pieceStates]
+        if t.pieceStates
+        else [],
     ),
 }
 
@@ -107,9 +118,10 @@ class QBittorrentClient(TorrentClient):
         """Get all torrents from qBittorrent.
 
         Args:
-            torrent_hashes (list[str] | None): Optional list of torrent hashes to filter.
-                If None, all torrents will be returned.
-            fields (list[str] | None): List of field names to include in the result.
+            torrent_hashes (list[str] | None): Optional list of torrent hashes
+                to filter. If None, all torrents will be returned.
+            fields (list[str] | None): List of field names to include in the
+                result.
                 If None, all available fields will be included.
 
         Returns:
@@ -120,19 +132,28 @@ class QBittorrentClient(TorrentClient):
             field_config, _ = self._get_field_config_and_arguments(fields)
 
             # Get torrents from qBittorrent
-            torrents = await asyncify(self.client.torrents_info)(torrent_hashes=torrent_hashes)
+            torrents = await asyncify(self.client.torrents_info)(
+                torrent_hashes=torrent_hashes
+            )
 
             # Build ClientTorrentInfo objects
             return [
-                ClientTorrentInfo(**{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()})
+                ClientTorrentInfo(
+                    **{
+                        field_name: spec.extractor(torrent)
+                        for field_name, spec in field_config.items()
+                    }
+                )
                 for torrent in torrents
             ]
 
         except Exception as e:
-            logger.error(f"Error retrieving torrents from qBittorrent: {e}")
+            logger.error("Error retrieving torrents from qBittorrent: %s", e)
             return []
 
-    async def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
+    async def get_torrent_info(
+        self, torrent_hash: str, fields: list[str] | None
+    ) -> ClientTorrentInfo | None:
         """Get torrent information.
 
         Args:
@@ -143,7 +164,9 @@ class QBittorrentClient(TorrentClient):
             ClientTorrentInfo | None: Torrent information, or None if not found.
         """
         try:
-            torrent_info = await asyncify(self.client.torrents_info)(torrent_hashes=torrent_hash)
+            torrent_info = await asyncify(self.client.torrents_info)(
+                torrent_hashes=torrent_hash
+            )
             if not torrent_info:
                 return None
 
@@ -154,13 +177,18 @@ class QBittorrentClient(TorrentClient):
 
             # Build ClientTorrentInfo using field_config
             return ClientTorrentInfo(
-                **{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()}
+                **{
+                    field_name: spec.extractor(torrent)
+                    for field_name, spec in field_config.items()
+                }
             )
         except Exception as e:
-            logger.error(f"Error retrieving torrent info from qBittorrent: {e}")
+            logger.error("Error retrieving torrent info from qBittorrent: %s", e)
             return None
 
-    async def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
+    async def get_torrents_for_monitoring(
+        self, torrent_hashes: set[str]
+    ) -> dict[str, TorrentState]:
         """Get torrent states for monitoring (optimized for qBittorrent).
 
         Uses qBittorrent's efficient sync/maindata API to get only the required
@@ -191,7 +219,9 @@ class QBittorrentClient(TorrentClient):
 
             # Ensure torrents_data is a dictionary
             if not isinstance(torrents_data, dict):
-                logger.warning("Unexpected torrents data format from qBittorrent sync API")
+                logger.warning(
+                    "Unexpected torrents data format from qBittorrent sync API"
+                )
                 return {}
 
             # Update cache with new data from torrents_data
@@ -199,22 +229,36 @@ class QBittorrentClient(TorrentClient):
                 if isinstance(torrent_info, dict):
                     state_str = torrent_info.get("state", "unknown")
                     if isinstance(state_str, str):
-                        state = QBITTORRENT_STATE_MAPPING.get(state_str, TorrentState.UNKNOWN)
+                        state = QBITTORRENT_STATE_MAPPING.get(
+                            state_str, TorrentState.UNKNOWN
+                        )
                         self._torrent_states_cache[torrent_hash] = state
 
             # Return cached states for requested torrents
-            return {h: self._torrent_states_cache[h] for h in torrent_hashes if h in self._torrent_states_cache}
+            return {
+                h: self._torrent_states_cache[h]
+                for h in torrent_hashes
+                if h in self._torrent_states_cache
+            }
 
         except Exception as e:
-            logger.error(f"Error getting torrent states for monitoring from qBittorrent: {e}")
+            logger.error(
+                "Error getting torrent states for monitoring from qBittorrent: %s", e
+            )
             # On error, fall back to cached states for requested torrents
-            return {h: self._torrent_states_cache[h] for h in torrent_hashes if h in self._torrent_states_cache}
+            return {
+                h: self._torrent_states_cache[h]
+                for h in torrent_hashes
+                if h in self._torrent_states_cache
+            }
 
     # endregion
 
     # region Abstract Methods - Internal Operations
 
-    async def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
+    async def _add_torrent(
+        self, torrent_data: bytes, download_dir: str, hash_match: bool
+    ) -> str:
         """Add torrent to qBittorrent.
 
         Args:
@@ -245,7 +289,9 @@ class QBittorrentClient(TorrentClient):
         if result != "Ok.":
             # Check if torrent already exists by comparing add time
             try:
-                torrent_info = await asyncify(self.client.torrents_info)(torrent_hashes=info_hash)
+                torrent_info = await asyncify(self.client.torrents_info)(
+                    torrent_hashes=info_hash
+                )
                 if torrent_info:
                     # Get the first (and should be only) torrent with this hash
                     existing_torrent = torrent_info[0]
@@ -254,12 +300,16 @@ class QBittorrentClient(TorrentClient):
                     if add_time < current_time:
                         raise TorrentConflictError(existing_torrent.hash)
                     # Check if tracker is correct
-                    target_tracker = torrent_obj.trackers.flat[0] if torrent_obj.trackers else ""
+                    target_tracker = (
+                        torrent_obj.trackers.flat[0] if torrent_obj.trackers else ""
+                    )
                     if existing_torrent.tracker != target_tracker:
                         raise TorrentConflictError(existing_torrent.hash)
 
             except TorrentConflictError as e:
-                error_msg = f"The torrent to be injected cannot coexist with local torrent {e}"
+                error_msg = (
+                    f"The torrent to be injected cannot coexist with local torrent {e}"
+                )
                 logger.error(error_msg)
                 raise TorrentConflictError(error_msg) from e
             except Exception as e:
@@ -273,9 +323,13 @@ class QBittorrentClient(TorrentClient):
         Args:
             torrent_hash (str): Torrent hash.
         """
-        await asyncify(self.client.torrents_delete)(torrent_hashes=torrent_hash, delete_files=False)
+        await asyncify(self.client.torrents_delete)(
+            torrent_hashes=torrent_hash, delete_files=False
+        )
 
-    async def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str) -> None:
+    async def _rename_torrent(
+        self, torrent_hash: str, old_name: str, new_name: str
+    ) -> None:
         """Rename entire torrent.
 
         Args:
@@ -296,7 +350,9 @@ class QBittorrentClient(TorrentClient):
         except qbittorrentapi.Conflict409Error:
             pass
 
-    async def _rename_file(self, torrent_hash: str, old_path: str, new_name: str) -> None:
+    async def _rename_file(
+        self, torrent_hash: str, old_path: str, new_name: str
+    ) -> None:
         """Rename file within torrent.
 
         Args:
@@ -318,7 +374,9 @@ class QBittorrentClient(TorrentClient):
         """
         await asyncify(self.client.torrents_recheck)(torrent_hashes=torrent_hash)
 
-    async def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
+    async def _process_rename_map(
+        self, torrent_hash: str, base_path: str, rename_map: dict
+    ) -> dict:
         """Process rename mapping to adapt to qBittorrent.
 
         qBittorrent needs to prepend the root directory.
@@ -331,7 +389,10 @@ class QBittorrentClient(TorrentClient):
         Returns:
             dict: Processed rename mapping with full paths.
         """
-        return {posixpath.join(base_path, key): posixpath.join(base_path, value) for key, value in rename_map.items()}
+        return {
+            posixpath.join(base_path, key): posixpath.join(base_path, value)
+            for key, value in rename_map.items()
+        }
 
     async def _get_torrent_data(self, torrent_hash: str) -> bytes | None:
         """Get torrent data from qBittorrent.
@@ -343,13 +404,15 @@ class QBittorrentClient(TorrentClient):
             bytes | None: Torrent file data, or None if not available.
         """
         try:
-            torrent_data = await asyncify(self.client.torrents_export)(torrent_hash=torrent_hash)
+            torrent_data = await asyncify(self.client.torrents_export)(
+                torrent_hash=torrent_hash
+            )
             if torrent_data is None:
                 torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
                 return await torrent_path.read_bytes()
             return torrent_data
         except Exception as e:
-            logger.error(f"Error getting torrent data from qBittorrent: {e}")
+            logger.error("Error getting torrent data from qBittorrent: %s", e)
             return None
 
     async def _resume_torrent(self, torrent_hash: str) -> bool:
@@ -365,7 +428,7 @@ class QBittorrentClient(TorrentClient):
             await asyncify(self.client.torrents_resume)(torrent_hashes=torrent_hash)
             return True
         except Exception as e:
-            logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
+            logger.error("Failed to resume torrent %s: %s", torrent_hash, e)
             return False
 
     # endregion
@@ -375,8 +438,9 @@ class QBittorrentClient(TorrentClient):
     def reset_sync_state(self) -> None:
         """Reset sync state for incremental updates.
 
-        This will cause the next sync request to return all data instead of just changes.
-        Useful when the sync state gets out of sync or when starting fresh monitoring.
+        This will cause the next sync request to return all data instead of
+        just changes. Useful when the sync state gets out of sync or when
+        starting fresh monitoring.
         """
         self._last_rid = 0
         self._torrent_states_cache.clear()

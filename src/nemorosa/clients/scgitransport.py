@@ -1,8 +1,8 @@
 """SCGI XMLRPC Transport.
 
-XMLRPC in Python only supports HTTP(S). This module extends the transport to also support SCGI.
-
-SCGI is required by rTorrent if you want to communicate directly with an instance.
+XMLRPC in Python only supports HTTP(S). This module extends the transport
+to also support SCGI. SCGI is required by rTorrent if you want to communicate
+directly with an instance.
 """
 
 import ipaddress
@@ -45,18 +45,24 @@ class SCGITransport(Transport):
         else:
             # host is a string in format "hostname:port"
             host_str = str(host) if not isinstance(host, str) else host
-            # Add dummy scheme for urlparse (only for parsing, not part of SCGI protocol)
+            # Add dummy scheme for urlparse (not part of SCGI protocol)
             parsed = urlparse(f"scgi://{host_str}")
             if not parsed.hostname or not parsed.port:
-                raise ValueError(f"Invalid host format '{host}', expected 'hostname:port'")
+                raise ValueError(
+                    f"Invalid host format '{host}', expected 'hostname:port'"
+                )
 
             try:
-                is_ipv6 = isinstance(ipaddress.ip_address(parsed.hostname), ipaddress.IPv6Address)
+                is_ipv6 = isinstance(
+                    ipaddress.ip_address(parsed.hostname), ipaddress.IPv6Address
+                )
             except ValueError:
                 # Not a valid IP address, treat as socket.AF_INET
                 is_ipv6 = False
 
-            s = socket.socket(socket.AF_INET6 if is_ipv6 else socket.AF_INET, socket.SOCK_STREAM)
+            s = socket.socket(
+                socket.AF_INET6 if is_ipv6 else socket.AF_INET, socket.SOCK_STREAM
+            )
             address = (parsed.hostname, parsed.port)
 
         try:

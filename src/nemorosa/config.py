@@ -57,7 +57,9 @@ class LinkingConfig(msgspec.Struct):
     enable_linking: bool = False
     link_dirs: list[str] = msgspec.field(default_factory=list)
     link_type: LinkType = LinkType.HARDLINK
-    dir_mode: int = 775  # Directory creation mode (octal digits as integer, e.g., 775 = 0o775), default 775
+
+    # Directory creation mode (octal digits as integer, e.g., 775 = 0o775)
+    dir_mode: int = 775
 
     def __post_init__(self):
         # Validate link_dirs when linking is enabled
@@ -77,11 +79,16 @@ class LinkingConfig(msgspec.Struct):
         try:
             self.dir_mode = int(mode_str, 8)
         except ValueError as err:
-            raise ValueError(f"dir_mode must contain only octal digits 0-7; got: {mode_str}") from err
+            raise ValueError(
+                f"dir_mode must contain only octal digits 0-7; got: {mode_str}"
+            ) from err
 
         # Check if the octal value is within valid permission range (0o0 to 0o777)
         if not (0o0 <= self.dir_mode <= 0o777):
-            raise ValueError(f"dir_mode must be between 0 and 777 (octal permissions), got: {mode_str}")
+            raise ValueError(
+                f"dir_mode must be between 0 and 777 (octal permissions), "
+                f"got: {mode_str}"
+            )
 
 
 class GlobalConfig(msgspec.Struct):
@@ -118,7 +125,9 @@ class DownloaderConfig(msgspec.Struct):
             raise ValueError("Downloader client URL is required")
 
         # Validate client URL format
-        if not self.client.startswith(("deluge://", "transmission+", "qbittorrent+", "rtorrent+")):
+        if not self.client.startswith(
+            ("deluge://", "transmission+", "qbittorrent+", "rtorrent+")
+        ):
             raise ValueError(f"Invalid client URL format: {self.client}")
 
         # Validate tags content
@@ -140,26 +149,38 @@ class ServerConfig(msgspec.Struct):
     def __post_init__(self):
         # Validate port range
         if not isinstance(self.port, int) or not (1 <= self.port <= 65535):
-            raise ValueError(f"Server port must be an integer between 1 and 65535, got: {self.port}")
+            raise ValueError(
+                f"Server port must be an integer between 1 and 65535, got: {self.port}"
+            )
 
         # Validate search_cadence
         if self.search_cadence is not None:
             try:
                 search_seconds = int(parse_timespan(self.search_cadence))
                 if search_seconds <= 0:
-                    raise ValueError(f"search_cadence must be greater than 0, got: {search_seconds} seconds")
+                    raise ValueError(
+                        f"search_cadence must be greater than 0, "
+                        f"got: {search_seconds} seconds"
+                    )
                 self.search_cadence = str(search_seconds)
             except Exception as e:
-                raise ValueError(f"Invalid search_cadence '{self.search_cadence}': {e}") from e
+                raise ValueError(
+                    f"Invalid search_cadence '{self.search_cadence}': {e}"
+                ) from e
 
         # Validate cleanup_cadence
         try:
             cleanup_seconds = int(parse_timespan(self.cleanup_cadence))
             if cleanup_seconds <= 0:
-                raise ValueError(f"cleanup_cadence must be greater than 0, got: {cleanup_seconds} seconds")
+                raise ValueError(
+                    f"cleanup_cadence must be greater than 0, "
+                    f"got: {cleanup_seconds} seconds"
+                )
             self.cleanup_cadence = str(cleanup_seconds)
         except Exception as e:
-            raise ValueError(f"Invalid cleanup_cadence '{self.cleanup_cadence}': {e}") from e
+            raise ValueError(
+                f"Invalid cleanup_cadence '{self.cleanup_cadence}': {e}"
+            ) from e
 
 
 class TargetSiteConfig(msgspec.Struct):
@@ -179,7 +200,9 @@ class TargetSiteConfig(msgspec.Struct):
 
         # At least one of api_key or cookie is required
         if not self.api_key and not self.cookie:
-            raise ValueError(f"Target site '{self.server}' must have either api_key or cookie")
+            raise ValueError(
+                f"Target site '{self.server}' must have either api_key or cookie"
+            )
 
         self.server = self.server.rstrip("/")
 
@@ -187,10 +210,14 @@ class TargetSiteConfig(msgspec.Struct):
 class NemorosaConfig(msgspec.Struct):
     """Nemorosa main configuration class."""
 
-    global_config: GlobalConfig = msgspec.field(name="global", default_factory=GlobalConfig)
+    global_config: GlobalConfig = msgspec.field(
+        name="global", default_factory=GlobalConfig
+    )
     downloader: DownloaderConfig = msgspec.field(default_factory=DownloaderConfig)
     server: ServerConfig = msgspec.field(default_factory=ServerConfig)
-    target_sites: list[TargetSiteConfig] = msgspec.field(name="target_site", default_factory=list)
+    target_sites: list[TargetSiteConfig] = msgspec.field(
+        name="target_site", default_factory=list
+    )
     linking: LinkingConfig = msgspec.field(default_factory=LinkingConfig)
 
     def __post_init__(self):
@@ -201,10 +228,15 @@ class NemorosaConfig(msgspec.Struct):
         # Validate each target_site configuration
         for i, site in enumerate(self.target_sites):
             if not isinstance(site, TargetSiteConfig):
-                raise ValueError(f"Error in target_site[{i}]: must be TargetSiteConfig instance")
+                raise ValueError(
+                    f"Error in target_site[{i}]: must be TargetSiteConfig instance"
+                )
 
         # Validate rtorrent client requires enable_linking
-        if self.downloader.client.startswith("rtorrent+") and not self.linking.enable_linking:
+        if (
+            self.downloader.client.startswith("rtorrent+")
+            and not self.linking.enable_linking
+        ):
             raise ValueError("rtorrent client requires enable linking")
 
 
@@ -222,7 +254,7 @@ def find_config_path(config_path: str | None = None) -> Path:
     """Find configuration file path.
 
     Args:
-        config_path: Specified configuration file path, if None uses user config directory.
+        config_path: Config file path, if None uses user config directory.
 
     Returns:
         Absolute path of the configuration file.
@@ -234,13 +266,21 @@ def find_config_path(config_path: str | None = None) -> Path:
     if path_to_check.exists():
         return path_to_check
     else:
-        logger.warning("Configuration file not found. Creating default configuration...")
+        logger.warning(
+            "Configuration file not found. Creating default configuration..."
+        )
 
         # Create default configuration file
         created_path = create_default_config(path_to_check)
-        logger.success(f"Default configuration created at: {created_path}")
-        logger.info("Please edit the configuration file with your settings and run nemorosa again.")
-        logger.info("You can also specify a custom config path with: nemorosa --config /path/to/config.yml")
+        logger.success("Default configuration created at: %s", created_path)
+        logger.info(
+            "Please edit the configuration file with your settings "
+            "and run nemorosa again."
+        )
+        logger.info(
+            "You can specify a custom config path with: "
+            "nemorosa --config /path/to/config.yml"
+        )
 
         # Exit program
         sys.exit(0)
@@ -262,12 +302,14 @@ def setup_config(config_path: Path) -> NemorosaConfig:
         # Parse configuration file directly to NemorosaConfig using msgspec
         config = msgspec.yaml.decode(config_path.read_bytes(), type=NemorosaConfig)
 
-        logger.info(f"Configuration loaded successfully from: {config_path}")
+        logger.info("Configuration loaded successfully from: %s", config_path)
 
         return config
 
     except msgspec.ValidationError as e:
-        raise ValueError(f"Configuration validation error in '{config_path}': {e}") from e
+        raise ValueError(
+            f"Configuration validation error in '{config_path}': {e}"
+        ) from e
     except Exception as e:
         raise ValueError(f"Error reading config file '{config_path}': {e}") from e
 
@@ -346,7 +388,7 @@ target_site:
     api_key: "your_api_key_here"
   - server: "https://dicmusic.com"
     cookie: "your_cookie_here" # For sites that don't support API, use cookie instead
-"""
+"""  # noqa: E501
 
     target_path.write_text(default_config, encoding="utf-8")
 

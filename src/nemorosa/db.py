@@ -1,6 +1,8 @@
 """
 Database operation module.
-Provides SQLite storage functionality for torrent scan history, result mapping, URL records and other data.
+
+Provides SQLite storage for torrent scan history, result mapping,
+URL records and other data.
 """
 
 from collections.abc import Collection, Sequence
@@ -11,9 +13,26 @@ from typing import TYPE_CHECKING, cast
 import anyio
 import msgspec
 from platformdirs import user_config_dir
-from sqlalchemy import Boolean, ForeignKey, Index, Integer, Row, String, delete, func, select, text, update
+from sqlalchemy import (
+    Boolean,
+    ForeignKey,
+    Index,
+    Integer,
+    Row,
+    String,
+    delete,
+    func,
+    select,
+    text,
+    update,
+)
 from sqlalchemy.dialects.sqlite import insert
-from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from . import config
@@ -29,19 +48,23 @@ class Base(DeclarativeBase):
 
 # ORM Models using SQLAlchemy 2.0 Mapped and mapped_column
 class ScanResult(Base):
-    """Scan results table - merge original scan_history, torrent_mapping, torrent_results."""
+    """Scan results table - merges scan_history, torrent_mapping, results."""
 
     __tablename__ = "scan_results"
 
     local_torrent_hash: Mapped[str] = mapped_column(String, primary_key=True)
-    site_host: Mapped[str] = mapped_column(String, primary_key=True, server_default="default")
+    site_host: Mapped[str] = mapped_column(
+        String, primary_key=True, server_default="default"
+    )
     local_torrent_name: Mapped[str | None] = mapped_column(String)
     matched_torrent_id: Mapped[str | None] = mapped_column(String)
     matched_torrent_hash: Mapped[str | None] = mapped_column(String)
     checked: Mapped[bool] = mapped_column(Boolean, server_default="0")
     scanned_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    __table_args__ = (Index("idx_scan_results_matched_checked", "matched_torrent_hash", "checked"),)
+    __table_args__ = (
+        Index("idx_scan_results_matched_checked", "matched_torrent_hash", "checked"),
+    )
 
 
 class JobLog(Base):
@@ -76,8 +99,8 @@ class ClientTorrent(Base):
     def from_client_info(cls, info: "ClientTorrentInfo") -> "ClientTorrent":
         """Alternative constructor: Create ClientTorrent from ClientTorrentInfo.
 
-        This is a factory method that provides a convenient way to create a ClientTorrent
-        ORM object from a ClientTorrentInfo business object.
+        This is a factory method that provides a convenient way to create a 
+        ClientTorrent ORM object from a ClientTorrentInfo business object.
 
         Args:
             info: ClientTorrentInfo object from torrent client.
@@ -90,10 +113,16 @@ class ClientTorrent(Base):
             name=info.name,
             total_size=info.total_size,
             download_dir=info.download_dir or None,
-            trackers=msgspec.json.encode(info.trackers).decode() if info.trackers else None,
+            trackers=msgspec.json.encode(info.trackers).decode()
+            if info.trackers
+            else None,
             # Add files through relationship
             files=[
-                TorrentFile(torrent_hash=info.hash, file_path=file_obj.name, file_size=file_obj.size)
+                TorrentFile(
+                    torrent_hash=info.hash,
+                    file_path=file_obj.name,
+                    file_size=file_obj.size,
+                )
                 for file_obj in info.files
             ],
         )
@@ -111,7 +140,9 @@ class TorrentFile(Base):
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # Back reference to parent torrent
-    torrent: Mapped["ClientTorrent"] = relationship("ClientTorrent", back_populates="files")
+    torrent: Mapped["ClientTorrent"] = relationship(
+        "ClientTorrent", back_populates="files"
+    )
 
     __table_args__ = (Index("idx_torrent_files_size", "file_size"),)
 
@@ -134,7 +165,11 @@ class NemorosaDatabase:
         Args:
             db_path: Database file path, if None uses config directory.
         """
-        self.db_path = Path(db_path).resolve() if db_path else Path(user_config_dir(config.APPNAME)) / "nemorosa.db"
+        self.db_path = (
+            Path(db_path).resolve()
+            if db_path
+            else Path(user_config_dir(config.APPNAME)) / "nemorosa.db"
+        )
 
         # Ensure database directory exists
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -203,7 +238,8 @@ class NemorosaDatabase:
         """
         async with self.async_session_maker() as session:
             stmt = select(ScanResult).where(
-                ScanResult.local_torrent_hash == local_torrent_hash, ScanResult.site_host == site_host
+                ScanResult.local_torrent_hash == local_torrent_hash,
+                ScanResult.site_host == site_host,
             )
             result = await session.execute(stmt)
             return result.scalar_one_or_none() is not None
@@ -232,8 +268,10 @@ class NemorosaDatabase:
             result_set = await session.execute(stmt)
             return result_set.scalars().all()
 
-    async def mark_torrent_downloaded(self, local_torrent_hash: str, site_host: str, matched_torrent_hash: str):
-        """Mark a torrent as successfully downloaded by updating its matched_torrent_hash.
+    async def mark_torrent_downloaded(
+        self, local_torrent_hash: str, site_host: str, matched_torrent_hash: str
+    ):
+        """Mark a torrent as downloaded by updating its matched_torrent_hash.
 
         Args:
             local_torrent_hash: Local torrent hash.
@@ -281,10 +319,12 @@ class NemorosaDatabase:
                 ScanResult.checked.is_(False),
             )
             result_set = await session.execute(stmt)
-            # Use cast to tell type checker that we've filtered out None values in the query
+            # Cast to tell type checker we've filtered out None values in query
             return cast("Sequence[str]", result_set.scalars().unique().all())
 
-    async def update_scan_result_checked(self, matched_torrent_hash: str, checked: bool):
+    async def update_scan_result_checked(
+        self, matched_torrent_hash: str, checked: bool
+    ):
         """Update checked status for a scan result.
 
         Args:
@@ -332,7 +372,9 @@ class NemorosaDatabase:
             last_run = result.scalar_one_or_none()
             return last_run
 
-    async def update_job_run(self, job_name: str, last_run: datetime, next_run: datetime | None = None):
+    async def update_job_run(
+        self, job_name: str, last_run: datetime, next_run: datetime | None = None
+    ):
         """Update job run information.
 
         Args:
@@ -402,7 +444,7 @@ class NemorosaDatabase:
         """Delete torrent(s) and their files from cache.
 
         Args:
-            torrent_hashes: Single torrent hash or a collection of torrent hashes to delete.
+            torrent_hashes: Torrent hash or collection of hashes to delete.
         """
         if isinstance(torrent_hashes, str):
             condition = ClientTorrent.hash == torrent_hashes
@@ -449,7 +491,9 @@ class NemorosaDatabase:
                         "name": t.name,
                         "total_size": t.total_size,
                         "download_dir": t.download_dir or None,
-                        "trackers": msgspec.json.encode(t.trackers).decode() if t.trackers else None,
+                        "trackers": msgspec.json.encode(t.trackers).decode()
+                        if t.trackers
+                        else None,
                     }
                     for t in batch
                 ]
@@ -472,7 +516,9 @@ class NemorosaDatabase:
             all_hashes = [t.hash for t in torrents]
             for i in range(0, len(all_hashes), TORRENT_BATCH_SIZE):
                 batch_hashes = all_hashes[i : i + TORRENT_BATCH_SIZE]
-                delete_stmt = delete(TorrentFile).where(TorrentFile.torrent_hash.in_(batch_hashes))
+                delete_stmt = delete(TorrentFile).where(
+                    TorrentFile.torrent_hash.in_(batch_hashes)
+                )
                 await session.execute(delete_stmt)
 
             # Prepare file data for batch insert
@@ -500,11 +546,18 @@ class NemorosaDatabase:
             Mapping from hash to (name, download_dir).
         """
         async with self.async_session_maker() as session:
-            stmt = select(ClientTorrent.hash, ClientTorrent.name, ClientTorrent.download_dir)
+            stmt = select(
+                ClientTorrent.hash, ClientTorrent.name, ClientTorrent.download_dir
+            )
             result = await session.execute(stmt)
-            return {hash_val: (name, download_dir) for hash_val, name, download_dir in result}
+            return {
+                hash_val: (name, download_dir)
+                for hash_val, name, download_dir in result
+            }
 
-    async def search_torrent_by_file_match(self, target_file_size: int, fname_keywords: list[str]) -> Sequence[Row]:
+    async def search_torrent_by_file_match(
+        self, target_file_size: int, fname_keywords: list[str]
+    ) -> Sequence[Row]:
         """Search torrents by file size and name keywords.
 
         Args:
@@ -518,10 +571,17 @@ class NemorosaDatabase:
             # Build conditions for matching files
             conditions = [TorrentFile.file_size == target_file_size]
             for keyword in fname_keywords:
-                conditions.append(func.lower(TorrentFile.file_path).like(f"%{keyword.lower()}%"))
+                conditions.append(
+                    func.lower(TorrentFile.file_path).like(f"%{keyword.lower()}%")
+                )
 
             # Subquery to find matching torrent hashes
-            subquery = select(TorrentFile.torrent_hash).where(*conditions).distinct().subquery()
+            subquery = (
+                select(TorrentFile.torrent_hash)
+                .where(*conditions)
+                .distinct()
+                .subquery()
+            )
 
             # Main query to get all files for matching torrents
             stmt = (
@@ -555,7 +615,9 @@ class NemorosaDatabase:
             # Build conditions for matching album name in torrent name
             conditions = []
             for keyword in album_keywords:
-                conditions.append(func.lower(ClientTorrent.name).like(f"%{keyword.lower()}%"))
+                conditions.append(
+                    func.lower(ClientTorrent.name).like(f"%{keyword.lower()}%")
+                )
 
             # Main query to check if any matching torrents exist
             stmt = select(func.count(ClientTorrent.hash)).where(*conditions)

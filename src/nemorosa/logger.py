@@ -45,7 +45,7 @@ def redact_url_password(url_str: str) -> str:
         url_str: The URL string that may contain a password.
 
     Returns:
-        str: The URL with password redacted if URL contains password, otherwise original URL.
+        str: URL with password redacted, or original URL if no password.
     """
     try:
         parsed_url = urlparse(url_str)
@@ -99,7 +99,11 @@ def init_logger(loglevel: "LogLevel | None" = None) -> None:
 
     # Create console handler with colored formatter
     handler = logging.StreamHandler(sys.stderr)
-    handler.setFormatter(DefaultFormatter(fmt="%(asctime)s | %(levelprefix)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    handler.setFormatter(
+        DefaultFormatter(
+            fmt="%(asctime)s | %(levelprefix)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        )
+    )
     logger.addHandler(handler)
 
     # Prevent propagation to avoid duplicate logs

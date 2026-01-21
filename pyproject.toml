@@ -58,7 +58,6 @@ nemorosa = "nemorosa:main"
 dev = ["ruff>=0.11.2"]
 
 [tool.ruff]
-line-length = 120
 target-version = "py311"
 
 [tool.ruff.lint]

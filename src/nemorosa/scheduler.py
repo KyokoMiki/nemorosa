@@ -24,7 +24,11 @@ class JobResponse(BaseModel):
 
     model_config = {
         "json_schema_extra": {
-            "example": {"status": "success", "message": "Job triggered successfully", "job_name": "search"}
+            "example": {
+                "status": "success",
+                "message": "Job triggered successfully",
+                "job_name": "search",
+            }
         }
     }
 
@@ -68,9 +72,9 @@ class JobManager:
             # Record successful completion
             end_time = datetime.now(UTC)
             duration = (end_time - start_time).total_seconds()
-            logger.debug(f"Completed {job_name} job in {duration:.2f} seconds")
+            logger.debug("Completed %s job in %.2f seconds", job_name, duration)
         except Exception as e:
-            logger.exception(f"Error in {job_name} job: {e}")
+            logger.exception("Error in %s job: %s", job_name, e)
         finally:
             # Mark job as not running
             async with self._running_jobs_lock:
@@ -113,9 +117,9 @@ class JobManager:
                 coalesce=True,
                 replace_existing=True,
             )
-            logger.debug(f"Added search job with cadence: {interval}")
+            logger.debug("Added search job with cadence: %s", interval)
         except Exception as e:
-            logger.exception(f"Failed to add search job: {e}")
+            logger.exception("Failed to add search job: %s", e)
 
     def _add_cleanup_job(self):
         """Add cleanup job to scheduler."""
@@ -132,14 +136,14 @@ class JobManager:
                 coalesce=True,
                 replace_existing=True,
             )
-            logger.debug(f"Added cleanup job with cadence: {interval}")
+            logger.debug("Added cleanup job with cadence: %s", interval)
         except Exception as e:
-            logger.exception(f"Failed to add cleanup job: {e}")
+            logger.exception("Failed to add cleanup job: %s", e)
 
     async def _run_search_job(self):
         """Run search job."""
         job_name = JobType.SEARCH
-        logger.debug(f"Starting {job_name} job")
+        logger.debug("Starting %s job", job_name)
 
         async with self._job_execution_context(job_name) as start_time:
             # Get next run time from APScheduler
@@ -158,13 +162,16 @@ class JobManager:
 
             client = processor.torrent_client
             if client and client.monitoring:
-                logger.debug("Stopping torrent monitoring and waiting for tracked torrents to complete...")
+                logger.debug(
+                    "Stopping torrent monitoring and waiting for "
+                    "tracked torrents to complete..."
+                )
                 await client.wait_for_monitoring_completion()
 
     async def _run_cleanup_job(self):
         """Run cleanup job."""
         job_name = JobType.CLEANUP
-        logger.debug(f"Starting {job_name} job")
+        logger.debug("Starting %s job", job_name)
 
         async with self._job_execution_context(job_name) as start_time:
             # Get next run time from APScheduler
@@ -193,13 +200,13 @@ class JobManager:
         Returns:
             JobResponse: Job trigger result.
         """
-        logger.debug(f"Triggering {job_type} job early")
+        logger.debug("Triggering %s job early", job_type)
 
         try:
             # Check if job exists and is enabled
             job = self.scheduler.get_job(job_type)
             if not job:
-                logger.warning(f"Job {job_type} not found or not enabled")
+                logger.warning("Job %s not found or not enabled", job_type)
                 return JobResponse(
                     status="not_found",
                     message=f"Job {job_type} not found or not enabled",
@@ -211,7 +218,7 @@ class JobManager:
                 is_running = job_type in self._running_jobs
 
             if is_running:
-                logger.warning(f"Job {job_type} is already running")
+                logger.warning("Job %s is already running", job_type)
                 return JobResponse(
                     status="conflict",
                     message=f"Job {job_type} is currently running",
@@ -220,7 +227,7 @@ class JobManager:
 
             self.scheduler.modify_job(job_type, next_run_time=datetime.now(UTC))
 
-            logger.debug(f"Successfully triggered {job_type} job")
+            logger.debug("Successfully triggered %s job", job_type)
             result = JobResponse(
                 status="success",
                 message=f"Job {job_type} triggered successfully",
@@ -230,7 +237,7 @@ class JobManager:
             return result
 
         except Exception as e:
-            logger.error(f"Error triggering {job_type} job: {e}")
+            logger.error("Error triggering %s job: %s", job_type, e)
             return JobResponse(
                 status="error",
                 message=f"Error triggering job: {str(e)}",

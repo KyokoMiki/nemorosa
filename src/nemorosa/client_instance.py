@@ -2,16 +2,22 @@
 Torrent Client Instance Module
 
 This module manages the global torrent client instance and provides a unified
-interface for different torrent clients including Transmission, qBittorrent, Deluge, and rTorrent.
-It handles singleton pattern for the torrent client to ensure consistent access
-across the application.
+interface for different torrent clients including Transmission, qBittorrent,
+Deluge, and rTorrent. It handles singleton pattern for the torrent client to
+ensure consistent access across the application.
 """
 
 from urllib.parse import urlparse
 
 import anyio
 
-from .clients import DelugeClient, QBittorrentClient, RTorrentClient, TorrentClient, TransmissionClient
+from .clients import (
+    DelugeClient,
+    QBittorrentClient,
+    RTorrentClient,
+    TorrentClient,
+    TransmissionClient,
+)
 
 # Torrent client factory mapping
 TORRENT_CLIENT_MAPPING = {
@@ -82,5 +88,7 @@ def get_torrent_client() -> TorrentClient:
         RuntimeError: If torrent client has not been initialized.
     """
     if _torrent_client_instance is None:
-        raise RuntimeError("Torrent client not initialized. Call init_torrent_client() first.")
+        raise RuntimeError(
+            "Torrent client not initialized. Call init_torrent_client() first."
+        )
     return _torrent_client_instance

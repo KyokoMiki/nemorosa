@@ -1,4 +1,6 @@
-"""Nemorosa - Cross-seeding tool specifically designed for Gazelle-based music trackers."""
+"""
+Nemorosa - Cross-seeding tool specifically designed for Gazelle-based music trackers.
+"""
 
 __version__ = "0.4.2"
 __author__ = "KyokoMiki"

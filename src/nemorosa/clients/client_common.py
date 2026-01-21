@@ -1,6 +1,8 @@
 """
 Common torrent client functionality.
-Provides base classes, utilities and shared logic for all torrent client implementations.
+
+Provides base classes, utilities and shared logic for all torrent client
+implementations.
 """
 
 import logging
@@ -48,7 +50,9 @@ def decode_bitfield_bytes(bitfield_data: bytes, piece_count: int) -> list[bool]:
 
         for bit_offset in range(end_piece - start_piece):
             bit_index = 7 - bit_offset
-            piece_progress[start_piece + bit_offset] = bool(byte_value & (1 << bit_index))
+            piece_progress[start_piece + bit_offset] = bool(
+                byte_value & (1 << bit_index)
+            )
 
     return piece_progress
 
@@ -106,7 +110,7 @@ class TorrentState(StrEnum):
 
 
 class TorrentConflictError(Exception):
-    """Exception raised when torrent cannot coexist with local torrent due to source flag issues."""
+    """Exception raised when torrent cannot coexist with local torrent."""
 
 
 class ClientTorrentFile(msgspec.Struct):
@@ -129,7 +133,9 @@ class ClientTorrentInfo(msgspec.Struct):
     download_dir: str = ""
     state: TorrentState = TorrentState.UNKNOWN  # Torrent state
     existing_target_trackers: set[str] = msgspec.field(default_factory=set)
-    piece_progress: list[bool] = msgspec.field(default_factory=list)  # Piece download status
+    piece_progress: list[bool] = msgspec.field(
+        default_factory=list
+    )  # Piece download status
 
     @property
     def fdict(self) -> dict[str, int]:
@@ -146,9 +152,10 @@ class ClientTorrentInfo(msgspec.Struct):
 class TorrentClient(ABC):
     """Abstract base class for torrent clients."""
 
-    # Class attribute to indicate if client supports specifying final directory on add
+    # Class attribute: whether client supports specifying final directory on add
     supports_final_directory = False
-    # Class attribute to indicate if client supports fast resume (skip verification on hash mismatch)
+    # Class attribute: whether client supports fast resume
+    # (skip verification on hash mismatch)
     supports_fast_resume = False
 
     def __init__(self):
@@ -173,10 +180,10 @@ class TorrentClient(ABC):
         """Get all torrents from client.
 
         Args:
-            torrent_hashes (list[str] | None): Optional list of torrent hashes to filter.
-                If None, all torrents will be returned.
-            fields (list[str] | None): List of field names to include in the result.
-                If None, all available fields will be included.
+            torrent_hashes (list[str] | None): Optional list of torrent hashes
+                to filter. If None, all torrents will be returned.
+            fields (list[str] | None): List of field names to include in the
+                result. If None, all available fields will be included.
                 Available fields:
                 - hash, name, progress, total_size, files, trackers,
                   download_dir, state, piece_progress
@@ -186,7 +193,9 @@ class TorrentClient(ABC):
         """
 
     @abstractmethod
-    async def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
+    async def get_torrent_info(
+        self, torrent_hash: str, fields: list[str] | None
+    ) -> ClientTorrentInfo | None:
         """Get torrent information.
 
         Args:
@@ -202,7 +211,9 @@ class TorrentClient(ABC):
         """
 
     @abstractmethod
-    async def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
+    async def get_torrents_for_monitoring(
+        self, torrent_hashes: set[str]
+    ) -> dict[str, TorrentState]:
         """Get torrent states for monitoring (optimized for specific torrents).
 
         This method is optimized for monitoring specific torrents and should only
@@ -220,7 +231,9 @@ class TorrentClient(ABC):
     # region Abstract Internal
 
     @abstractmethod
-    async def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
+    async def _add_torrent(
+        self, torrent_data: bytes, download_dir: str, hash_match: bool
+    ) -> str:
         """Add torrent to client, return torrent hash.
 
         Args:
@@ -241,7 +254,9 @@ class TorrentClient(ABC):
         """
 
     @abstractmethod
-    async def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str) -> None:
+    async def _rename_torrent(
+        self, torrent_hash: str, old_name: str, new_name: str
+    ) -> None:
         """Rename entire torrent.
 
         Args:
@@ -251,7 +266,9 @@ class TorrentClient(ABC):
         """
 
     @abstractmethod
-    async def _rename_file(self, torrent_hash: str, old_path: str, new_name: str) -> None:
+    async def _rename_file(
+        self, torrent_hash: str, old_path: str, new_name: str
+    ) -> None:
         """Rename file within torrent.
 
         Args:
@@ -269,7 +286,9 @@ class TorrentClient(ABC):
         """
 
     @abstractmethod
-    async def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
+    async def _process_rename_map(
+        self, torrent_hash: str, base_path: str, rename_map: dict
+    ) -> dict:
         """Process rename mapping to adapt to specific torrent client.
 
         Args:
@@ -326,12 +345,14 @@ class TorrentClient(ABC):
 
             # Batch save to database
             await database.batch_save_client_torrents(torrents)
-            logger.success(f"Cached {len(torrents)} torrents to database")
+            logger.success("Cached %d torrents to database", len(torrents))
 
         except Exception as e:
-            logger.warning(f"Failed to rebuild cache: {e}")
+            logger.warning("Failed to rebuild cache: %s", e)
 
-    async def rebuild_client_torrents_cache_incremental(self, torrents: list[ClientTorrentInfo]):
+    async def rebuild_client_torrents_cache_incremental(
+        self, torrents: list[ClientTorrentInfo]
+    ):
         """Rebuild database cache with provided torrents incrementally (one by one).
 
         This method provides the same functionality as rebuild_client_torrents_cache,
@@ -363,7 +384,7 @@ class TorrentClient(ABC):
             if torrents_to_delete:
                 with anyio.CancelScope(shield=True):
                     await database.delete_client_torrents(torrents_to_delete)
-                logger.debug(f"Deleted {len(torrents_to_delete)} torrents from cache")
+                logger.debug("Deleted %d torrents from cache", len(torrents_to_delete))
 
             # Step 2: Update/insert torrents one by one
             for torrent in torrents:
@@ -371,19 +392,20 @@ class TorrentClient(ABC):
                     await database.save_client_torrent_info(torrent)
                 await anyio.sleep(0)  # Yield control to allow other async tasks to run
 
-            logger.success(f"Synced {len(torrents)} torrents to database cache")
+            logger.success("Synced %d torrents to database cache", len(torrents))
 
         except anyio.get_cancelled_exc_class():
             # During shutdown, exit gracefully - the sync will continue on the next run
             logger.debug("Cache sync cancelled during shutdown (expected)")
             return
         except Exception as e:
-            logger.warning(f"Failed to sync cache: {e}")
+            logger.warning("Failed to sync cache: %s", e)
 
     async def refresh_client_torrents_cache(self) -> None:
         """Refresh local client_torrents database cache with incremental updates.
 
-        This method updates the client_torrents table in database with torrent information:
+        This method updates the client_torrents table in database with torrent
+        information:
         1. Get basic info for all torrents (hash, name, download_dir)
         2. Get all cached torrents from database
         3. Compare in Python to find modified torrents and deleted torrents
@@ -395,53 +417,73 @@ class TorrentClient(ABC):
             database = db.get_database()
 
             # Step 1: Get basic info for all torrents (minimal API call)
-            basic_torrents = await self.get_torrents(fields=["hash", "name", "download_dir"])
+            basic_torrents = await self.get_torrents(
+                fields=["hash", "name", "download_dir"]
+            )
             if not basic_torrents:
                 logger.debug("No torrents found in client")
                 return
 
-            # Step 2: Get all cached torrents in one query (optimized for batch comparison)
+            # Step 2: Get all cached torrents in one query (batch optimized)
             cached_torrents = await database.get_all_client_torrents_basic()
 
             # Step 3: Check which torrents need to be updated
             torrents_to_fetch = [
                 torrent.hash
                 for torrent in basic_torrents
-                if cached_torrents.get(torrent.hash) != (torrent.name, torrent.download_dir)
+                if cached_torrents.get(torrent.hash)
+                != (torrent.name, torrent.download_dir)
             ]
 
             # Find torrents that exist in cache but not in client
-            torrents_to_delete = cached_torrents.keys() - {torrent.hash for torrent in basic_torrents}
+            torrents_to_delete = cached_torrents.keys() - {
+                torrent.hash for torrent in basic_torrents
+            }
 
             # Step 4: Fetch modified/new torrents from client API
             if torrents_to_fetch:
                 # Get full info for modified torrents only
                 modified_torrents = await self.get_torrents(
                     torrent_hashes=torrents_to_fetch,
-                    fields=["hash", "name", "total_size", "files", "trackers", "download_dir"],
+                    fields=[
+                        "hash",
+                        "name",
+                        "total_size",
+                        "files",
+                        "trackers",
+                        "download_dir",
+                    ],
                 )
 
                 # Step 5: Update database
                 if modified_torrents:
                     await database.batch_save_client_torrents(modified_torrents)
-                    logger.debug(f"Updated {len(modified_torrents)} modified torrents in database cache")
+                    logger.debug(
+                        "Updated %s modified torrents in database cache",
+                        len(modified_torrents),
+                    )
             else:
                 logger.debug("No modified torrents found, database cache is up to date")
 
             # Step 6: Delete torrents that no longer exist in client
             if torrents_to_delete:
                 await database.delete_client_torrents(torrents_to_delete)
-                logger.debug(f"Deleted {len(torrents_to_delete)} torrents from database cache (removed from client)")
+                logger.debug(
+                    "Deleted %s torrents from database cache (removed from client)",
+                    len(torrents_to_delete),
+                )
 
         except Exception as e:
-            logger.error(f"Error refreshing database cache: {e}")
+            logger.error("Error refreshing database cache: %s", e)
 
     @staticmethod
-    async def get_file_matched_torrents(target_file_size: int, fname_keywords: list[str]) -> list[ClientTorrentInfo]:
-        """Get torrents matching file size and name keywords, return ClientTorrentInfo objects.
+    async def get_file_matched_torrents(
+        target_file_size: int, fname_keywords: list[str]
+    ) -> list[ClientTorrentInfo]:
+        """Get torrents matching file size and name keywords.
 
-        This is a wrapper around db.search_torrent_by_file_match that processes the raw
-        database rows into ClientTorrentInfo objects.
+        This is a wrapper around db.search_torrent_by_file_match that
+        processes the raw database rows into ClientTorrentInfo objects.
 
         Args:
             target_file_size: Target file size to match.
@@ -451,7 +493,9 @@ class TorrentClient(ABC):
             List of ClientTorrentInfo objects.
         """
         database = db.get_database()
-        rows = await database.search_torrent_by_file_match(target_file_size, fname_keywords)
+        rows = await database.search_torrent_by_file_match(
+            target_file_size, fname_keywords
+        )
 
         # Group rows by torrent hash (rows are already ordered by hash from the query)
         torrents = []
@@ -466,7 +510,9 @@ class TorrentClient(ABC):
             first_row = group_list[0]
 
             # Decode trackers once
-            decoded_trackers = msgspec.json.decode(first_row.trackers) if first_row.trackers else []
+            decoded_trackers = (
+                msgspec.json.decode(first_row.trackers) if first_row.trackers else []
+            )
 
             # Build files list efficiently using attribute access
             files = [
@@ -492,7 +538,9 @@ class TorrentClient(ABC):
 
         return torrents
 
-    async def get_single_torrent(self, infohash: str, target_trackers: set[str]) -> ClientTorrentInfo | None:
+    async def get_single_torrent(
+        self, infohash: str, target_trackers: set[str]
+    ) -> ClientTorrentInfo | None:
         """Get single torrent by infohash with existing trackers information.
 
         This method follows the same logic as get_filtered_torrents but for a single
@@ -512,14 +560,24 @@ class TorrentClient(ABC):
             # Find torrent by infohash
             target_torrent = await self.get_torrent_info(
                 infohash,
-                fields=["hash", "name", "total_size", "files", "trackers", "download_dir"],
+                fields=[
+                    "hash",
+                    "name",
+                    "total_size",
+                    "files",
+                    "trackers",
+                    "download_dir",
+                ],
             )
 
             if not target_torrent:
-                logger.debug(f"Torrent with infohash {infohash} not found in client torrent list")
+                logger.debug(
+                    "Torrent with infohash %s not found in client torrent list",
+                    infohash,
+                )
                 return None
 
-            logger.debug(f"Found torrent: {target_torrent.name} ({infohash})")
+            logger.debug("Found torrent: %s (%s)", target_torrent.name, infohash)
 
             # Check if torrent meets basic conditions
             if not self._should_include_torrent(target_torrent):
@@ -567,27 +625,45 @@ class TorrentClient(ABC):
         # Check tracker filter
         check_trackers_list = config.cfg.global_config.check_trackers
         if check_trackers_list and not any(
-            any(check_str in url for check_str in check_trackers_list) for url in torrent.trackers
+            any(check_str in url for check_str in check_trackers_list)
+            for url in torrent.trackers
         ):
-            logger.debug(f"Torrent {torrent.name} filtered out: tracker not in check_trackers list")
-            logger.debug(f"Torrent trackers: {torrent.trackers}")
-            logger.debug(f"Required trackers: {check_trackers_list}")
+            logger.debug(
+                "Torrent %s filtered out: tracker not in check_trackers list",
+                torrent.name,
+            )
+            logger.debug("Torrent trackers: %s", torrent.trackers)
+            logger.debug("Required trackers: %s", check_trackers_list)
             return False
 
         # Check MP3 exclusion filter
         if config.cfg.global_config.exclude_mp3:
-            has_mp3 = any(posixpath.splitext(file.name)[1].lower() == ".mp3" for file in torrent.files)
+            has_mp3 = any(
+                posixpath.splitext(file.name)[1].lower() == ".mp3"
+                for file in torrent.files
+            )
             if has_mp3:
-                logger.debug(f"Torrent {torrent.name} filtered out: contains MP3 files (exclude_mp3=true)")
+                logger.debug(
+                    "Torrent %s filtered out: contains MP3 files (exclude_mp3=true)",
+                    torrent.name,
+                )
                 return False
 
         # Check music only filter
         if config.cfg.global_config.check_music_only:
-            has_music = any(filecompare.is_music_file(file.name) for file in torrent.files)
+            has_music = any(
+                filecompare.is_music_file(file.name) for file in torrent.files
+            )
             if not has_music:
-                logger.debug(f"Torrent {torrent.name} filtered out: no music files found (check_music_only=true)")
-                file_extensions = [posixpath.splitext(f.name)[1].lower() for f in torrent.files]
-                logger.debug(f"File extensions in torrent: {file_extensions}")
+                logger.debug(
+                    "Torrent %s filtered out: no music files found "
+                    "(check_music_only=true)",
+                    torrent.name,
+                )
+                file_extensions = [
+                    posixpath.splitext(f.name)[1].lower() for f in torrent.files
+                ]
+                logger.debug("File extensions in torrent: %s", file_extensions)
                 return False
 
         return True
@@ -609,8 +685,10 @@ class TorrentClient(ABC):
 
         Returns:
             A tuple of (content_tracker_mapping, valid_torrents) where:
-                - content_tracker_mapping: Maps content name to set of target trackers it exists on
-                - valid_torrents: Maps content name to the best torrent for that content
+                - content_tracker_mapping: Maps content name to set of target
+                    trackers it exists on
+                - valid_torrents: Maps content name to the best torrent for
+                    that content
         """
         content_tracker_mapping: dict[str, set[str]] = {}
         valid_torrents: dict[str, ClientTorrentInfo] = {}
@@ -638,13 +716,16 @@ class TorrentClient(ABC):
                 # Choose version with fewer files or smaller size
                 existing = valid_torrents[content_name]
                 if len(torrent.files) < len(existing.files) or (
-                    len(torrent.files) == len(existing.files) and torrent.total_size < existing.total_size
+                    len(torrent.files) == len(existing.files)
+                    and torrent.total_size < existing.total_size
                 ):
                     valid_torrents[content_name] = torrent
 
         return content_tracker_mapping, valid_torrents
 
-    async def get_filtered_torrents(self, target_trackers: list[str]) -> dict[str, ClientTorrentInfo]:
+    async def get_filtered_torrents(
+        self, target_trackers: list[str]
+    ) -> dict[str, ClientTorrentInfo]:
         """Get filtered torrent list and rebuild cache.
 
         This method performs the following operations:
@@ -658,12 +739,22 @@ class TorrentClient(ABC):
             target_trackers (list[str]): List of target tracker names.
 
         Returns:
-            dict[str, ClientTorrentInfo]: Dictionary mapping torrent name to torrent info.
+            dict[str, ClientTorrentInfo]: Dictionary mapping torrent name to
+                torrent info.
         """
         try:
             # Get all torrents with required fields
             torrents = list(
-                await self.get_torrents(fields=["hash", "name", "total_size", "files", "trackers", "download_dir"])
+                await self.get_torrents(
+                    fields=[
+                        "hash",
+                        "name",
+                        "total_size",
+                        "files",
+                        "trackers",
+                        "download_dir",
+                    ]
+                )
             )
 
             # Rebuild cache with all torrents (run in background)
@@ -678,7 +769,9 @@ class TorrentClient(ABC):
             )
 
             # Group by content name, collect which trackers each content exists on
-            content_tracker_mapping, valid_torrents = self._group_torrents_by_content(torrents, target_trackers)
+            content_tracker_mapping, valid_torrents = self._group_torrents_by_content(
+                torrents, target_trackers
+            )
 
             # Step 2: Filter out content that already exists on all target trackers
             filtered_torrents = {}
@@ -689,7 +782,11 @@ class TorrentClient(ABC):
 
                 # If this content already exists on all target trackers, skip
                 if target_tracker_set.issubset(existing_trackers):
-                    logger.debug(f"Skipping {content_name}: already exists on all target trackers {existing_trackers}")
+                    logger.debug(
+                        "Skipping %s: already exists on all target trackers %s",
+                        content_name,
+                        existing_trackers,
+                    )
                     continue
 
                 # Otherwise include in results
@@ -724,10 +821,14 @@ class TorrentClient(ABC):
                 return Torrent.read_stream(torrent_data)
             return None
         except Exception as e:
-            logger.error(f"Error getting torrent object for hash {torrent_hash}: {e}")
+            logger.error(
+                "Error getting torrent object for hash %s: %s", torrent_hash, e
+            )
             return None
 
-    def _get_field_config_and_arguments(self, fields: list[str] | None) -> tuple[dict[str, FieldSpec], list[str]]:
+    def _get_field_config_and_arguments(
+        self, fields: list[str] | None
+    ) -> tuple[dict[str, FieldSpec], list[str]]:
         """Get filtered field configuration and required arguments.
 
         This helper method eliminates code duplication across client implementations
@@ -738,17 +839,23 @@ class TorrentClient(ABC):
             fields: List of field names to include, or None for all fields.
 
         Returns:
-            tuple[dict[str, FieldSpec], list[str]]: (field_config, arguments) where:
-                - field_config: Filtered field configuration dict mapping field names to FieldSpec objects
+            tuple[dict[str, FieldSpec], list[str]]: (field_config, arguments)
+                where:
+                - field_config: Filtered field configuration dict mapping field
+                    names to FieldSpec objects
                 - arguments: List of required argument names for the client API
         """
         # Get requested fields (always include hash)
         field_config = (
-            {k: v for k, v in self.field_config.items() if k in fields or k == "hash"} if fields else self.field_config
+            {k: v for k, v in self.field_config.items() if k in fields or k == "hash"}
+            if fields
+            else self.field_config
         )
 
         # Get required arguments from field_config
-        arguments = list(set().union(*[spec.request_arguments for spec in field_config.values()]))
+        arguments = list(
+            set().union(*[spec.request_arguments for spec in field_config.values()])
+        )
 
         return field_config, arguments
 
@@ -778,35 +885,48 @@ class TorrentClient(ABC):
         Returns:
             tuple[bool, bool]: (success, verified) where:
                 - success: True if injection successful, False otherwise
-                - verified: True if verification was performed, False otherwise
+                - verified: True if verification was performed, False
+                    otherwise
         """
         current_name = str(torrent_object.name)
         name_differs = current_name != local_torrent_name
         torrent_url = torrent_object.comment or ""
 
         if self.supports_final_directory:
-            # rTorrent supports specifying the final directory level when adding torrents
+            # rTorrent supports specifying final directory level when adding
             final_download_dir = posixpath.join(download_dir, local_torrent_name)
             if name_differs:
                 original_download_dir = posixpath.join(download_dir, current_name)
                 try:
-                    await asyncify(shutil.move)(original_download_dir, final_download_dir)
+                    await asyncify(shutil.move)(
+                        original_download_dir, final_download_dir
+                    )
                 except FileExistsError as e:
-                    logger.warning(f"Download directory already exists, skipping rename: {e}")
+                    logger.warning(
+                        "Download directory already exists, skipping rename: %s", e
+                    )
                 except OSError as e:
-                    logger.error(f"Failed to rename directory from {current_name} to {local_torrent_name}: {e}")
+                    logger.error(
+                        "Failed to rename directory from %s to %s: %s",
+                        current_name,
+                        local_torrent_name,
+                        e,
+                    )
                     raise
                 current_name = local_torrent_name
             download_dir = final_download_dir
 
         # Add torrent to client
         try:
-            torrent_hash = await self._add_torrent(torrent_object.dump(), download_dir, hash_match)
+            torrent_hash = await self._add_torrent(
+                torrent_object.dump(), download_dir, hash_match
+            )
         except TorrentConflictError as e:
-            logger.error(f"Torrent injection failed due to conflict: {e}")
+            logger.error("Torrent injection failed due to conflict: %s", e)
             logger.error(
-                "This usually happens because the source flag of the torrent to be injected is incorrect, "
-                "which generally occurs on trackers that do not enforce source flag requirements."
+                "This usually happens because the source flag of the torrent "
+                "to be injected is incorrect, which generally occurs on "
+                "trackers that do not enforce source flag requirements."
             )
             raise
 
@@ -822,7 +942,7 @@ class TorrentClient(ABC):
             logger.success("Torrent injected successfully")
             return True, should_verify
         except Exception as e:
-            logger.error(f"Failed to inject torrent after retries: {e}")
+            logger.error("Failed to inject torrent after retries: %s", e)
 
             # Send failure notification if configured
             if config.cfg.global_config.notification_urls:
@@ -871,12 +991,16 @@ class TorrentClient(ABC):
         # Rename entire torrent
         if current_name != local_torrent_name:
             await self._rename_torrent(torrent_hash, current_name, local_torrent_name)
-            logger.debug(f"Renamed torrent from {current_name} to {local_torrent_name}")
+            logger.debug(
+                "Renamed torrent from %s to %s", current_name, local_torrent_name
+            )
 
         if not config.cfg.linking.enable_linking:
             # Process rename map
             rename_map = await self._process_rename_map(
-                torrent_hash=torrent_hash, base_path=local_torrent_name, rename_map=rename_map
+                torrent_hash=torrent_hash,
+                base_path=local_torrent_name,
+                rename_map=rename_map,
             )
 
             # Rename files
@@ -887,10 +1011,19 @@ class TorrentClient(ABC):
                         torrent_file_name,
                         local_file_name,
                     )
-                    logger.debug(f"Renamed torrent file {torrent_file_name} to {local_file_name}")
+                    logger.debug(
+                        "Renamed torrent file %s to %s",
+                        torrent_file_name,
+                        local_file_name,
+                    )
 
-        # Verify torrent (if renaming was performed or not hash match for clients without fast resume)
-        should_verify = name_differs or bool(rename_map) or (not hash_match and not self.supports_fast_resume)
+        # Verify torrent (if renaming was performed or not hash match for
+        # clients without fast resume)
+        should_verify = (
+            name_differs
+            or bool(rename_map)
+            or (not hash_match and not self.supports_fast_resume)
+        )
         if should_verify:
             logger.debug("Verifying torrent after renaming")
             await anyio.sleep(1)
@@ -899,14 +1032,19 @@ class TorrentClient(ABC):
         return should_verify
 
     async def reverse_inject_torrent(
-        self, matched_torrents: list[ClientTorrentInfo], new_name: str, reverse_rename_map: dict
+        self,
+        matched_torrents: list[ClientTorrentInfo],
+        new_name: str,
+        reverse_rename_map: dict,
     ) -> dict[str, bool]:
-        """Reverse inject logic: rename all local torrents to match incoming torrent format.
+        """Reverse inject logic: rename local torrents to match incoming format.
 
         Args:
-            matched_torrents (list[ClientTorrentInfo]): List of local torrents to rename.
+            matched_torrents (list[ClientTorrentInfo]): List of local torrents
+                to rename.
             new_name (str): New torrent name to match incoming torrent.
-            reverse_rename_map (dict): File rename mapping from local to incoming format.
+            reverse_rename_map (dict): File rename mapping from local to
+                incoming format.
 
         Returns:
             dict[str, bool]: Dictionary mapping torrent hash to success status.
@@ -919,38 +1057,56 @@ class TorrentClient(ABC):
                 # Get current torrent name
                 torrent_info = await self.get_torrent_info(torrent_hash, ["name"])
                 if torrent_info is None or torrent_info.name is None:
-                    logger.warning(f"Failed to get torrent info for {torrent_hash}, skipping")
+                    logger.warning(
+                        "Failed to get torrent info for %s, skipping", torrent_hash
+                    )
                     continue
                 current_name = torrent_info.name
 
                 # Rename entire torrent
                 if current_name != new_name:
                     await self._rename_torrent(torrent_hash, current_name, new_name)
-                    logger.debug(f"Renamed torrent {torrent_hash} from {current_name} to {new_name}")
+                    logger.debug(
+                        "Renamed torrent %s from %s to %s",
+                        torrent_hash,
+                        current_name,
+                        new_name,
+                    )
 
                 # Rename files according to reverse rename map
                 if reverse_rename_map:
-                    for local_file_name, incoming_file_name in reverse_rename_map.items():
+                    for (
+                        local_file_name,
+                        incoming_file_name,
+                    ) in reverse_rename_map.items():
                         await self._rename_file(
                             torrent_hash,
                             local_file_name,
                             incoming_file_name,
                         )
                         logger.debug(
-                            f"Renamed file {local_file_name} to {incoming_file_name} in torrent {torrent_hash}"
+                            "Renamed file %s to %s in torrent %s",
+                            local_file_name,
+                            incoming_file_name,
+                            torrent_hash,
                         )
 
                 # Verify torrent after renaming
                 if current_name != new_name or reverse_rename_map:
-                    logger.debug(f"Verifying torrent {torrent_hash} after reverse renaming")
+                    logger.debug(
+                        "Verifying torrent %s after reverse renaming", torrent_hash
+                    )
                     await self._verify_torrent(torrent_hash)
 
                 results[str(torrent_hash)] = True
-                logger.success(f"Reverse injection completed successfully for torrent {torrent_hash}")
+                logger.success(
+                    "Reverse injection completed successfully for torrent %s",
+                    torrent_hash,
+                )
 
             except Exception as e:
                 results[str(torrent_hash)] = False
-                logger.error(f"Failed to reverse inject torrent {torrent_hash}: {e}")
+                logger.error("Failed to reverse inject torrent %s: %s", torrent_hash, e)
 
         return results
 
@@ -958,45 +1114,58 @@ class TorrentClient(ABC):
 
     # region Post-Processing
 
-    async def post_process_single_injected_torrent(self, matched_torrent_hash: str) -> PostProcessResult:
-        """Post-process a single injected torrent to determine its status and take appropriate action.
+    async def post_process_single_injected_torrent(
+        self, matched_torrent_hash: str
+    ) -> PostProcessResult:
+        """Post-process a single injected torrent to determine status and action.
 
         Args:
             matched_torrent_hash: The hash of the matched torrent to process
 
         Returns:
-            PostProcessResult: Processing result with status, started_downloading flag, and error_message
+            PostProcessResult: Processing result with status,
+                started_downloading flag, and error_message
         """
         result = PostProcessResult()
 
         try:
             database = db.get_database()
 
-            logger.debug(f"Checking matched torrent: {matched_torrent_hash}")
+            logger.debug("Checking matched torrent: %s", matched_torrent_hash)
 
             # Check if matched torrent exists in client
             matched_torrent = await self.get_torrent_info(
-                matched_torrent_hash, ["state", "name", "progress", "files", "piece_progress"]
+                matched_torrent_hash,
+                ["state", "name", "progress", "files", "piece_progress"],
             )
             if not matched_torrent:
-                logger.debug(f"Matched torrent {matched_torrent_hash} not found in client, skipping")
+                logger.debug(
+                    "Matched torrent %s not found in client, skipping",
+                    matched_torrent_hash,
+                )
                 result.status = PostProcessStatus.NOT_FOUND
                 return result
 
             # Skip if matched torrent is checking
             if matched_torrent.state == TorrentState.CHECKING:
-                logger.debug(f"Matched torrent {matched_torrent.name} is checking, skipping")
+                logger.debug(
+                    "Matched torrent %s is checking, skipping", matched_torrent.name
+                )
                 result.status = PostProcessStatus.CHECKING
                 return result
 
             # If matched torrent is 100% complete, start downloading
             if matched_torrent.progress == 1.0:
-                logger.info(f"Matched torrent {matched_torrent.name} is 100% complete")
+                logger.info(
+                    "Matched torrent %s is 100%% complete", matched_torrent.name
+                )
                 # Check if auto-start is enabled
                 if config.cfg.global_config.auto_start_torrents:
                     # Start downloading the matched torrent
                     await self._resume_torrent(matched_torrent.hash)
-                    logger.success(f"Started downloading matched torrent: {matched_torrent.name}")
+                    logger.success(
+                        "Started downloading matched torrent: %s", matched_torrent.name
+                    )
                     result.started_downloading = True
                 else:
                     logger.info("Auto-start disabled, torrent will remain paused")
@@ -1007,24 +1176,42 @@ class TorrentClient(ABC):
             # If matched torrent is not 100% complete, check file progress patterns
             else:
                 logger.debug(
-                    f"Matched torrent {matched_torrent.name} not 100% complete "
-                    f"({matched_torrent.progress * 100:.1f}%), checking file patterns"
+                    "Matched torrent %s not 100%% complete (%.1f%%), "
+                    "checking file patterns",
+                    matched_torrent.name,
+                    matched_torrent.progress * 100,
                 )
 
                 # Analyze file progress patterns
                 if filecompare.should_keep_partial_torrent(matched_torrent):
-                    logger.debug(f"Keeping partial torrent {matched_torrent.name} - valid pattern")
+                    logger.debug(
+                        "Keeping partial torrent %s - valid pattern",
+                        matched_torrent.name,
+                    )
                     # Mark as checked since we're keeping the partial torrent
-                    await database.update_scan_result_checked(matched_torrent_hash, True)
+                    await database.update_scan_result_checked(
+                        matched_torrent_hash, True
+                    )
                     result.status = PostProcessStatus.PARTIAL_KEPT
                 else:
-                    if config.cfg.linking.link_type in (config.LinkType.REFLINK, config.LinkType.REFLINK_OR_COPY):
+                    if config.cfg.linking.link_type in (
+                        config.LinkType.REFLINK,
+                        config.LinkType.REFLINK_OR_COPY,
+                    ):
                         # Keep partial torrent explicitly due to reflink being enabled
-                        logger.info(f"Keeping partial torrent {matched_torrent.name} - kept due to reflink enabled")
-                        await database.update_scan_result_checked(matched_torrent_hash, True)
+                        logger.info(
+                            "Keeping partial torrent %s - kept due to reflink enabled",
+                            matched_torrent.name,
+                        )
+                        await database.update_scan_result_checked(
+                            matched_torrent_hash, True
+                        )
                         result.status = PostProcessStatus.PARTIAL_KEPT
                     else:
-                        logger.warning(f"Removing torrent {matched_torrent.name} - failed validation")
+                        logger.warning(
+                            "Removing torrent %s - failed validation",
+                            matched_torrent.name,
+                        )
                         await self._remove_torrent(matched_torrent.hash)
                         # Clear matched torrent information from database
                         await database.clear_matched_torrent_info(matched_torrent_hash)
@@ -1042,7 +1229,7 @@ class TorrentClient(ABC):
                 )
 
         except Exception as e:
-            logger.error(f"Error processing torrent {matched_torrent_hash}: {e}")
+            logger.error("Error processing torrent %s: %s", matched_torrent_hash, e)
             result.status = PostProcessStatus.ERROR
             result.error_message = str(e)
 
@@ -1072,10 +1259,11 @@ class TorrentClient(ABC):
             logger.info("Torrent monitoring started")
 
     async def wait_for_monitoring_completion(self) -> None:
-        """Wait for monitoring to complete and all tracked torrents to finish processing.
+        """Wait for monitoring to complete and tracked torrents to finish.
 
-        This method waits up to 30 seconds for all tracked torrents to complete verification.
-        If timeout occurs, remaining torrents are logged and the method returns.
+        This method waits up to 30 seconds for all tracked torrents to complete
+        verification. If timeout occurs, remaining torrents are logged and the
+        method returns.
         """
         if not self.monitoring:
             return
@@ -1087,7 +1275,10 @@ class TorrentClient(ABC):
             with anyio.move_on_after(30.0) as cancel_scope:
                 async with self._monitor_condition:
                     if self._tracked_torrents:
-                        logger.info(f"Waiting for {len(self._tracked_torrents)} tracked torrents to complete...")
+                        logger.info(
+                            "Waiting for %s tracked torrents to complete...",
+                            len(self._tracked_torrents),
+                        )
                     # Wait until all torrents are processed (condition loop pattern)
                     while self._tracked_torrents:
                         await self._monitor_condition.wait()
@@ -1095,7 +1286,7 @@ class TorrentClient(ABC):
             if cancel_scope.cancelled_caught:
                 async with self._monitor_condition:
                     remaining = len(self._tracked_torrents)
-                logger.warning(f"Timeout waiting for {remaining} torrents to complete")
+                logger.warning("Timeout waiting for %d torrents to complete", remaining)
             else:
                 logger.info("All tracked torrents completed")
 
@@ -1116,7 +1307,11 @@ class TorrentClient(ABC):
 
         try:
             # Only check torrents that are in verifying state (True)
-            verifying_torrents = {th for th, is_verifying in self._tracked_torrents.items() if is_verifying}
+            verifying_torrents = {
+                th
+                for th, is_verifying in self._tracked_torrents.items()
+                if is_verifying
+            }
             if not verifying_torrents:
                 return
 
@@ -1134,13 +1329,13 @@ class TorrentClient(ABC):
                     TorrentState.COMPLETED,
                     TorrentState.SEEDING,
                 ):
-                    logger.info(f"Verification completed for torrent {torrent_hash}")
+                    logger.info("Verification completed for torrent %s", torrent_hash)
 
                     # Call post_process_single_injected_torrent from torrent client
                     try:
                         await self.post_process_single_injected_torrent(torrent_hash)
                     except Exception as e:
-                        logger.error(f"Error processing torrent {torrent_hash}: {e}")
+                        logger.error("Error processing torrent %s: %s", torrent_hash, e)
 
                     # Remove from tracking
                     completed_torrents.add(torrent_hash)
@@ -1157,13 +1352,15 @@ class TorrentClient(ABC):
                     self.monitoring = False
                     # Remove the job from the global scheduler
                     try:
-                        scheduler.get_job_manager().scheduler.remove_job(self._monitor_job_id)
+                        scheduler.get_job_manager().scheduler.remove_job(
+                            self._monitor_job_id
+                        )
                         logger.debug("Torrent monitor job removed")
                     except Exception as e:
-                        logger.warning(f"Error removing torrent monitor job: {e}")
+                        logger.warning("Error removing torrent monitor job: %s", e)
 
         except Exception as e:
-            logger.error(f"Error checking tracked torrents: {e}")
+            logger.error("Error checking tracked torrents: %s", e)
 
     async def track_verification(self, torrent_hash: str) -> None:
         """Start tracking a torrent for verification completion."""
@@ -1184,21 +1381,24 @@ class TorrentClient(ABC):
             misfire_grace_time=None,
             replace_existing=True,
         )
-        logger.debug(f"Scheduled tracking verification for torrent {torrent_hash}")
+        logger.debug("Scheduled tracking verification for torrent %s", torrent_hash)
 
     async def _delayed_add_torrent(self, torrent_hash: str) -> None:
         """Add torrent to tracking list after 5 seconds delay.
 
         Note: The 5-second delay is necessary for qBittorrent. After calling
-        self._verify_torrent(torrent_hash), qBittorrent doesn't immediately start verification.
-        It needs processing time to begin the actual verification process, and this processing
-        time cannot be queried. The delay is now handled by APScheduler's DateTrigger.
+        self._verify_torrent(torrent_hash), qBittorrent doesn't immediately
+        start verification. It needs processing time to begin the actual
+        verification process, and this processing time cannot be queried.
+        The delay is now handled by APScheduler's DateTrigger.
         """
         async with self._monitor_condition:
             # Update status to verifying (True)
             if torrent_hash in self._tracked_torrents:
                 self._tracked_torrents[torrent_hash] = True
-                logger.debug(f"Started tracking verification for torrent {torrent_hash}")
+                logger.debug(
+                    "Started tracking verification for torrent %s", torrent_hash
+                )
 
     async def is_tracking(self, torrent_hash: str) -> bool:
         """Check if a torrent is being tracked."""
@@ -1263,11 +1463,18 @@ def parse_libtc_url(url: str) -> TorrentClientConfig:
     # Validate supported client types
     supported_clients = ("transmission", "qbittorrent", "deluge", "rtorrent")
     if client not in supported_clients:
-        raise ValueError(f"Unsupported client type: {client}. Supported clients: {', '.join(supported_clients)}")
+        raise ValueError(
+            f"Unsupported client type: {client}. "
+            f"Supported clients: {', '.join(supported_clients)}"
+        )
 
     if client == "qbittorrent":
         # qBittorrent: separate auth from URL (uses hostname:port only)
-        netloc = f"{parsed.hostname}:{parsed.port}" if parsed.port else (parsed.hostname or "")
+        netloc = (
+            f"{parsed.hostname}:{parsed.port}"
+            if parsed.port
+            else (parsed.hostname or "")
+        )
         client_url = f"{scheme[-1]}://{netloc}{parsed.path}"
         return TorrentClientConfig(
             username=unquote(parsed.username) if parsed.username else None,

@@ -37,30 +37,46 @@ TRANSMISSION_STATE_MAPPING = {
 
 # Field specifications for Transmission torrent client
 _TRANSMISSION_FIELD_SPECS = {
-    "hash": FieldSpec(_request_arguments="hashString", extractor=lambda t: t.hash_string),
+    "hash": FieldSpec(
+        _request_arguments="hashString", extractor=lambda t: t.hash_string
+    ),
     "name": FieldSpec(_request_arguments="name", extractor=lambda t: t.name),
-    "progress": FieldSpec(_request_arguments="percentDone", extractor=lambda t: t.percent_done),
-    "total_size": FieldSpec(_request_arguments="totalSize", extractor=lambda t: t.total_size),
+    "progress": FieldSpec(
+        _request_arguments="percentDone", extractor=lambda t: t.percent_done
+    ),
+    "total_size": FieldSpec(
+        _request_arguments="totalSize", extractor=lambda t: t.total_size
+    ),
     "files": FieldSpec(
         _request_arguments="files",
         extractor=lambda t: [
             ClientTorrentFile(
                 name=f["name"],
                 size=f["length"],
-                progress=f.get("bytesCompleted", 0) / f["length"] if f["length"] > 0 else 0.0,
+                progress=f.get("bytesCompleted", 0) / f["length"]
+                if f["length"] > 0
+                else 0.0,
             )
             for f in t.fields["files"]
         ],
     ),
-    "trackers": FieldSpec(_request_arguments="trackerList", extractor=lambda t: t.tracker_list),
-    "download_dir": FieldSpec(_request_arguments="downloadDir", extractor=lambda t: t.download_dir),
+    "trackers": FieldSpec(
+        _request_arguments="trackerList", extractor=lambda t: t.tracker_list
+    ),
+    "download_dir": FieldSpec(
+        _request_arguments="downloadDir", extractor=lambda t: t.download_dir
+    ),
     "state": FieldSpec(
         _request_arguments="status",
-        extractor=lambda t: TRANSMISSION_STATE_MAPPING.get(t.status.value, TorrentState.UNKNOWN),
+        extractor=lambda t: TRANSMISSION_STATE_MAPPING.get(
+            t.status.value, TorrentState.UNKNOWN
+        ),
     ),
     "piece_progress": FieldSpec(
         _request_arguments={"pieces", "pieceCount"},
-        extractor=lambda t: decode_bitfield_bytes(base64.b64decode(t.pieces), t.piece_count),
+        extractor=lambda t: decode_bitfield_bytes(
+            base64.b64decode(t.pieces), t.piece_count
+        ),
     ),
 }
 
@@ -99,7 +115,7 @@ class TransmissionClient(TorrentClient):
         """Get all torrents from Transmission.
 
         Args:
-            torrent_hashes (list[str] | None): Optional list of torrent hashes to filter.
+            torrent_hashes (list[str] | None): Optional list of hashes to filter.
                 If None, all torrents will be returned.
             fields (list[str] | None): List of field names to include in the result.
                 If None, all available fields will be included.
@@ -119,7 +135,12 @@ class TransmissionClient(TorrentClient):
 
             # Build ClientTorrentInfo objects
             return [
-                ClientTorrentInfo(**{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()})
+                ClientTorrentInfo(
+                    **{
+                        field_name: spec.extractor(torrent)
+                        for field_name, spec in field_config.items()
+                    }
+                )
                 for torrent in torrents
             ]
 
@@ -127,7 +148,9 @@ class TransmissionClient(TorrentClient):
             logger.error("Error retrieving torrents from Transmission: %s", e)
             return []
 
-    async def get_torrent_info(self, torrent_hash: str, fields: list[str] | None) -> ClientTorrentInfo | None:
+    async def get_torrent_info(
+        self, torrent_hash: str, fields: list[str] | None
+    ) -> ClientTorrentInfo | None:
         """Get torrent information.
 
         Args:
@@ -141,17 +164,24 @@ class TransmissionClient(TorrentClient):
             # Get field configuration and required arguments
             field_config, arguments = self._get_field_config_and_arguments(fields)
 
-            torrent = await asyncify(self.client.get_torrent)(torrent_hash, arguments=arguments)
+            torrent = await asyncify(self.client.get_torrent)(
+                torrent_hash, arguments=arguments
+            )
 
             # Build ClientTorrentInfo using field_config
             return ClientTorrentInfo(
-                **{field_name: spec.extractor(torrent) for field_name, spec in field_config.items()}
+                **{
+                    field_name: spec.extractor(torrent)
+                    for field_name, spec in field_config.items()
+                }
             )
         except Exception as e:
             logger.error("Error retrieving torrent info from Transmission: %s", e)
             return None
 
-    async def get_torrents_for_monitoring(self, torrent_hashes: set[str]) -> dict[str, TorrentState]:
+    async def get_torrents_for_monitoring(
+        self, torrent_hashes: set[str]
+    ) -> dict[str, TorrentState]:
         """Get torrent states for monitoring (optimized for Transmission).
 
         Uses Transmission's get_torrents with minimal fields to get only
@@ -174,19 +204,25 @@ class TransmissionClient(TorrentClient):
             )
 
             return {
-                torrent.hash_string: TRANSMISSION_STATE_MAPPING.get(torrent.status.value, TorrentState.UNKNOWN)
+                torrent.hash_string: TRANSMISSION_STATE_MAPPING.get(
+                    torrent.status.value, TorrentState.UNKNOWN
+                )
                 for torrent in torrents
             }
 
         except Exception as e:
-            logger.error(f"Error getting torrent states for monitoring from Transmission: {e}")
+            logger.error(
+                "Error getting torrent states for monitoring from Transmission: %s", e
+            )
             return {}
 
     # endregion
 
     # region Abstract Methods - Internal Operations
 
-    async def _add_torrent(self, torrent_data: bytes, download_dir: str, hash_match: bool) -> str:
+    async def _add_torrent(
+        self, torrent_data: bytes, download_dir: str, hash_match: bool
+    ) -> str:
         """Add torrent to Transmission.
 
         Args:
@@ -229,7 +265,9 @@ class TransmissionClient(TorrentClient):
         try:
             data = msgspec.json.decode(http_data)
         except msgspec.DecodeError as error:
-            raise ValueError("failed to parse response as json", query, http_data) from error
+            raise ValueError(
+                "failed to parse response as json", query, http_data
+            ) from error
 
         if "result" not in data:
             raise ValueError(
@@ -254,7 +292,10 @@ class TransmissionClient(TorrentClient):
             torrent_info = res["torrent-added"]
         elif "torrent-duplicate" in res:
             torrent_info = res["torrent-duplicate"]
-            error_msg = f"The torrent to be injected cannot coexist with local torrent {torrent_info['hashString']}"
+            error_msg = (
+                f"The torrent to be injected cannot coexist with "
+                f"local torrent {torrent_info['hashString']}"
+            )
             logger.error(error_msg)
             raise TorrentConflictError(error_msg)
 
@@ -271,7 +312,9 @@ class TransmissionClient(TorrentClient):
         """
         await asyncify(self.client.remove_torrent)(torrent_hash, delete_data=False)
 
-    async def _rename_torrent(self, torrent_hash: str, old_name: str, new_name: str) -> None:
+    async def _rename_torrent(
+        self, torrent_hash: str, old_name: str, new_name: str
+    ) -> None:
         """Rename entire torrent.
 
         Args:
@@ -285,7 +328,9 @@ class TransmissionClient(TorrentClient):
             name=new_name,
         )
 
-    async def _rename_file(self, torrent_hash: str, old_path: str, new_name: str) -> None:
+    async def _rename_file(
+        self, torrent_hash: str, old_path: str, new_name: str
+    ) -> None:
         """Rename file within torrent.
 
         Args:
@@ -307,7 +352,9 @@ class TransmissionClient(TorrentClient):
         """
         await asyncify(self.client.verify_torrent)(torrent_hash)
 
-    async def _process_rename_map(self, torrent_hash: str, base_path: str, rename_map: dict) -> dict:
+    async def _process_rename_map(
+        self, torrent_hash: str, base_path: str, rename_map: dict
+    ) -> dict:
         """Process rename mapping to adapt to Transmission.
 
         Args:
@@ -324,13 +371,17 @@ class TransmissionClient(TorrentClient):
             local_name_list = local_name.split("/")
             # Transmission cannot complete non-same-level moves
             if len(torrent_name_list) == len(local_name_list):
-                for i, (torrent_part, local_part) in enumerate(zip(torrent_name_list, local_name_list, strict=False)):
+                for i, (torrent_part, local_part) in enumerate(
+                    zip(torrent_name_list, local_name_list, strict=False)
+                ):
                     if torrent_part != local_part:
                         temp_map[("/".join(torrent_name_list[: i + 1]), local_part)] = i
 
         transmission_map = {
             posixpath.join(base_path, key): value
-            for (key, value), _priority in sorted(temp_map.items(), key=lambda item: item[1], reverse=True)
+            for (key, value), _priority in sorted(
+                temp_map.items(), key=lambda item: item[1], reverse=True
+            )
         }
 
         return transmission_map
@@ -348,7 +399,7 @@ class TransmissionClient(TorrentClient):
             torrent_path = Path(self.torrents_dir) / f"{torrent_hash}.torrent"
             return await torrent_path.read_bytes()
         except Exception as e:
-            logger.error(f"Error getting torrent data from Transmission: {e}")
+            logger.error("Error getting torrent data from Transmission: %s", e)
             return None
 
     async def _resume_torrent(self, torrent_hash: str) -> bool:
@@ -364,7 +415,7 @@ class TransmissionClient(TorrentClient):
             await asyncify(self.client.start_torrent)(torrent_hash)
             return True
         except Exception as e:
-            logger.error(f"Failed to resume torrent {torrent_hash}: {e}")
+            logger.error("Failed to resume torrent %s: %s", torrent_hash, e)
             return False
 
     # endregion
