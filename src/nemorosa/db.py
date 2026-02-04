@@ -99,7 +99,7 @@ class ClientTorrent(Base):
     def from_client_info(cls, info: "ClientTorrentInfo") -> "ClientTorrent":
         """Alternative constructor: Create ClientTorrent from ClientTorrentInfo.
 
-        This is a factory method that provides a convenient way to create a 
+        This is a factory method that provides a convenient way to create a
         ClientTorrent ORM object from a ClientTorrentInfo business object.
 
         Args:

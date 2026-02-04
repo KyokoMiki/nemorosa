@@ -232,7 +232,11 @@ class TorrentClient(ABC):
 
     @abstractmethod
     async def _add_torrent(
-        self, torrent_data: bytes, download_dir: str, hash_match: bool
+        self,
+        torrent_data: bytes,
+        download_dir: str,
+        hash_match: bool,
+        local_torrent_hash: str = "",
     ) -> str:
         """Add torrent to client, return torrent hash.
 
@@ -240,6 +244,8 @@ class TorrentClient(ABC):
             torrent_data (bytes): Torrent file data.
             download_dir (str): Download directory.
             hash_match (bool): Whether this is a hash match, if True, skip verification.
+            local_torrent_hash (str): Hash of the original local torrent.
+                Used for duplicate_categories feature to fetch category on demand.
 
         Returns:
             str: Torrent hash.
@@ -870,6 +876,7 @@ class TorrentClient(ABC):
         local_torrent_name: str,
         rename_map: dict,
         hash_match: bool,
+        local_torrent_hash: str = "",
     ) -> tuple[bool, bool]:
         """Inject torrent into client (includes complete logic).
 
@@ -881,6 +888,8 @@ class TorrentClient(ABC):
             local_torrent_name (str): Local torrent name.
             rename_map (dict): File rename mapping.
             hash_match (bool): Whether this is a hash match, if True, skip verification.
+            local_torrent_hash (str): Hash of the original local torrent.
+                Used for duplicate_categories feature.
 
         Returns:
             tuple[bool, bool]: (success, verified) where:
@@ -919,7 +928,10 @@ class TorrentClient(ABC):
         # Add torrent to client
         try:
             torrent_hash = await self._add_torrent(
-                torrent_object.dump(), download_dir, hash_match
+                torrent_object.dump(),
+                download_dir,
+                hash_match,
+                local_torrent_hash=local_torrent_hash,
             )
         except TorrentConflictError as e:
             logger.error("Torrent injection failed due to conflict: %s", e)

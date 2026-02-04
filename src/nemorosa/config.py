@@ -119,6 +119,8 @@ class DownloaderConfig(msgspec.Struct):
     client: str = ""
     label: str | None = "nemorosa"
     tags: list[str] | None = None
+    use_unified_labels: bool = True
+    duplicate_categories: bool = False
 
     def __post_init__(self):
         if not self.client or not self.client.strip():
@@ -339,7 +341,8 @@ global:
     - "home.opsfet.ch"
     - "52dic.vip"
   check_music_only: true # Whether to check music files only
-  auto_start_torrents: true # Whether to automatically start torrents after successful injection
+  # Whether to automatically start torrents after successful injection
+  auto_start_torrents: true
   # Apprise notification URLs
   # See: https://github.com/caronc/apprise/wiki
   notification_urls: []
@@ -358,7 +361,8 @@ server:
   port: 8256 # Server port
   api_key: "{token_urlsafe(32)}" # API key for accessing web interface
   # Scheduled job settings (optional, set to null to disable)
-  search_cadence: "1 day" # How often to run search job (e.g., "1 day", "6 hours", "30 minutes")
+  # e.g., "1 day", "6 hours", "30 minutes"
+  search_cadence: "1 day" # How often to run search job
   cleanup_cadence: "1 day" # How often to run cleanup job
 
 downloader:
@@ -368,7 +372,8 @@ downloader:
   # transmission+http://user:pass@host:port/transmission/rpc?torrents_dir=/path/to/session/
   # deluge://username:password@host:port/?torrents_dir=/path/to/session/
   # qbittorrent+http://username:password@host:port/?torrents_dir=/path/to/session/
-  # qbittorrent+http://username:password@host:port  # For qBittorrent 4.5.0+, torrents_dir is not needed
+  # qbittorrent+http://username:password@host:port
+  # For qBittorrent 4.5.0+, torrents_dir is not needed
 
   # For Windows: Use forward slashes (/) in torrents_dir path
   # Example: ?torrents_dir=C:/Users/username/AppData/Local/qBittorrent/BT_backup
@@ -379,6 +384,19 @@ downloader:
   # For qBittorrent, tags work with label
   # For Transmission, default to use tags, if tags is null, use [label] as fallback
   tags: null
+  # Use unified label and tags from config file. Default to true.
+  # When enabled, injected torrents will always use the label/tags specified above.
+  # When disabled, falls back to duplicate_categories behavior.
+  # Note: This setting only affects qBittorrent and Deluge.
+  # Transmission and rTorrent always use unified labels regardless of this setting.
+  use_unified_labels: true
+  # qBittorrent/Deluge specific (only takes effect when use_unified_labels is false).
+  # Whether to inject using the same labels/categories as the original torrent.
+  # - Without linking: category will be set to "{{original_category}}.nemorosa"
+  # - With linking enabled: category stays as label,
+  #   but "{{original_category}}.nemorosa" is added as tag
+  # Example: original category "Music" -> injected to "Music.nemorosa"
+  duplicate_categories: false
 
 target_site:
   # Target site settings
@@ -388,7 +406,7 @@ target_site:
     api_key: "your_api_key_here"
   - server: "https://dicmusic.com"
     cookie: "your_cookie_here" # For sites that don't support API, use cookie instead
-"""  # noqa: E501
+"""
 
     target_path.write_text(default_config, encoding="utf-8")
 

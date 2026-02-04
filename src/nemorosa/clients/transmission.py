@@ -221,14 +221,22 @@ class TransmissionClient(TorrentClient):
     # region Abstract Methods - Internal Operations
 
     async def _add_torrent(
-        self, torrent_data: bytes, download_dir: str, hash_match: bool
+        self,
+        torrent_data: bytes,
+        download_dir: str,
+        hash_match: bool,
+        local_torrent_hash: str = "",
     ) -> str:
         """Add torrent to Transmission.
+
+        Note: Transmission does not support duplicate_categories feature.
+        The local_torrent_hash parameter is ignored.
 
         Args:
             torrent_data (bytes): Torrent file data.
             download_dir (str): Download directory.
             hash_match (bool): Not used for Transmission (has fast verification).
+            local_torrent_hash (str): Hash of original local torrent (ignored).
 
         Returns:
             str: Torrent hash string.

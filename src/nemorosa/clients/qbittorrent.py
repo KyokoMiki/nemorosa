@@ -3,6 +3,7 @@ qBittorrent client implementation.
 Provides integration with qBittorrent via its Web API.
 """
 
+import os
 import posixpath
 import time
 
@@ -21,6 +22,9 @@ from .client_common import (
     TorrentState,
     parse_libtc_url,
 )
+
+# Category suffix for duplicate categories feature
+CATEGORY_SUFFIX = ".nemorosa"
 
 # State mapping for qBittorrent torrent client
 QBITTORRENT_STATE_MAPPING = {
@@ -63,13 +67,15 @@ _QBITTORRENT_FIELD_SPECS = {
     ),
     "trackers": FieldSpec(
         _request_arguments=None,
-        extractor=lambda t: [t.tracker]
-        if t.trackers_count == 1
-        else [
-            tracker.url
-            for tracker in t.trackers
-            if tracker.url not in ("** [DHT] **", "** [PeX] **", "** [LSD] **")
-        ],
+        extractor=lambda t: (
+            [t.tracker]
+            if t.trackers_count == 1
+            else [
+                tracker.url
+                for tracker in t.trackers
+                if tracker.url not in ("** [DHT] **", "** [PeX] **", "** [LSD] **")
+            ]
+        ),
     ),
     "download_dir": FieldSpec(_request_arguments=None, extractor=lambda t: t.save_path),
     "state": FieldSpec(
@@ -80,9 +86,9 @@ _QBITTORRENT_FIELD_SPECS = {
     ),
     "piece_progress": FieldSpec(
         _request_arguments=None,
-        extractor=lambda t: [piece == 2 for piece in t.pieceStates]
-        if t.pieceStates
-        else [],
+        extractor=lambda t: (
+            [piece == 2 for piece in t.pieceStates] if t.pieceStates else []
+        ),
     ),
 }
 
@@ -211,7 +217,7 @@ class QBittorrentClient(TorrentClient):
 
             # Update RID for next incremental request
             new_rid = maindata.get("rid", self._last_rid)
-            if new_rid is not None:
+            if isinstance(new_rid, int | str):
                 self._last_rid = int(new_rid)
 
             # Extract torrents data from sync response
@@ -256,8 +262,136 @@ class QBittorrentClient(TorrentClient):
 
     # region Abstract Methods - Internal Operations
 
+    async def _get_local_torrent_info(
+        self, local_torrent_hash: str
+    ) -> tuple[str, bool]:
+        """Get category and autoTMM setting of the local torrent.
+
+        Args:
+            local_torrent_hash: Hash of the local torrent.
+
+        Returns:
+            tuple[str, bool]: (category, auto_tmm) of the local torrent.
+        """
+        if not local_torrent_hash:
+            return "", False
+        try:
+            torrent_info = await asyncify(self.client.torrents_info)(
+                torrent_hashes=local_torrent_hash
+            )
+            if torrent_info:
+                return torrent_info[0].category or "", torrent_info[0].auto_tmm
+        except Exception as e:
+            logger.debug("Failed to get local torrent info: %s", e)
+        return "", False
+
+    async def _ensure_category_exists(self, category: str, save_path: str) -> None:
+        """Ensure category exists with correct save path for autoTMM.
+
+        Args:
+            category: Category name to create/update.
+            save_path: Save path to set for the category.
+        """
+        try:
+            # Get all categories
+            categories = await asyncify(self.client.torrents_categories)()
+            if category in categories:
+                # Category exists, check if save path matches
+                cat_info = categories[category]
+                # qbittorrent-api returns Category object with savePath attribute
+                existing_path = getattr(cat_info, "savePath", "") or ""
+                # Normalize paths before comparison to avoid trailing-slash mismatches
+                normalized_existing = (
+                    os.path.normpath(existing_path) if existing_path else ""
+                )
+                normalized_save = os.path.normpath(save_path) if save_path else ""
+                if normalized_existing != normalized_save:
+                    # Update category save path
+                    await asyncify(self.client.torrents_edit_category)(
+                        name=category,
+                        save_path=normalized_save,
+                    )
+                    logger.debug(
+                        "Updated category '%s' save path to '%s'",
+                        category,
+                        normalized_save,
+                    )
+            else:
+                # Create new category
+                await asyncify(self.client.torrents_create_category)(
+                    name=category,
+                    save_path=save_path,
+                )
+                logger.debug(
+                    "Created category '%s' with save path '%s'", category, save_path
+                )
+        except Exception as e:
+            logger.warning("Failed to ensure category '%s' exists: %s", category, e)
+
+    def _calculate_category_and_tags(
+        self, local_torrent_category: str, is_linking: bool
+    ) -> tuple[str, list[str] | None]:
+        """Calculate category and tags for the new torrent.
+
+        Follows cross-seed's logic:
+        - Linking mode: use default label as category, optionally add dupe tag
+        - Non-linking mode: inherit original category, optionally add suffix
+
+        Args:
+            local_torrent_category: Category of the original local torrent.
+            is_linking: Whether linking mode is enabled.
+
+        Returns:
+            tuple[str, list[str] | None]: (category, tags) to use for the new torrent.
+        """
+        default_label = config.cfg.downloader.label or ""
+        default_tags = config.cfg.downloader.tags
+
+        # Short-circuit: use unified labels directly
+        if config.cfg.downloader.use_unified_labels:
+            return default_label, default_tags
+
+        if is_linking:
+            # Linking mode: always use default label as category
+            # If duplicate_categories is enabled, add dupe category to tags
+            if (
+                config.cfg.downloader.duplicate_categories
+                and local_torrent_category
+                and local_torrent_category != default_label
+            ):
+                dupe_category = (
+                    local_torrent_category
+                    if local_torrent_category.endswith(CATEGORY_SUFFIX)
+                    else f"{local_torrent_category}{CATEGORY_SUFFIX}"
+                )
+                tags = list(default_tags) if default_tags else []
+                if dupe_category not in tags:
+                    tags.append(dupe_category)
+                return default_label, tags
+            return default_label, default_tags
+
+        # Non-linking mode: inherit original category
+        if not config.cfg.downloader.duplicate_categories:
+            # duplicate_categories disabled: use original category as-is
+            return local_torrent_category or default_label, default_tags
+
+        # duplicate_categories enabled: add suffix to category
+        if not local_torrent_category or local_torrent_category == default_label:
+            return default_label, default_tags
+
+        dupe_category = (
+            local_torrent_category
+            if local_torrent_category.endswith(CATEGORY_SUFFIX)
+            else f"{local_torrent_category}{CATEGORY_SUFFIX}"
+        )
+        return dupe_category, default_tags
+
     async def _add_torrent(
-        self, torrent_data: bytes, download_dir: str, hash_match: bool
+        self,
+        torrent_data: bytes,
+        download_dir: str,
+        hash_match: bool,
+        local_torrent_hash: str = "",
     ) -> str:
         """Add torrent to qBittorrent.
 
@@ -265,19 +399,59 @@ class QBittorrentClient(TorrentClient):
             torrent_data (bytes): Torrent file data.
             download_dir (str): Download directory.
             hash_match (bool): Whether this is a hash match, if True, skip verification.
+            local_torrent_hash (str): Hash of the original local torrent.
+                Used for duplicate_categories and autoTMM features.
 
         Returns:
             str: Torrent hash.
         """
+        # Get local torrent info only when needed:
+        # - local_torrent_category: needed only if not using unified labels
+        # - local_torrent_auto_tmm: needed only if not linking (to inherit autoTMM)
+        local_torrent_category = ""
+        local_torrent_auto_tmm = False
+        need_local_info = local_torrent_hash and (
+            not config.cfg.downloader.use_unified_labels
+            or not config.cfg.linking.enable_linking
+        )
+        if need_local_info:
+            (
+                local_torrent_category,
+                local_torrent_auto_tmm,
+            ) = await self._get_local_torrent_info(local_torrent_hash)
+
+        # Determine autoTMM setting:
+        # - If linking is enabled, always disable autoTMM (need specific path)
+        # - Otherwise, inherit from local torrent
+        use_auto_tmm = (
+            False if config.cfg.linking.enable_linking else local_torrent_auto_tmm
+        )
+
+        # Calculate category and tags based on duplicate_categories and linking settings
+        category, tags = self._calculate_category_and_tags(
+            local_torrent_category, config.cfg.linking.enable_linking
+        )
+
+        # If autoTMM is enabled and we're using a new duplicated category (not default),
+        # ensure the category exists with correct save path
+        default_label = config.cfg.downloader.label or ""
+        if (
+            use_auto_tmm
+            and config.cfg.downloader.duplicate_categories
+            and category
+            and category != default_label
+        ):
+            await self._ensure_category_exists(category, download_dir)
+
         current_time = time.time()
 
         result = await asyncify(self.client.torrents_add)(
             torrent_files=torrent_data,
-            save_path=download_dir,
+            save_path=download_dir if not use_auto_tmm else None,
             is_paused=True,
-            category=config.cfg.downloader.label,
-            tags=config.cfg.downloader.tags,
-            use_auto_torrent_management=False,
+            category=category,
+            tags=tags,
+            use_auto_torrent_management=use_auto_tmm,
             is_skip_checking=hash_match,
         )
 
