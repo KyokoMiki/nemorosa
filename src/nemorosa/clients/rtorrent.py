@@ -497,14 +497,22 @@ class RTorrentClient(TorrentClient):
         return modified_torrent.dump()
 
     async def _add_torrent(
-        self, torrent_data: bytes, download_dir: str, hash_match: bool
+        self,
+        torrent_data: bytes,
+        download_dir: str,
+        hash_match: bool,
+        local_torrent_hash: str = "",
     ) -> str:
         """Add torrent to rTorrent with optional fast resume support.
+
+        Note: rTorrent does not support duplicate_categories feature.
+        The local_torrent_hash parameter is ignored.
 
         Args:
             torrent_data (bytes): Torrent file data.
             download_dir (str): Download directory.
             hash_match (bool): Whether this is a hash match, if True, skip verification.
+            local_torrent_hash (str): Hash of the original local torrent (ignored).
 
         Returns:
             str: Torrent hash.

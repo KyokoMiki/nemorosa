@@ -509,12 +509,14 @@ class NemorosaCore:
         logger.debug("Rename map: %s", rename_map)
 
         # Inject torrent and handle renaming
+        # Pass local_torrent_info.hash for duplicate_categories feature
         success, _ = await self.torrent_client.inject_torrent(
             matched_torrent,
             final_download_dir,
             local_torrent_info.name,
             rename_map,
             hash_match,
+            local_torrent_info.hash,
         )
         return success
 
@@ -1230,6 +1232,7 @@ class NemorosaCore:
                 matched_torrent.name,
                 rename_map,
                 False,
+                matched_torrent.hash,
             )
             if success:
                 logger.success("Torrent injected successfully")

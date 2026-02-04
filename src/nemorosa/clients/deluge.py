@@ -22,6 +22,9 @@ from .client_common import (
     parse_libtc_url,
 )
 
+# Label suffix for duplicate categories feature
+LABEL_SUFFIX = ".nemorosa"
+
 # State mapping for Deluge torrent client
 DELUGE_STATE_MAPPING = {
     "Error": TorrentState.ERROR,
@@ -230,8 +233,76 @@ class DelugeClient(TorrentClient):
 
     # region Abstract Methods - Internal Operations
 
+    async def _get_local_torrent_label(self, local_torrent_hash: str) -> str:
+        """Get label of the local torrent.
+
+        Args:
+            local_torrent_hash: Hash of the local torrent.
+
+        Returns:
+            str: Label of the local torrent, or empty string if not found.
+        """
+        if not local_torrent_hash:
+            return ""
+        try:
+            torrent_info = await asyncify(self.client.call)(
+                "core.get_torrent_status",
+                local_torrent_hash,
+                ["label"],
+            )
+            if isinstance(torrent_info, dict):
+                return torrent_info.get("label") or ""
+        except Exception as e:
+            logger.debug("Failed to get local torrent label: %s", e)
+        return ""
+
+    def _calculate_label(self, local_torrent_label: str) -> str:
+        """Calculate the label for the new torrent.
+
+        Based on duplicate_categories setting.
+
+        Follows cross-seed's logic:
+        - If no local label: use default label
+        - If duplicate_categories disabled: inherit original label
+        - If duplicate_categories enabled: add suffix to original label
+
+        Args:
+            local_torrent_label: Label of the original local torrent.
+
+        Returns:
+            str: The label to use for the new torrent.
+        """
+        default_label = config.cfg.downloader.label or ""
+
+        # Short-circuit: use unified label directly
+        if config.cfg.downloader.use_unified_labels:
+            return default_label
+
+        # If no local label, use default label
+        if not local_torrent_label:
+            return default_label
+
+        # If duplicate_categories is disabled, inherit original label
+        if not config.cfg.downloader.duplicate_categories:
+            return local_torrent_label
+
+        # If local label is the same as default label, use default
+        if local_torrent_label == default_label:
+            return default_label
+
+        # If already has suffix, use as-is
+        if local_torrent_label.endswith(LABEL_SUFFIX):
+            return local_torrent_label
+
+        # Add suffix to original label
+        return f"{local_torrent_label}{LABEL_SUFFIX}"
+
     async def _add_torrent(
-        self, torrent_data: bytes, download_dir: str, hash_match: bool
+        self,
+        torrent_data: bytes,
+        download_dir: str,
+        hash_match: bool,
+        local_torrent_hash: str = "",
     ) -> str:
         """Add torrent to Deluge.
 
@@ -239,6 +310,8 @@ class DelugeClient(TorrentClient):
             torrent_data (bytes): Torrent file data.
             download_dir (str): Download directory.
             hash_match (bool): Whether this is a hash match, if True, skip verification.
+            local_torrent_hash (str): Hash of the original local torrent.
+                Used for duplicate_categories feature.
 
         Returns:
             str: Torrent hash.
@@ -272,8 +345,15 @@ class DelugeClient(TorrentClient):
             else:
                 raise
 
-        # Set label (if provided)
-        label = config.cfg.downloader.label
+        # Get local torrent label only if needed (not using unified labels)
+        local_torrent_label = ""
+        if local_torrent_hash and not config.cfg.downloader.use_unified_labels:
+            local_torrent_label = await self._get_local_torrent_label(
+                local_torrent_hash
+            )
+
+        # Calculate label based on duplicate_categories setting
+        label = self._calculate_label(local_torrent_label)
         if label and torrent_hash:
             try:
                 await asyncify(self.client.call)(
