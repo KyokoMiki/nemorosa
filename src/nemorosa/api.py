@@ -103,7 +103,8 @@ class GazelleBase(ABC):
 
         spec = TRACKER_SPECS[server]
         self._rate_limiter = None
-        self.max_requests_per_10s = spec.max_requests_per_10s
+        self.rate_limit_max_requests = spec.rate_limit_max_requests
+        self.rate_limit_period = spec.rate_limit_period
         self.source_flag = spec.source_flag
         self.tracker_url = spec.tracker_url
         self.tracker_query = spec.tracker_query
@@ -112,7 +113,9 @@ class GazelleBase(ABC):
     def rate_limiter(self) -> AsyncLimiter:
         """Get rate limiter for current event loop."""
         if self._rate_limiter is None:
-            self._rate_limiter = AsyncLimiter(self.max_requests_per_10s, 10)
+            self._rate_limiter = AsyncLimiter(
+                self.rate_limit_max_requests, self.rate_limit_period
+            )
         return self._rate_limiter
 
     @property
@@ -768,7 +771,8 @@ class TrackerSpec(msgspec.Struct):
     """Predefined Tracker specification."""
 
     api_type: type[GazelleJSONAPI] | type[GazelleParser] | type[GazelleGamesNet]
-    max_requests_per_10s: int
+    rate_limit_max_requests: int
+    rate_limit_period: float
     source_flag: str
     tracker_url: str
     tracker_query: str
@@ -777,42 +781,51 @@ class TrackerSpec(msgspec.Struct):
 TRACKER_SPECS = {
     "https://redacted.sh": TrackerSpec(
         api_type=GazelleJSONAPI,
-        max_requests_per_10s=10,
+        rate_limit_max_requests=10,
+        rate_limit_period=10.0,
         source_flag="RED",
         tracker_url="https://flacsfor.me",
         tracker_query="flacsfor.me",
     ),
     "https://orpheus.network": TrackerSpec(
         api_type=GazelleJSONAPI,
-        max_requests_per_10s=5,
+        rate_limit_max_requests=5,
+        rate_limit_period=10.0,
         source_flag="OPS",
         tracker_url="https://home.opsfet.ch",
         tracker_query="home.opsfet.ch",
     ),
     "https://dicmusic.com": TrackerSpec(
         api_type=GazelleJSONAPI,
-        max_requests_per_10s=5,
+        rate_limit_max_requests=5,
+        rate_limit_period=10.0,
         source_flag="DICMusic",
         tracker_url="https://tracker.52dic.vip",
         tracker_query="tracker.52dic.vip",
     ),
     "https://libble.me": TrackerSpec(
         api_type=GazelleParser,
-        max_requests_per_10s=2,
+        rate_limit_max_requests=2,
+        rate_limit_period=10.0,
         source_flag="LENNY",
         tracker_url="https://tracker.libble.me:34443",
         tracker_query="tracker.libble.me",
     ),
     "https://lztr.me": TrackerSpec(
         api_type=GazelleParser,
-        max_requests_per_10s=2,
+        rate_limit_max_requests=2,
+        rate_limit_period=10.0,
         source_flag="LZTR",
         tracker_url="https://tracker.lztr.me:34443",
         tracker_query="tracker.lztr.me",
     ),
     "https://gazellegames.net": TrackerSpec(
         api_type=GazelleGamesNet,
-        max_requests_per_10s=4,
+        # GGn officially allows 5 requests per 10 seconds, but does not support
+        # burst behavior from AsyncLimiter's leaky bucket algorithm. Using 1/2s
+        # (equivalent to 5/10s without burst) to avoid rate limit errors.
+        rate_limit_max_requests=1,
+        rate_limit_period=2.0,
         source_flag="GGn",
         tracker_url="https://tracker.gazellegames.net",
         tracker_query="tracker.gazellegames.net",
