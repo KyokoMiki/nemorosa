@@ -1440,6 +1440,7 @@ class TorrentClientConfig(msgspec.Struct):
     scheme: str | None = None
     host: str | None = None
     port: int | None = None
+    path: str | None = None
 
 
 def parse_libtc_url(url: str) -> TorrentClientConfig:
@@ -1479,6 +1480,13 @@ def parse_libtc_url(url: str) -> TorrentClientConfig:
             f"Unsupported client type: {client}. "
             f"Supported clients: {', '.join(supported_clients)}"
         )
+    if (
+        client in ("transmission", "qbittorrent", "deluge") and
+        not (torrents_dir or config.cfg.downloader.torrents_dir)
+    ):
+        raise ValueError(
+            f"torrents_dir required for client: {client}."
+        )
 
     if client == "qbittorrent":
         # qBittorrent: separate auth from URL (uses hostname:port only)
@@ -1508,5 +1516,6 @@ def parse_libtc_url(url: str) -> TorrentClientConfig:
             scheme=scheme[-1],
             host=parsed.hostname,
             port=parsed.port,
+            path=parsed.path,
             torrents_dir=torrents_dir,
         )

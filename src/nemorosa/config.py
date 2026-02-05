@@ -117,6 +117,7 @@ class DownloaderConfig(msgspec.Struct):
     """Downloader configuration."""
 
     client: str = ""
+    torrents_dir: str = ""
     label: str | None = "nemorosa"
     tags: list[str] | None = None
     use_unified_labels: bool = True
