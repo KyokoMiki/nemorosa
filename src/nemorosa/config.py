@@ -380,6 +380,9 @@ downloader:
   # Example: ?torrents_dir=C:/Users/username/AppData/Local/qBittorrent/BT_backup
 
   client: ""
+  # The directory where your torrent client stores its .torrent files.
+  # If set, this path overrides the torrents_dir parameter in the client URL above.
+  torrents_dir: ""
   label: "nemorosa" # Download label
   # Optional tags list, only for qBittorrent and Transmission.
   # For qBittorrent, tags work with label

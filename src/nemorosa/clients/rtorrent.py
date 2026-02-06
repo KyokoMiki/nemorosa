@@ -157,9 +157,8 @@ class RTorrentClient(TorrentClient):
         super().__init__()
         client_config = parse_libtc_url(url)
         self.torrents_dir = (
-            client_config.torrents_dir or config.cfg.downloader.torrents_dir
+            config.cfg.downloader.torrents_dir or client_config.torrents_dir or ""
         )
-
 
         # Monkey-patch xmlrpc.client to mitigate XML vulnerabilities
         defusedxml.xmlrpc.monkey_patch()
