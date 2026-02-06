@@ -1440,6 +1440,7 @@ class TorrentClientConfig(msgspec.Struct):
     scheme: str | None = None
     host: str | None = None
     port: int | None = None
+    path: str | None = None
 
 
 def parse_libtc_url(url: str) -> TorrentClientConfig:
@@ -1508,5 +1509,6 @@ def parse_libtc_url(url: str) -> TorrentClientConfig:
             scheme=scheme[-1],
             host=parsed.hostname,
             port=parsed.port,
+            path=parsed.path,
             torrents_dir=torrents_dir,
         )

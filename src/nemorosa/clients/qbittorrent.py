@@ -99,7 +99,9 @@ class QBittorrentClient(TorrentClient):
     def __init__(self, url: str):
         super().__init__()
         client_config = parse_libtc_url(url)
-        self.torrents_dir = client_config.torrents_dir or ""
+        self.torrents_dir = (
+            config.cfg.downloader.torrents_dir or client_config.torrents_dir or ""
+        )
         self.client = qbittorrentapi.Client(
             host=client_config.url or "http://localhost:8080",
             username=client_config.username,

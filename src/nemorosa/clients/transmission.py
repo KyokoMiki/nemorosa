@@ -89,7 +89,9 @@ class TransmissionClient(TorrentClient):
     def __init__(self, url: str):
         super().__init__()
         client_config = parse_libtc_url(url)
-        self.torrents_dir = client_config.torrents_dir or "/config/torrents"
+        self.torrents_dir = (
+            config.cfg.downloader.torrents_dir or client_config.torrents_dir or ""
+        )
 
         # Ensure protocol is either 'http' or 'https'
         protocol = client_config.scheme
@@ -98,10 +100,11 @@ class TransmissionClient(TorrentClient):
 
         self.client = transmission_rpc.Client(
             protocol=protocol,
-            host=client_config.host or "localhost",
-            port=client_config.port or 9091,
             username=client_config.username,
             password=client_config.password,
+            host=client_config.host or "localhost",
+            port=client_config.port or 9091,
+            path=client_config.path or "/transmission/rpc",
         )
 
         # Use the field specifications constant
