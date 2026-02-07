@@ -2,7 +2,7 @@
 Nemorosa - Cross-seeding tool specifically designed for Gazelle-based music trackers.
 """
 
-__version__ = "0.4.2"
+__version__ = "0.4.3"
 __author__ = "KyokoMiki"
 __description__ = (
     "A specialized cross-seeding tool designed for music torrents, featuring "

@@ -5,7 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.4.2...HEAD)
+## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.4.3...HEAD)
+
+## [0.4.3](https://github.com/KyokoMiki/nemorosa/compare/0.4.2...0.4.3) - 2026-02-07
+
+### Added
+
+- **Push Notification**: Added push notification support via Apprise, enabling notifications to various services (Discord, Telegram, Slack, etc.)
+- **Duplicate Categories Support**: Added support for `duplicate_categories` configuration, which can prevent an Arr from seeing duplicate torrents in Activity
+- **Transmission URL Paths**: Added support for non-default Transmission URL paths, allowing custom RPC paths
+- **URL-Encoded Client Credentials**: Added support for parsing URL-encoded client URLs, properly handling usernames and passwords containing special characters
+
+### Changed
+
+- **Independent torrents_dir Field**: Added independent `torrents_dir` field to configure torrent client's torrent directory information, which takes precedence over the path in the URL
+- **Authentication Retry Mechanism**: Added retry mechanism for API authentication to improve reliability when connecting to trackers
+
+### Fixed
+
+- **GGN Rate Limit**: Fixed burst issue when accessing GGN API through leaky bucket algorithm
+
+### Performance
+
+- **Torrent Client Methods to Async**: Converted torrent client methods to async for better performance and concurrency
+- **File Operations to Async**: Converted file linking operations to async for improved I/O performance
+
+### What's Changed
+
+* build(deps): bump fastapi from 0.127.0 to 0.128.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/81
+* refactor(clients): convert torrent client methods and file linking to async by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/82
+* feat(notifier): add push notification support via Apprise by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/83
+* Handle encoded usernames and passwords in client url by @greglechin in https://github.com/KyokoMiki/nemorosa/pull/84
+* fix(api): reduce GGN rate limit to 4 requests per 10s by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/86
+* build(deps-dev): bump ruff from 0.14.10 to 0.14.11 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/87
+* build(deps): bump torf from 4.3.0 to 4.3.1 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/89
+* build(deps-dev): bump ruff from 0.14.11 to 0.14.13 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/90
+* build(deps): bump winloop from 0.4.1 to 0.4.2 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/91
+* refactor: migrate from asyncio to anyio/asyncer for async operations by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/88
+* refactor: reduce cyclomatic complexity across multiple modules by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/92
+* feat(api): add retry mechanism for authentication by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/93
+* refactor: migrate Enum to StrEnum for better string representation by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/94
+* style: improve logging format and reduce line length limit by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/95
+* build(deps-dev): bump ruff from 0.14.13 to 0.14.14 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/96
+* feat: add support for duplicate_categories in qBittorrent and Deluge by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/97
+* refactor(api): make rate limit period configurable per tracker by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/98
+* Bugfixes: allow setting torrents_dir and non-default transmission URL paths by @damnmersault in https://github.com/KyokoMiki/nemorosa/pull/99
+* ci(workflows): improve GitHub Actions permissions and configuration by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/100
+
+### New Contributors
+
+* @greglechin made their first contribution in https://github.com/KyokoMiki/nemorosa/pull/84
+* @damnmersault made their first contribution in https://github.com/KyokoMiki/nemorosa/pull/99
+
+**Full Changelog**: https://github.com/KyokoMiki/nemorosa/compare/0.4.2...0.4.3
 
 ## [0.4.2](https://github.com/KyokoMiki/nemorosa/compare/0.4.1...0.4.2) - 2025-12-23
 
