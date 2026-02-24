@@ -52,15 +52,18 @@ jobs:
           latest-version: ${{ env.VERSION }}
 
       - name: Commit and push version update
-        env:
-          PAT_TOKEN: ${{ secrets.BUMP_VERSION_TOKEN_ACTION }}
         run: |
           git checkout main  # Ensure we're on main branch
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add pyproject.toml uv.lock CHANGELOG.md src/nemorosa/__init__.py
-          git commit -m "chore: bump version to ${{ env.VERSION }}"
+          git commit -m "chore: bump version to ${{ env.VERSION }} [skip ci]"
           git push origin main
+
+      - name: Move tag to version bump commit and push
+        run: |
+          git tag -f ${{ env.VERSION }}
+          git push origin "refs/tags/${{ env.VERSION }}" --force
 
   build-and-push-image:
     runs-on: ubuntu-latest
