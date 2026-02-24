@@ -232,15 +232,16 @@ wheels = [
 
 [[package]]
 name = "asyncer"
-version = "0.0.14"
+version = "0.0.17"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
     { name = "sniffio" },
+    { name = "typing-extensions", marker = "python_full_version < '3.15'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/8f/e0/a1b5d54254f0f70828c3571785c05b47f0251839f0446a689da9fa3819b4/asyncer-0.0.14.tar.gz", hash = "sha256:501cba6a8f03ce24f7d9fe1f6a5af6fd155a98eee542f0898a4f43f6a4c2b67d", size = 17941, upload-time = "2026-02-16T19:03:45.877Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/d2/4c/62b6044679e08788322bbd0dee5b487a6f7f60bb4e2bd45617ff0d94d1e3/asyncer-0.0.17.tar.gz", hash = "sha256:8a41e185e7ec2ecd583c269d72907a0f9f832e744b6c7474aeb21e349c4becf4", size = 19516, upload-time = "2026-02-21T16:35:54.068Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f1/63/9690293fa269b081d52d0567583cd2c1243baf7a85c57f4673f973c6840b/asyncer-0.0.14-py3-none-any.whl", hash = "sha256:577fdf6da6f1cdcb4aebb94e44ca10c40e5662126b5c3ecb95f3ddf237c6dd6b", size = 9321, upload-time = "2026-02-16T19:03:45.054Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/c5/b72735a095b4b3170b34150e89314a40dd0450d0eb6746b331cb664479d1/asyncer-0.0.17-py3-none-any.whl", hash = "sha256:b0055950e094fb84fd8d21611c7e7b6f5715ddcb57c522c058f64c20badd1438", size = 9252, upload-time = "2026-02-21T16:35:55.022Z" },
 ]
 
 [[package]]
@@ -1167,7 +1168,7 @@ requires-dist = [
     { name = "anyio", specifier = ">=4.12.1" },
     { name = "apprise", specifier = ">=1.9.6" },
     { name = "apscheduler", specifier = ">=3.10.4" },
-    { name = "asyncer", specifier = "==0.0.14" },
+    { name = "asyncer", specifier = "==0.0.17" },
     { name = "beautifulsoup4", extras = ["lxml"], specifier = ">=4.13.5" },
     { name = "defusedxml", specifier = ">=0.7.1" },
     { name = "deluge-client", specifier = ">=1.10.2" },
