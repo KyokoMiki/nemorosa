@@ -383,7 +383,10 @@ async def get_job_status(
         JobResponse: Job status information including run times
     """
     try:
-        # Get job status
+        # Get job status and return the JobResponse directly (always HTTP 200).
+        # Unlike POST /api/job which maps status values to HTTP error codes,
+        # this endpoint surfaces all outcomes (including "not_found") as 200
+        # with a status field in the body, matching a query/read semantics.
         result = await job_manager.get_job_status(job_type)
 
         return result

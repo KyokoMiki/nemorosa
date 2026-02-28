@@ -55,7 +55,11 @@ Issues = "https://github.com/KyokoMiki/nemorosa/issues"
 nemorosa = "nemorosa:main"
 
 [dependency-groups]
-dev = ["ruff>=0.11.2"]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.0.2",
+    "ruff>=0.11.2",
+]
 
 [tool.ruff]
 target-version = "py311"

@@ -221,6 +221,5 @@ __marimo__/
 .streamlit/secrets.toml
 
 temp/
-test/
 data/
 .codacy/
