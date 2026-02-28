@@ -5,6 +5,7 @@ Provides integration with rTorrent via XML-RPC interface using SCGI transport.
 
 import posixpath
 import xmlrpc.client  # nosec B411
+from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 import anyio
@@ -25,6 +26,12 @@ from .client_common import (
     parse_libtc_url,
 )
 from .scgitransport import SCGITransport
+
+if TYPE_CHECKING:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+    from ..db import NemorosaDatabase
+    from ..notifier import Notifier
 
 
 def _get_rtorrent_state(is_active, is_open, complete, hashing) -> TorrentState:
@@ -63,9 +70,11 @@ _RTORRENT_FIELD_SPECS = {
     ),
     "progress": FieldSpec(
         _request_arguments={"d.completed_bytes", "d.size_bytes"},
-        extractor=lambda t: t.get("d.completed_bytes", 0) / t.get("d.size_bytes", 1)
-        if t.get("d.size_bytes", 0) > 0
-        else 0.0,
+        extractor=lambda t: (
+            t.get("d.completed_bytes", 0) / t.get("d.size_bytes", 1)
+            if t.get("d.size_bytes", 0) > 0
+            else 0.0
+        ),
     ),
     "total_size": FieldSpec(
         _request_arguments="d.size_bytes", extractor=lambda t: t.get("d.size_bytes", 0)
@@ -153,8 +162,14 @@ class RTorrentClient(TorrentClient):
 
     supports_final_directory = True
 
-    def __init__(self, url: str):
-        super().__init__()
+    def __init__(
+        self,
+        url: str,
+        database: "NemorosaDatabase",
+        scheduler: "AsyncIOScheduler",
+        notifier: "Notifier | None" = None,
+    ):
+        super().__init__(database=database, scheduler=scheduler, notifier=notifier)
         client_config = parse_libtc_url(url)
         self.torrents_dir = (
             config.cfg.downloader.torrents_dir or client_config.torrents_dir or ""

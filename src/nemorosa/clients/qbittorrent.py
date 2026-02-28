@@ -6,6 +6,7 @@ Provides integration with qBittorrent via its Web API.
 import os
 import posixpath
 import time
+from typing import TYPE_CHECKING
 
 import qbittorrentapi
 from anyio import Path
@@ -22,6 +23,12 @@ from .client_common import (
     TorrentState,
     parse_libtc_url,
 )
+
+if TYPE_CHECKING:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+    from ..db import NemorosaDatabase
+    from ..notifier import Notifier
 
 # Category suffix for duplicate categories feature
 CATEGORY_SUFFIX = ".nemorosa"
@@ -96,8 +103,14 @@ _QBITTORRENT_FIELD_SPECS = {
 class QBittorrentClient(TorrentClient):
     """qBittorrent torrent client implementation."""
 
-    def __init__(self, url: str):
-        super().__init__()
+    def __init__(
+        self,
+        url: str,
+        database: "NemorosaDatabase",
+        scheduler: "AsyncIOScheduler",
+        notifier: "Notifier | None" = None,
+    ):
+        super().__init__(database=database, scheduler=scheduler, notifier=notifier)
         client_config = parse_libtc_url(url)
         self.torrents_dir = (
             config.cfg.downloader.torrents_dir or client_config.torrents_dir or ""

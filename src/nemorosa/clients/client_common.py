@@ -13,19 +13,23 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from itertools import groupby
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 import anyio
 import msgspec
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.date import DateTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from asyncer import asyncify
 from tenacity import before_sleep_log, retry, stop_after_attempt, wait_fixed
 from torf import Torrent
 
-from .. import config, db, filecompare, logger, scheduler
-from ..notifier import get_notifier
+from .. import config, filecompare, logger
+
+if TYPE_CHECKING:
+    from ..db import NemorosaDatabase
+    from ..notifier import Notifier
 
 
 def decode_bitfield_bytes(bitfield_data: bytes, piece_count: int) -> list[bool]:
@@ -158,7 +162,17 @@ class TorrentClient(ABC):
     # (skip verification on hash mismatch)
     supports_fast_resume = False
 
-    def __init__(self):
+    def __init__(
+        self,
+        database: "NemorosaDatabase",
+        scheduler: AsyncIOScheduler,
+        notifier: "Notifier | None" = None,
+    ) -> None:
+        # Injected dependencies
+        self.database = database
+        self.scheduler = scheduler
+        self.notifier = notifier
+
         # Monitoring state
         self.monitoring = False
         # key: torrent_hash, value: is_verifying (False=delayed, True=verifying)
@@ -342,15 +356,14 @@ class TorrentClient(ABC):
             torrents (list[ClientTorrentInfo]): List of torrents to cache.
         """
         try:
-            database = db.get_database()
-            await database.clear_client_torrents_cache()
+            await self.database.clear_client_torrents_cache()
 
             if not torrents:
                 logger.debug("No torrents provided for cache rebuild")
                 return
 
             # Batch save to database
-            await database.batch_save_client_torrents(torrents)
+            await self.database.batch_save_client_torrents(torrents)
             logger.success("Cached %d torrents to database", len(torrents))
 
         except Exception as e:
@@ -370,32 +383,30 @@ class TorrentClient(ABC):
             torrents (list[ClientTorrentInfo]): List of torrents to rebuild cache with.
         """
         try:
-            database = db.get_database()
-
             if not torrents:
                 logger.debug("No torrents provided for cache sync")
                 # Clear all cached torrents if the new list is empty
                 with anyio.CancelScope(shield=True):
-                    await database.clear_client_torrents_cache()
+                    await self.database.clear_client_torrents_cache()
                 return
 
             # Get current cached torrent hashes
             cached_hashes: set[str] = set()
             with anyio.CancelScope(shield=True):
-                cached_hashes = await database.get_all_cached_torrent_hashes()
+                cached_hashes = await self.database.get_all_cached_torrent_hashes()
             new_hashes = {torrent.hash for torrent in torrents}
 
             # Step 1: Batch delete torrents that no longer exist in client
             torrents_to_delete = cached_hashes - new_hashes
             if torrents_to_delete:
                 with anyio.CancelScope(shield=True):
-                    await database.delete_client_torrents(torrents_to_delete)
+                    await self.database.delete_client_torrents(torrents_to_delete)
                 logger.debug("Deleted %d torrents from cache", len(torrents_to_delete))
 
             # Step 2: Update/insert torrents one by one
             for torrent in torrents:
                 with anyio.CancelScope(shield=True):
-                    await database.save_client_torrent_info(torrent)
+                    await self.database.save_client_torrent_info(torrent)
                 await anyio.sleep(0)  # Yield control to allow other async tasks to run
 
             logger.success("Synced %d torrents to database cache", len(torrents))
@@ -420,8 +431,6 @@ class TorrentClient(ABC):
         6. Delete torrents that no longer exist in client from database
         """
         try:
-            database = db.get_database()
-
             # Step 1: Get basic info for all torrents (minimal API call)
             basic_torrents = await self.get_torrents(
                 fields=["hash", "name", "download_dir"]
@@ -431,7 +440,7 @@ class TorrentClient(ABC):
                 return
 
             # Step 2: Get all cached torrents in one query (batch optimized)
-            cached_torrents = await database.get_all_client_torrents_basic()
+            cached_torrents = await self.database.get_all_client_torrents_basic()
 
             # Step 3: Check which torrents need to be updated
             torrents_to_fetch = [
@@ -463,7 +472,7 @@ class TorrentClient(ABC):
 
                 # Step 5: Update database
                 if modified_torrents:
-                    await database.batch_save_client_torrents(modified_torrents)
+                    await self.database.batch_save_client_torrents(modified_torrents)
                     logger.debug(
                         "Updated %s modified torrents in database cache",
                         len(modified_torrents),
@@ -473,7 +482,7 @@ class TorrentClient(ABC):
 
             # Step 6: Delete torrents that no longer exist in client
             if torrents_to_delete:
-                await database.delete_client_torrents(torrents_to_delete)
+                await self.database.delete_client_torrents(torrents_to_delete)
                 logger.debug(
                     "Deleted %s torrents from database cache (removed from client)",
                     len(torrents_to_delete),
@@ -482,9 +491,8 @@ class TorrentClient(ABC):
         except Exception as e:
             logger.error("Error refreshing database cache: %s", e)
 
-    @staticmethod
     async def get_file_matched_torrents(
-        target_file_size: int, fname_keywords: list[str]
+        self, target_file_size: int, fname_keywords: list[str]
     ) -> list[ClientTorrentInfo]:
         """Get torrents matching file size and name keywords.
 
@@ -498,8 +506,7 @@ class TorrentClient(ABC):
         Returns:
             List of ClientTorrentInfo objects.
         """
-        database = db.get_database()
-        rows = await database.search_torrent_by_file_match(
+        rows = await self.database.search_torrent_by_file_match(
             target_file_size, fname_keywords
         )
 
@@ -764,7 +771,7 @@ class TorrentClient(ABC):
             )
 
             # Rebuild cache with all torrents (run in background)
-            scheduler.get_job_manager().scheduler.add_job(
+            self.scheduler.add_job(
                 self.rebuild_client_torrents_cache_incremental,
                 trigger=DateTrigger(),
                 args=[torrents],
@@ -957,8 +964,8 @@ class TorrentClient(ABC):
             logger.error("Failed to inject torrent after retries: %s", e)
 
             # Send failure notification if configured
-            if config.cfg.global_config.notification_urls:
-                await get_notifier().send_inject_failure(
+            if self.notifier:
+                await self.notifier.send_inject_failure(
                     torrent_name=local_torrent_name,
                     torrent_url=torrent_url,
                     reason=str(e),
@@ -1141,8 +1148,6 @@ class TorrentClient(ABC):
         result = PostProcessResult()
 
         try:
-            database = db.get_database()
-
             logger.debug("Checking matched torrent: %s", matched_torrent_hash)
 
             # Check if matched torrent exists in client
@@ -1183,7 +1188,9 @@ class TorrentClient(ABC):
                     logger.info("Auto-start disabled, torrent will remain paused")
                     result.started_downloading = False
                 # Mark as checked since it's 100% complete
-                await database.update_scan_result_checked(matched_torrent_hash, True)
+                await self.database.update_scan_result_checked(
+                    matched_torrent_hash, True
+                )
                 result.status = PostProcessStatus.COMPLETED
             # If matched torrent is not 100% complete, check file progress patterns
             else:
@@ -1201,7 +1208,7 @@ class TorrentClient(ABC):
                         matched_torrent.name,
                     )
                     # Mark as checked since we're keeping the partial torrent
-                    await database.update_scan_result_checked(
+                    await self.database.update_scan_result_checked(
                         matched_torrent_hash, True
                     )
                     result.status = PostProcessStatus.PARTIAL_KEPT
@@ -1215,7 +1222,7 @@ class TorrentClient(ABC):
                             "Keeping partial torrent %s - kept due to reflink enabled",
                             matched_torrent.name,
                         )
-                        await database.update_scan_result_checked(
+                        await self.database.update_scan_result_checked(
                             matched_torrent_hash, True
                         )
                         result.status = PostProcessStatus.PARTIAL_KEPT
@@ -1226,15 +1233,17 @@ class TorrentClient(ABC):
                         )
                         await self._remove_torrent(matched_torrent.hash)
                         # Clear matched torrent information from database
-                        await database.clear_matched_torrent_info(matched_torrent_hash)
+                        await self.database.clear_matched_torrent_info(
+                            matched_torrent_hash
+                        )
                         result.status = PostProcessStatus.PARTIAL_REMOVED
 
             # Send success notification if configured
-            if config.cfg.global_config.notification_urls and result.status in (
+            if self.notifier and result.status in (
                 PostProcessStatus.COMPLETED,
                 PostProcessStatus.PARTIAL_KEPT,
             ):
-                await get_notifier().send_inject_success(
+                await self.notifier.send_inject_success(
                     torrent_name=matched_torrent.name,
                     torrent_hash=matched_torrent.hash,
                     progress=matched_torrent.progress,
@@ -1257,7 +1266,7 @@ class TorrentClient(ABC):
             self.monitoring = True
 
             # Add scheduled job for monitoring to the global scheduler
-            scheduler.get_job_manager().scheduler.add_job(
+            self.scheduler.add_job(
                 self._check_tracked_torrents,
                 trigger=IntervalTrigger(seconds=1),
                 id=self._monitor_job_id,
@@ -1364,9 +1373,7 @@ class TorrentClient(ABC):
                     self.monitoring = False
                     # Remove the job from the global scheduler
                     try:
-                        scheduler.get_job_manager().scheduler.remove_job(
-                            self._monitor_job_id
-                        )
+                        self.scheduler.remove_job(self._monitor_job_id)
                         logger.debug("Torrent monitor job removed")
                     except Exception as e:
                         logger.warning("Error removing torrent monitor job: %s", e)
@@ -1385,7 +1392,7 @@ class TorrentClient(ABC):
             self._tracked_torrents[torrent_hash] = False
 
         # Start a background task to add torrent after 5 seconds delay
-        scheduler.get_job_manager().scheduler.add_job(
+        self.scheduler.add_job(
             self._delayed_add_torrent,
             trigger=DateTrigger(run_date=datetime.now(UTC) + timedelta(seconds=5)),
             args=[torrent_hash],

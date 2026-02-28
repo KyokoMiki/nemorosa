@@ -203,6 +203,8 @@ cython_debug/
 .cursor/
 .windsurf/
 .windsurfrules
+.agents/
+.claude/
 
 # Ruff stuff:
 .ruff_cache/
