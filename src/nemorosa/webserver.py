@@ -12,10 +12,10 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
 from . import __version__, config, logger
-from .api import cleanup_api, get_target_apis
-from .core import ProcessResponse, ProcessStatus, get_core
+from .core import NemorosaCore, ProcessResponse, ProcessStatus, get_core
 from .db import cleanup_database
-from .scheduler import JobResponse, JobType, get_job_manager
+from .scheduler import JobManager, JobResponse, JobType, get_job_manager
+from .trackers import cleanup_api, get_target_apis
 
 
 class AnnounceRequest(BaseModel):
@@ -101,6 +101,10 @@ def verify_api_key(
 # Type alias for API key dependency
 ApiKeyDep = Annotated[bool, Depends(verify_api_key)]
 
+# Type aliases for injected dependencies
+CoreDep = Annotated[NemorosaCore, Depends(get_core)]
+JobManagerDep = Annotated[JobManager, Depends(get_job_manager)]
+
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -150,6 +154,7 @@ async def webhook(
     ],
     response: Response,
     _: ApiKeyDep,
+    core: CoreDep,
 ) -> ProcessResponse:
     """Process a single torrent via webhook.
 
@@ -165,6 +170,7 @@ async def webhook(
         infohash: Torrent infohash from URL parameter
         response: FastAPI Response object for status code manipulation
         _: API key verification
+        core: NemorosaCore instance (injected via FastAPI Depends)
 
     Returns:
         WebhookResponse: Processing result with detailed information
@@ -172,8 +178,7 @@ async def webhook(
 
     try:
         # Process the torrent
-        processor = get_core()
-        result = await processor.process_single_torrent(infohash)
+        result = await core.process_single_torrent(infohash)
 
         if result.status == ProcessStatus.NOT_FOUND:
             # No matches found
@@ -218,6 +223,7 @@ async def announce(
     request: AnnounceRequest,
     response: Response,
     _: ApiKeyDep,
+    core: CoreDep,
 ) -> ProcessResponse:
     """Process torrent announce from tracker.
 
@@ -233,6 +239,7 @@ async def announce(
         request: Announce request containing torrent name, link, and data
         response: FastAPI Response object for status code manipulation
         _: API key verification
+        core: NemorosaCore instance (injected via FastAPI Depends)
 
     Returns:
         WebhookResponse: Processing result with detailed information
@@ -245,8 +252,7 @@ async def announce(
         )
 
         # Process the torrent for cross-seeding using the reverse announce function
-        processor = get_core()
-        result = await processor.process_reverse_announce_torrent(
+        result = await core.process_reverse_announce_torrent(
             torrent_name=request.name,
             torrent_link=request.link,
             album_name=request.album,
@@ -302,6 +308,7 @@ async def announce(
 async def trigger_job(
     job_type: Annotated[JobType, Query(description="Job type: 'search' or 'cleanup'")],
     _: ApiKeyDep,
+    job_manager: JobManagerDep,
 ) -> JobResponse:
     """Trigger a scheduled job to run ahead of schedule.
 
@@ -315,13 +322,14 @@ async def trigger_job(
     Args:
         job_type: Type of job to trigger (search, cleanup)
         _: API key verification
+        job_manager: JobManager instance (injected via FastAPI Depends)
 
     Returns:
         JobResponse: Job trigger result with status and timing information
     """
     try:
         # Trigger the job
-        result = await get_job_manager().trigger_job_early(job_type)
+        result = await job_manager.trigger_job_early(job_type)
 
         # Map internal status to HTTP status codes
         if result.status == "not_found":
@@ -359,6 +367,7 @@ async def trigger_job(
 async def get_job_status(
     job_type: Annotated[JobType, Query(description="Job type: 'search' or 'cleanup'")],
     _: ApiKeyDep,
+    job_manager: JobManagerDep,
 ) -> JobResponse:
     """Get the current status and schedule of a job.
 
@@ -368,13 +377,14 @@ async def get_job_status(
     Args:
         job_type: Type of job to get status for (search, cleanup)
         _: API key verification
+        job_manager: JobManager instance (injected via FastAPI Depends)
 
     Returns:
         JobResponse: Job status information including run times
     """
     try:
         # Get job status
-        result = await get_job_manager().get_job_status(job_type)
+        result = await job_manager.get_job_status(job_type)
 
         return result
 

@@ -4,14 +4,15 @@ import sys
 from argparse import ArgumentParser
 
 import anyio
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from . import config, logger
-from .api import cleanup_api, get_target_apis, init_api
-from .client_instance import get_torrent_client, init_torrent_client
+from .clients import get_torrent_client, init_torrent_client
 from .core import get_core, init_core
 from .db import cleanup_database, get_database, init_database
 from .notifier import get_notifier, init_notifier
 from .scheduler import init_job_manager
+from .trackers import cleanup_api, get_target_apis, init_api
 from .webserver import run_webserver
 
 
@@ -149,23 +150,50 @@ async def async_init():
     """Initialize core components asynchronously.
 
     This function is used by both CLI and webserver modes to set up the application.
+
+    Initialization order (unidirectional dependency chain):
+        1. Scheduler (AsyncIOScheduler, no dependencies)
+        2. Database
+        3. Notifier (optional, depends on config)
+        4. Torrent client (receives database, scheduler, notifier via DI)
+        5. Cache rebuild (if client URL changed)
+        6. API connections
+        7. Core processor
+        8. Job manager (receives scheduler, core, torrent_client — fully constructed)
     """
+    # 1. Create and start scheduler (no dependencies, created first)
+    scheduler = AsyncIOScheduler()
+    scheduler.start()
+    logger.debug("Scheduler started")
+
+    # 2. Initialize database
     logger.debug("Initializing database...")
-    # Initialize database
     await init_database()
     logger.info("Database initialized successfully")
 
-    # Initialize torrent client
+    database = get_database()
+
+    # 3. Initialize notifier (before torrent client, so it can be injected)
+    notifier = None
+    if config.cfg.global_config.notification_urls:
+        init_notifier(config.cfg.global_config.notification_urls)
+        notifier = get_notifier()
+
+    # 4. Initialize torrent client (with scheduler, not job_manager)
     logger.debug(
         "Connecting to torrent client at %s...",
         logger.redact_url_password(config.cfg.downloader.client),
     )
-    await init_torrent_client(config.cfg.downloader.client)
+    await init_torrent_client(
+        config.cfg.downloader.client,
+        database=database,
+        scheduler=scheduler,
+        notifier=notifier,
+    )
     logger.info("Successfully connected to torrent client")
 
-    # Check if client URL has changed and rebuild cache if needed
+    # 5. Check if client URL has changed and rebuild cache if needed
     current_client_url = config.cfg.downloader.client
-    database = get_database()
     cached_client_url = await database.get_metadata("client_url")
 
     if cached_client_url != current_client_url:
@@ -193,21 +221,23 @@ async def async_init():
         # Update cached client URL
         await database.set_metadata("client_url", current_client_url)
 
-    # Initialize API connections
+    # 6. Initialize API connections
     await init_api(config.cfg.target_sites)
     logger.info(
         "API connections established for %s target sites", len(get_target_apis())
     )
 
-    # Initialize core processor
+    # 7. Initialize core processor
     await init_core()
     logger.debug("Core processor initialized")
 
-    # Initialize and start scheduler
-    await init_job_manager()
-
-    # Initialize notifier
-    init_notifier(config.cfg.global_config.notification_urls)
+    # 8. Initialize job manager (all deps available, one-shot construction)
+    await init_job_manager(
+        scheduler=scheduler,
+        database=database,
+        core=get_core(),
+        torrent_client=get_torrent_client(),
+    )
 
 
 def main():

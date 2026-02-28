@@ -10,7 +10,9 @@ from apscheduler.triggers.interval import IntervalTrigger
 from pydantic import BaseModel, Field
 
 from . import config, logger
-from .db import get_database
+from .clients import TorrentClient
+from .core import NemorosaCore
+from .db import NemorosaDatabase
 
 
 class JobResponse(BaseModel):
@@ -40,27 +42,73 @@ class JobType(StrEnum):
     CLEANUP = "cleanup"
 
 
+async def _search_job_handler(
+    core: NemorosaCore, torrent_client: TorrentClient
+) -> None:
+    """Execute search job logic.
+
+    Args:
+        core: NemorosaCore instance for processing operations.
+        torrent_client: TorrentClient instance for client operations.
+    """
+    await core.process_torrents()
+    if torrent_client.monitoring:
+        logger.debug(
+            "Stopping torrent monitoring and waiting for "
+            "tracked torrents to complete..."
+        )
+        await torrent_client.wait_for_monitoring_completion()
+
+
+async def _cleanup_job_handler(core: NemorosaCore) -> None:
+    """Execute cleanup job logic.
+
+    Args:
+        core: NemorosaCore instance for processing operations.
+    """
+    await core.retry_undownloaded_torrents()
+    await core.post_process_injected_torrents()
+
+
 class JobManager:
     """Job manager for handling scheduled tasks."""
 
-    def __init__(self):
-        """Initialize job manager."""
-        self.scheduler = AsyncIOScheduler()
+    def __init__(
+        self,
+        scheduler: AsyncIOScheduler,
+        database: NemorosaDatabase,
+        core: NemorosaCore,
+        torrent_client: TorrentClient,
+    ) -> None:
+        """Initialize job manager.
 
-        self.database = get_database()
+        All dependencies are provided at construction time, eliminating
+        the need for late binding via set_handlers().
+
+        Args:
+            scheduler: AsyncIOScheduler instance (created externally).
+            database: NemorosaDatabase instance for persistence.
+            core: NemorosaCore instance for processing operations.
+            torrent_client: TorrentClient instance for client operations.
+        """
+        self.scheduler = scheduler
+        self.database = database
+        self._core = core
+        self._torrent_client = torrent_client
+
         # Track running jobs
-        self._running_jobs = set()
+        self._running_jobs: set[str] = set()
         self._running_jobs_lock = anyio.Lock()
 
     @asynccontextmanager
     async def _job_execution_context(self, job_name: str):
         """Context manager for job execution that handles common setup and teardown.
 
+        Handles: marking job as running, recording the run to the database,
+        logging duration, catching exceptions, and marking job as done.
+
         Args:
             job_name: Name of the job being executed.
-
-        Yields:
-            start_time: The job start time for duration calculation.
         """
         # Mark job as running
         async with self._running_jobs_lock:
@@ -68,7 +116,15 @@ class JobManager:
         start_time = datetime.now(UTC)
 
         try:
-            yield start_time
+            # Get next run time from APScheduler
+            next_run_time = None
+            job = self.scheduler.get_job(job_name)
+            if job and job.next_run_time:
+                next_run_time = job.next_run_time
+
+            await self.database.update_job_run(job_name, start_time, next_run_time)
+
+            yield
             # Record successful completion
             end_time = datetime.now(UTC)
             duration = (end_time - start_time).total_seconds()
@@ -142,54 +198,15 @@ class JobManager:
 
     async def _run_search_job(self):
         """Run search job."""
-        job_name = JobType.SEARCH
-        logger.debug("Starting %s job", job_name)
-
-        async with self._job_execution_context(job_name) as start_time:
-            # Get next run time from APScheduler
-            next_run_time = None
-            job = self.scheduler.get_job(job_name)
-            if job and job.next_run_time:
-                next_run_time = job.next_run_time
-
-            await self.database.update_job_run(job_name, start_time, next_run_time)
-
-            # Run the actual search process
-            from .core import get_core
-
-            processor = get_core()
-            await processor.process_torrents()
-
-            client = processor.torrent_client
-            if client and client.monitoring:
-                logger.debug(
-                    "Stopping torrent monitoring and waiting for "
-                    "tracked torrents to complete..."
-                )
-                await client.wait_for_monitoring_completion()
+        logger.debug("Starting %s job", JobType.SEARCH)
+        async with self._job_execution_context(JobType.SEARCH):
+            await _search_job_handler(self._core, self._torrent_client)
 
     async def _run_cleanup_job(self):
         """Run cleanup job."""
-        job_name = JobType.CLEANUP
-        logger.debug("Starting %s job", job_name)
-
-        async with self._job_execution_context(job_name) as start_time:
-            # Get next run time from APScheduler
-            next_run_time = None
-            job = self.scheduler.get_job(job_name)
-            if job and job.next_run_time:
-                next_run_time = job.next_run_time
-
-            await self.database.update_job_run(job_name, start_time, next_run_time)
-
-            # Run cleanup process
-            from .core import get_core
-
-            processor = get_core()
-            await processor.retry_undownloaded_torrents()
-
-            # Then post-process injected torrents
-            await processor.post_process_injected_torrents()
+        logger.debug("Starting %s job", JobType.CLEANUP)
+        async with self._job_execution_context(JobType.CLEANUP):
+            await _cleanup_job_handler(self._core)
 
     async def trigger_job_early(self, job_type: JobType) -> JobResponse:
         """Trigger a job to run early.
@@ -297,10 +314,22 @@ _job_manager_instance: JobManager | None = None
 _job_manager_lock = anyio.Lock()
 
 
-async def init_job_manager() -> None:
+async def init_job_manager(
+    scheduler: AsyncIOScheduler,
+    database: NemorosaDatabase,
+    core: NemorosaCore,
+    torrent_client: TorrentClient,
+) -> None:
     """Initialize global job manager instance.
 
-    Should be called once during application startup (cli.async_init).
+    Creates a fully-initialized JobManager with all dependencies.
+    The scheduler should already be started before calling this.
+
+    Args:
+        scheduler: AsyncIOScheduler instance (already started).
+        database: NemorosaDatabase instance for persistence.
+        core: NemorosaCore instance for processing operations.
+        torrent_client: TorrentClient instance for client operations.
 
     Raises:
         RuntimeError: If already initialized.
@@ -310,8 +339,12 @@ async def init_job_manager() -> None:
         if _job_manager_instance is not None:
             raise RuntimeError("Job manager already initialized.")
 
-        _job_manager_instance = JobManager()
-        await _job_manager_instance.start_scheduler()
+        _job_manager_instance = JobManager(
+            scheduler=scheduler,
+            database=database,
+            core=core,
+            torrent_client=torrent_client,
+        )
 
 
 def get_job_manager() -> JobManager:

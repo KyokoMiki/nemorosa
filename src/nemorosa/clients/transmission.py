@@ -5,6 +5,7 @@ Provides integration with Transmission via its RPC interface.
 
 import base64
 import posixpath
+from typing import TYPE_CHECKING
 
 import msgspec
 import transmission_rpc
@@ -23,6 +24,12 @@ from .client_common import (
     decode_bitfield_bytes,
     parse_libtc_url,
 )
+
+if TYPE_CHECKING:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+    from ..db import NemorosaDatabase
+    from ..notifier import Notifier
 
 # State mapping for Transmission torrent client
 TRANSMISSION_STATE_MAPPING = {
@@ -86,8 +93,14 @@ class TransmissionClient(TorrentClient):
 
     supports_fast_resume = True
 
-    def __init__(self, url: str):
-        super().__init__()
+    def __init__(
+        self,
+        url: str,
+        database: "NemorosaDatabase",
+        scheduler: "AsyncIOScheduler",
+        notifier: "Notifier | None" = None,
+    ):
+        super().__init__(database=database, scheduler=scheduler, notifier=notifier)
         client_config = parse_libtc_url(url)
         self.torrents_dir = (
             config.cfg.downloader.torrents_dir or client_config.torrents_dir or ""

@@ -6,6 +6,7 @@ Provides integration with Deluge via its RPC interface.
 import base64
 import posixpath
 import re
+from typing import TYPE_CHECKING
 
 import deluge_client
 from anyio import Path
@@ -21,6 +22,12 @@ from .client_common import (
     TorrentState,
     parse_libtc_url,
 )
+
+if TYPE_CHECKING:
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+    from ..db import NemorosaDatabase
+    from ..notifier import Notifier
 
 # Label suffix for duplicate categories feature
 LABEL_SUFFIX = ".nemorosa"
@@ -85,8 +92,14 @@ _DELUGE_FIELD_SPECS = {
 class DelugeClient(TorrentClient):
     """Deluge torrent client implementation."""
 
-    def __init__(self, url: str):
-        super().__init__()
+    def __init__(
+        self,
+        url: str,
+        database: "NemorosaDatabase",
+        scheduler: "AsyncIOScheduler",
+        notifier: "Notifier | None" = None,
+    ):
+        super().__init__(database=database, scheduler=scheduler, notifier=notifier)
         client_config = parse_libtc_url(url)
         self.torrents_dir = (
             config.cfg.downloader.torrents_dir or client_config.torrents_dir or ""
