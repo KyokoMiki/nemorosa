@@ -1,7 +1,7 @@
 # ===========================================
 # Stage 1: Builder - Install dependencies and build the project
 # ===========================================
-FROM python:3.13-slim-bookworm AS builder
+FROM python:3.14-slim-bookworm AS builder
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 # Set working directory
@@ -36,7 +36,7 @@ RUN --mount=type=cache,target=/opt/uv-cache \
 # ===========================================
 # Stage 2: Runtime - Minimal Python slim image
 # ===========================================
-FROM python:3.13-slim-bookworm
+FROM python:3.14-slim-bookworm
 
 # Set working directory
 WORKDIR /app
