@@ -148,7 +148,11 @@ def create_file_link(
     try:
         # Ensure destination directory exists
         dest_dir = os.path.dirname(dest_path)
-        os.makedirs(dest_dir, mode=config.cfg.linking.dir_mode, exist_ok=True)
+        original_umask = os.umask(0)
+        try:
+            os.makedirs(dest_dir, mode=config.cfg.linking.dir_mode, exist_ok=True)
+        finally:
+            os.umask(original_umask)
 
         # Check if destination already exists
         if os.path.exists(dest_path):
