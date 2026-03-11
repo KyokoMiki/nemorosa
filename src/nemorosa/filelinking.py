@@ -129,6 +129,39 @@ def _test_linking_in_directory(source_path: str, link_dir: str) -> bool:
         return False
 
 
+def _makedirs_with_mode(path: str, mode: int) -> None:
+    """Create directories recursively, applying chmod only to newly created ones.
+
+    Unlike os.makedirs with umask manipulation, this only changes permissions
+    on directories that were actually created, leaving existing ones untouched.
+
+    Args:
+        path: Directory path to create.
+        mode: Permission mode to apply to newly created directories.
+    """
+    # Collect ancestors from target up to the first existing directory
+    dirs_to_create: list[str] = []
+    current = path
+    while current and not os.path.exists(current):
+        dirs_to_create.append(current)
+        parent = os.path.dirname(current)
+        if parent == current:
+            break
+        current = parent
+
+    # Create directories one-by-one from shallowest to deepest,
+    # applying chmod immediately after creation to avoid chmoding
+    # directories created by another actor between our exists check
+    # and mkdir call.
+    for d in reversed(dirs_to_create):
+        try:
+            os.mkdir(d, mode)
+            os.chmod(d, mode)
+        except FileExistsError:
+            if not os.path.isdir(d):
+                raise
+
+
 def create_file_link(
     source_path: str, dest_path: str, link_type: LinkType | None = None
 ) -> bool:
@@ -148,7 +181,7 @@ def create_file_link(
     try:
         # Ensure destination directory exists
         dest_dir = os.path.dirname(dest_path)
-        os.makedirs(dest_dir, mode=config.cfg.linking.dir_mode, exist_ok=True)
+        _makedirs_with_mode(dest_dir, config.cfg.linking.dir_mode)
 
         # Check if destination already exists
         if os.path.exists(dest_path):
