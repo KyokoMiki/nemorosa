@@ -31,6 +31,8 @@ if TYPE_CHECKING:
     from ..db import NemorosaDatabase
     from ..notifier import Notifier
 
+TORRENT_CLIENT_TIMEOUT = 60
+
 
 def decode_bitfield_bytes(bitfield_data: bytes, piece_count: int) -> list[bool]:
     """Decode bitfield bytes data to get piece download status.
