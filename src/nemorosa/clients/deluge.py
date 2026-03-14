@@ -14,6 +14,7 @@ from asyncer import asyncify
 
 from .. import config, logger
 from .client_common import (
+    TORRENT_CLIENT_TIMEOUT,
     ClientTorrentFile,
     ClientTorrentInfo,
     FieldSpec,
@@ -110,7 +111,7 @@ class DelugeClient(TorrentClient):
             username=client_config.username or "",
             password=client_config.password or "",
             decode_utf8=True,
-            timeout=60,
+            timeout=TORRENT_CLIENT_TIMEOUT,
         )
         # Connect to Deluge daemon
         self.client.connect()

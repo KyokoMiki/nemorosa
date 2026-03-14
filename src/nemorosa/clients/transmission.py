@@ -15,6 +15,7 @@ from transmission_rpc.constants import RpcMethod
 
 from .. import config, logger
 from .client_common import (
+    TORRENT_CLIENT_TIMEOUT,
     ClientTorrentFile,
     ClientTorrentInfo,
     FieldSpec,
@@ -118,6 +119,7 @@ class TransmissionClient(TorrentClient):
             host=client_config.host or "localhost",
             port=client_config.port or 9091,
             path=client_config.path or "/transmission/rpc",
+            timeout=TORRENT_CLIENT_TIMEOUT,
         )
 
         # Use the field specifications constant

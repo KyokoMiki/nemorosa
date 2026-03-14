@@ -13,6 +13,8 @@ from xmlrpc.client import Transport  # nosec B411
 
 import defusedxml.xmlrpc
 
+from .client_common import TORRENT_CLIENT_TIMEOUT
+
 
 def encode_netstring(input_data: bytes) -> bytes:
     """Encode data as netstring format."""
@@ -66,7 +68,7 @@ class SCGITransport(Transport):
             address = (parsed.hostname, parsed.port)
 
         try:
-            s.settimeout(30)
+            s.settimeout(TORRENT_CLIENT_TIMEOUT)
             s.connect(address)
 
             request = encode_header(b"CONTENT_LENGTH", str(len(request_body)).encode())

@@ -15,6 +15,7 @@ from torf import Torrent
 
 from .. import config, logger
 from .client_common import (
+    TORRENT_CLIENT_TIMEOUT,
     ClientTorrentFile,
     ClientTorrentInfo,
     FieldSpec,
@@ -119,6 +120,7 @@ class QBittorrentClient(TorrentClient):
             host=client_config.url or "http://localhost:8080",
             username=client_config.username,
             password=client_config.password,
+            REQUESTS_ARGS={"timeout": TORRENT_CLIENT_TIMEOUT},
         )
         # Authenticate with qBittorrent
         if client_config.username and client_config.password:
