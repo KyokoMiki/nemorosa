@@ -35,7 +35,7 @@ dependencies = [
     "humanfriendly>=10.0",
     "msgspec[yaml]>=0.20.0",
     "platformdirs>=4.4.0",
-    "qbittorrent-api==2025.7.0",
+    "qbittorrent-api==2025.11.1",
     "reflink-copy>=0.3.2",
     "sqlalchemy[aiosqlite]>=2.0.44",
     "tenacity>=9.1.2",
