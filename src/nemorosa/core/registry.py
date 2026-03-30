@@ -3,11 +3,10 @@
 import anyio
 
 from .. import config
-from ..clients import get_torrent_client
+from ..clients import get_torrent_clients
 from ..db import get_database
 from ..notifier import get_notifier
 from ..trackers import get_target_apis
-from .injector import TorrentInjector
 from .processor import NemorosaCore
 from .searcher import TorrentSearcher
 
@@ -30,11 +29,10 @@ async def init_core() -> None:
         if _core_instance is not None:
             raise RuntimeError("Core already initialized.")
 
-        torrent_client = get_torrent_client()
+        torrent_clients = get_torrent_clients()
         database = get_database()
         target_apis = get_target_apis()
         searcher = TorrentSearcher()
-        injector = TorrentInjector(torrent_client)
 
         # Build notifier only when notification URLs are configured
         notifier = None
@@ -42,10 +40,9 @@ async def init_core() -> None:
             notifier = get_notifier()
 
         _core_instance = NemorosaCore(
-            torrent_client=torrent_client,
+            torrent_clients=torrent_clients,
             database=database,
             searcher=searcher,
-            injector=injector,
             target_apis=target_apis,
             notifier=notifier,
         )

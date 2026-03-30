@@ -13,7 +13,7 @@ from anyio import Path
 from asyncer import asyncify
 from transmission_rpc.constants import RpcMethod
 
-from .. import config, logger
+from .. import logger
 from .client_common import (
     TORRENT_CLIENT_TIMEOUT,
     ClientTorrentFile,
@@ -29,6 +29,7 @@ from .client_common import (
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+    from ..config import DownloaderConfig
     from ..db import NemorosaDatabase
     from ..notifier import Notifier
 
@@ -97,14 +98,20 @@ class TransmissionClient(TorrentClient):
     def __init__(
         self,
         url: str,
+        downloader_config: "DownloaderConfig",
         database: "NemorosaDatabase",
         scheduler: "AsyncIOScheduler",
         notifier: "Notifier | None" = None,
     ):
-        super().__init__(database=database, scheduler=scheduler, notifier=notifier)
+        super().__init__(
+            downloader_config=downloader_config,
+            database=database,
+            scheduler=scheduler,
+            notifier=notifier,
+        )
         client_config = parse_libtc_url(url)
         self.torrents_dir = (
-            config.cfg.downloader.torrents_dir or client_config.torrents_dir or ""
+            downloader_config.torrents_dir or client_config.torrents_dir or ""
         )
 
         # Ensure protocol is either 'http' or 'https'
@@ -274,10 +281,10 @@ class TransmissionClient(TorrentClient):
         }
 
         # Prepare labels: use tags if provided, otherwise use [label] if not None
-        if config.cfg.downloader.tags:
-            kwargs["labels"] = config.cfg.downloader.tags
-        elif config.cfg.downloader.label:
-            kwargs["labels"] = [config.cfg.downloader.label]
+        if self.downloader_config.tags:
+            kwargs["labels"] = self.downloader_config.tags
+        elif self.downloader_config.label:
+            kwargs["labels"] = [self.downloader_config.label]
 
         # Make direct RPC call to get raw response
         query = {"method": RpcMethod.TorrentAdd, "arguments": kwargs}

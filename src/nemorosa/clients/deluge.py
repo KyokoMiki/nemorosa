@@ -12,7 +12,7 @@ import deluge_client
 from anyio import Path
 from asyncer import asyncify
 
-from .. import config, logger
+from .. import logger
 from .client_common import (
     TORRENT_CLIENT_TIMEOUT,
     ClientTorrentFile,
@@ -27,6 +27,7 @@ from .client_common import (
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+    from ..config import DownloaderConfig
     from ..db import NemorosaDatabase
     from ..notifier import Notifier
 
@@ -96,14 +97,20 @@ class DelugeClient(TorrentClient):
     def __init__(
         self,
         url: str,
+        downloader_config: "DownloaderConfig",
         database: "NemorosaDatabase",
         scheduler: "AsyncIOScheduler",
         notifier: "Notifier | None" = None,
     ):
-        super().__init__(database=database, scheduler=scheduler, notifier=notifier)
+        super().__init__(
+            downloader_config=downloader_config,
+            database=database,
+            scheduler=scheduler,
+            notifier=notifier,
+        )
         client_config = parse_libtc_url(url)
         self.torrents_dir = (
-            config.cfg.downloader.torrents_dir or client_config.torrents_dir or ""
+            downloader_config.torrents_dir or client_config.torrents_dir or ""
         )
         self.client = deluge_client.DelugeRPCClient(
             host=client_config.host or "localhost",
@@ -288,10 +295,11 @@ class DelugeClient(TorrentClient):
         Returns:
             str: The label to use for the new torrent.
         """
-        default_label = config.cfg.downloader.label or ""
+        dl_cfg = self.downloader_config
+        default_label = dl_cfg.label or ""
 
         # Short-circuit: use unified label directly
-        if config.cfg.downloader.use_unified_labels:
+        if dl_cfg.use_unified_labels:
             return default_label
 
         # If no local label, use default label
@@ -299,7 +307,7 @@ class DelugeClient(TorrentClient):
             return default_label
 
         # If duplicate_categories is disabled, inherit original label
-        if not config.cfg.downloader.duplicate_categories:
+        if not dl_cfg.duplicate_categories:
             return local_torrent_label
 
         # If local label is the same as default label, use default
@@ -363,7 +371,7 @@ class DelugeClient(TorrentClient):
 
         # Get local torrent label only if needed (not using unified labels)
         local_torrent_label = ""
-        if local_torrent_hash and not config.cfg.downloader.use_unified_labels:
+        if local_torrent_hash and not self.downloader_config.use_unified_labels:
             local_torrent_label = await self._get_local_torrent_label(
                 local_torrent_hash
             )

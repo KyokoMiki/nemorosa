@@ -64,13 +64,15 @@ def core(
     mock_injector: MagicMock,
 ) -> NemorosaCore:
     """Create a NemorosaCore with all mock dependencies."""
-    return NemorosaCore(
-        torrent_client=mock_torrent_client,
+    instance = NemorosaCore(
+        torrent_clients=[mock_torrent_client],
         database=mock_database,
         searcher=mock_searcher,
-        injector=mock_injector,
         target_apis=[],
     )
+    # Replace the internally-created injector with our mock
+    instance.injector = mock_injector
+    return instance
 
 
 # --- Tests for process_torrent_search ---
@@ -82,6 +84,7 @@ class TestProcessTorrentSearch:
     async def test_no_match_found(
         self,
         core: NemorosaCore,
+        mock_torrent_client: MagicMock,
         mock_searcher: MagicMock,
         mock_api: MagicMock,
         sample_torrent_details: ClientTorrentInfo,
@@ -90,6 +93,7 @@ class TestProcessTorrentSearch:
         mock_searcher.search_torrent_match = AsyncMock(return_value=SearchMatchResult())
 
         success, tid, thash = await core.process_torrent_search(
+            torrent_client=mock_torrent_client,
             torrent_details=sample_torrent_details,
             api=mock_api,
         )
@@ -102,6 +106,7 @@ class TestProcessTorrentSearch:
     async def test_match_found_and_injected(
         self,
         core: NemorosaCore,
+        mock_torrent_client: MagicMock,
         mock_searcher: MagicMock,
         mock_injector: MagicMock,
         mock_api: MagicMock,
@@ -124,6 +129,7 @@ class TestProcessTorrentSearch:
             mock_config.cfg.global_config.no_download = False
 
             success, tid, thash = await core.process_torrent_search(
+                torrent_client=mock_torrent_client,
                 torrent_details=sample_torrent_details,
                 api=mock_api,
             )
@@ -137,6 +143,7 @@ class TestProcessTorrentSearch:
     async def test_match_found_no_download_mode(
         self,
         core: NemorosaCore,
+        mock_torrent_client: MagicMock,
         mock_searcher: MagicMock,
         mock_injector: MagicMock,
         mock_api: MagicMock,
@@ -157,6 +164,7 @@ class TestProcessTorrentSearch:
             mock_config.cfg.global_config.no_download = True
 
             success, tid, thash = await core.process_torrent_search(
+                torrent_client=mock_torrent_client,
                 torrent_details=sample_torrent_details,
                 api=mock_api,
             )
@@ -169,6 +177,7 @@ class TestProcessTorrentSearch:
     async def test_injection_failure(
         self,
         core: NemorosaCore,
+        mock_torrent_client: MagicMock,
         mock_searcher: MagicMock,
         mock_injector: MagicMock,
         mock_api: MagicMock,
@@ -190,6 +199,7 @@ class TestProcessTorrentSearch:
             mock_config.cfg.global_config.no_download = False
 
             success, tid, thash = await core.process_torrent_search(
+                torrent_client=mock_torrent_client,
                 torrent_details=sample_torrent_details,
                 api=mock_api,
             )
@@ -202,6 +212,7 @@ class TestProcessTorrentSearch:
     async def test_search_failure(
         self,
         core: NemorosaCore,
+        mock_torrent_client: MagicMock,
         mock_searcher: MagicMock,
         mock_api: MagicMock,
         sample_torrent_details: ClientTorrentInfo,
@@ -212,6 +223,7 @@ class TestProcessTorrentSearch:
         )
 
         success, tid, thash = await core.process_torrent_search(
+            torrent_client=mock_torrent_client,
             torrent_details=sample_torrent_details,
             api=mock_api,
         )

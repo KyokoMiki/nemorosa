@@ -16,9 +16,9 @@ pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture
-def injector(mock_torrent_client: MagicMock) -> TorrentInjector:
-    """Create a TorrentInjector with mock client."""
-    return TorrentInjector(mock_torrent_client)
+def injector() -> TorrentInjector:
+    """Create a TorrentInjector."""
+    return TorrentInjector()
 
 
 # --- Tests for prepare_linked_download_dir ---
@@ -107,7 +107,7 @@ class TestInjectMatchedTorrent:
             mock_config.cfg.linking.enable_linking = False
 
             result = await injector.inject_matched_torrent(
-                sample_torrent, sample_local_info
+                mock_torrent_client, sample_torrent, sample_local_info
             )
 
         assert result is True
@@ -127,7 +127,7 @@ class TestInjectMatchedTorrent:
             mock_config.cfg.linking.enable_linking = False
 
             result = await injector.inject_matched_torrent(
-                sample_torrent, sample_local_info
+                mock_torrent_client, sample_torrent, sample_local_info
             )
 
         assert result is False
@@ -144,7 +144,7 @@ class TestInjectMatchedTorrent:
             mock_config.cfg.linking.enable_linking = False
 
             await injector.inject_matched_torrent(
-                sample_torrent, sample_local_info, hash_match=True
+                mock_torrent_client, sample_torrent, sample_local_info, hash_match=True
             )
 
         call_args = mock_torrent_client.inject_torrent.call_args
@@ -169,7 +169,7 @@ class TestInjectableLinkFn:
     ) -> None:
         """Should call custom link_fn instead of real file linking."""
         fake_link_fn = MagicMock(return_value="/fake/linked/dir")
-        injector = TorrentInjector(mock_torrent_client, link_fn=fake_link_fn)
+        injector = TorrentInjector(link_fn=fake_link_fn)
 
         with patch("nemorosa.core.injector.config") as mock_config:
             mock_config.cfg.linking.enable_linking = True
@@ -192,7 +192,7 @@ class TestInjectableLinkFn:
     ) -> None:
         """Should fall back to original dir when custom link_fn returns None."""
         fake_link_fn = MagicMock(return_value=None)
-        injector = TorrentInjector(mock_torrent_client, link_fn=fake_link_fn)
+        injector = TorrentInjector(link_fn=fake_link_fn)
 
         with patch("nemorosa.core.injector.config") as mock_config:
             mock_config.cfg.linking.enable_linking = True
@@ -208,14 +208,11 @@ class TestInjectableLinkFn:
         assert result == "/downloads"
         fake_link_fn.assert_called_once()
 
-    async def test_default_link_fn_is_create_file_links(
-        self,
-        mock_torrent_client: MagicMock,
-    ) -> None:
+    async def test_default_link_fn_is_create_file_links(self) -> None:
         """Should default to create_file_links_for_torrent."""
         from nemorosa.filelinking import create_file_links_for_torrent
 
-        injector = TorrentInjector(mock_torrent_client)
+        injector = TorrentInjector()
         assert injector.link_fn is create_file_links_for_torrent
 
     async def test_full_injection_with_fake_link_fn(
@@ -226,13 +223,13 @@ class TestInjectableLinkFn:
     ) -> None:
         """Should complete full injection using fake link_fn without real FS."""
         fake_link_fn = MagicMock(return_value="/fake/linked/dir")
-        injector = TorrentInjector(mock_torrent_client, link_fn=fake_link_fn)
+        injector = TorrentInjector(link_fn=fake_link_fn)
 
         with patch("nemorosa.core.injector.config") as mock_config:
             mock_config.cfg.linking.enable_linking = True
 
             result = await injector.inject_matched_torrent(
-                sample_torrent, sample_local_info
+                mock_torrent_client, sample_torrent, sample_local_info
             )
 
         assert result is True

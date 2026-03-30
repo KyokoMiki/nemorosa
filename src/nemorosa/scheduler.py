@@ -43,21 +43,22 @@ class JobType(StrEnum):
 
 
 async def _search_job_handler(
-    core: NemorosaCore, torrent_client: TorrentClient
+    core: NemorosaCore, torrent_clients: list[TorrentClient]
 ) -> None:
     """Execute search job logic.
 
     Args:
         core: NemorosaCore instance for processing operations.
-        torrent_client: TorrentClient instance for client operations.
+        torrent_clients: List of TorrentClient instances.
     """
     await core.process_torrents()
-    if torrent_client.monitoring:
-        logger.debug(
-            "Stopping torrent monitoring and waiting for "
-            "tracked torrents to complete..."
-        )
-        await torrent_client.wait_for_monitoring_completion()
+    for torrent_client in torrent_clients:
+        if torrent_client.monitoring:
+            logger.debug(
+                "Stopping torrent monitoring and waiting for "
+                "tracked torrents to complete..."
+            )
+            await torrent_client.wait_for_monitoring_completion()
 
 
 async def _cleanup_job_handler(core: NemorosaCore) -> None:
@@ -78,7 +79,7 @@ class JobManager:
         scheduler: AsyncIOScheduler,
         database: NemorosaDatabase,
         core: NemorosaCore,
-        torrent_client: TorrentClient,
+        torrent_clients: list[TorrentClient],
     ) -> None:
         """Initialize job manager.
 
@@ -89,12 +90,12 @@ class JobManager:
             scheduler: AsyncIOScheduler instance (created externally).
             database: NemorosaDatabase instance for persistence.
             core: NemorosaCore instance for processing operations.
-            torrent_client: TorrentClient instance for client operations.
+            torrent_clients: List of TorrentClient instances.
         """
         self.scheduler = scheduler
         self.database = database
         self._core = core
-        self._torrent_client = torrent_client
+        self._torrent_clients = torrent_clients
 
         # Track running jobs
         self._running_jobs: set[str] = set()
@@ -200,7 +201,7 @@ class JobManager:
         """Run search job."""
         logger.debug("Starting %s job", JobType.SEARCH)
         async with self._job_execution_context(JobType.SEARCH):
-            await _search_job_handler(self._core, self._torrent_client)
+            await _search_job_handler(self._core, self._torrent_clients)
 
     async def _run_cleanup_job(self):
         """Run cleanup job."""
@@ -318,7 +319,7 @@ async def init_job_manager(
     scheduler: AsyncIOScheduler,
     database: NemorosaDatabase,
     core: NemorosaCore,
-    torrent_client: TorrentClient,
+    torrent_clients: list[TorrentClient],
 ) -> None:
     """Initialize global job manager instance.
 
@@ -329,7 +330,7 @@ async def init_job_manager(
         scheduler: AsyncIOScheduler instance (already started).
         database: NemorosaDatabase instance for persistence.
         core: NemorosaCore instance for processing operations.
-        torrent_client: TorrentClient instance for client operations.
+        torrent_clients: List of TorrentClient instances.
 
     Raises:
         RuntimeError: If already initialized.
@@ -343,7 +344,7 @@ async def init_job_manager(
             scheduler=scheduler,
             database=database,
             core=core,
-            torrent_client=torrent_client,
+            torrent_clients=torrent_clients,
         )
 
 

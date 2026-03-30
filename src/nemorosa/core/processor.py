@@ -46,27 +46,25 @@ class NemorosaCore:
 
     def __init__(
         self,
-        torrent_client: "TorrentClient",
+        torrent_clients: "list[TorrentClient]",
         database: "NemorosaDatabase",
         searcher: TorrentSearcher,
-        injector: TorrentInjector,
         target_apis: "list[GazelleAPI]",
         notifier: "Notifier | None" = None,
     ) -> None:
         """Initialize the torrent processor.
 
         Args:
-            torrent_client: TorrentClient instance for client operations.
+            torrent_clients: List of TorrentClient instances.
             database: NemorosaDatabase instance for persistence.
             searcher: TorrentSearcher instance for search operations.
-            injector: TorrentInjector instance for injection operations.
             target_apis: List of initialized API instances for target sites.
             notifier: Optional Notifier instance for push notifications.
         """
-        self.torrent_client = torrent_client
+        self.torrent_clients = torrent_clients
         self.database = database
         self.searcher = searcher
-        self.injector = injector
+        self.injector = TorrentInjector()
         self.target_apis = target_apis
         self.notifier = notifier
         self.stats = ProcessorStats()
@@ -75,6 +73,8 @@ class NemorosaCore:
         self, torrent_fdict: dict[str, int]
     ) -> list[ClientTorrentInfo]:
         """Search for matching torrents in client by filename using database.
+
+        Searches across all torrent clients' caches (merged mode).
 
         Args:
             torrent_fdict: File dictionary of the incoming torrent.
@@ -100,28 +100,28 @@ class NemorosaCore:
 
                 fname_query_words = fname_query.split()
 
-                candidate_torrents = (
-                    await self.torrent_client.get_file_matched_torrents(
+                # Search across all clients
+                for torrent_client in self.torrent_clients:
+                    candidate_torrents = await torrent_client.get_file_matched_torrents(
                         target_file_size=target_file_size,
                         fname_keywords=fname_query_words,
                     )
-                )
 
-                logger.debug("Found %d candidate torrents", len(candidate_torrents))
+                    logger.debug("Found %d candidate torrents", len(candidate_torrents))
 
-                for candidate in candidate_torrents:
-                    logger.debug("Verifying candidate torrent: %s", candidate.name)
-                    if config.cfg.linking.enable_linking or not check_conflicts(
-                        candidate.fdict, torrent_fdict
-                    ):
-                        logger.success(
-                            "Complete torrent match found: %s", candidate.name
-                        )
-                        matched_torrents.append(candidate)
-                    else:
-                        logger.debug(
-                            "Match found but has conflicts: %s", candidate.name
-                        )
+                    for candidate in candidate_torrents:
+                        logger.debug("Verifying candidate torrent: %s", candidate.name)
+                        if config.cfg.linking.enable_linking or not check_conflicts(
+                            candidate.fdict, torrent_fdict
+                        ):
+                            logger.success(
+                                "Complete torrent match found: %s", candidate.name
+                            )
+                            matched_torrents.append(candidate)
+                        else:
+                            logger.debug(
+                                "Match found but has conflicts: %s", candidate.name
+                            )
 
                 if matched_torrents:
                     break
@@ -139,6 +139,7 @@ class NemorosaCore:
     async def process_torrent_search(
         self,
         *,
+        torrent_client: "TorrentClient",
         torrent_details: ClientTorrentInfo,
         api: "GazelleAPI",
         torrent_object: Torrent | None = None,
@@ -146,6 +147,7 @@ class NemorosaCore:
         """Process torrent search and injection.
 
         Args:
+            torrent_client: The client that owns this torrent.
             torrent_details: Torrent details from client.
             api: API instance for the target site.
             torrent_object: Original torrent object for hash search.
@@ -180,7 +182,10 @@ class NemorosaCore:
         else:
             try:
                 injection_success = await self.injector.inject_matched_torrent(
-                    result.matched_torrent, torrent_details, result.hash_match
+                    torrent_client,
+                    result.matched_torrent,
+                    torrent_details,
+                    result.hash_match,
                 )
                 if injection_success:
                     self.stats.downloaded += 1
@@ -214,21 +219,21 @@ class NemorosaCore:
 
     async def process_single_torrent_from_client(
         self,
+        torrent_client: "TorrentClient",
         torrent_details: ClientTorrentInfo,
         skip_scanned_check: bool = False,
     ) -> bool:
         """Process a single torrent from client torrent list.
 
         Args:
+            torrent_client: The client that owns this torrent.
             torrent_details: Torrent details from client.
             skip_scanned_check: If True, skip already-scanned check.
 
         Returns:
             True if any target site was successful, False otherwise.
         """
-        torrent_object = await self.torrent_client.get_torrent_object(
-            torrent_details.hash
-        )
+        torrent_object = await torrent_client.get_torrent_object(torrent_details.hash)
 
         any_success = False
 
@@ -256,7 +261,8 @@ class NemorosaCore:
                 torrent_details.existing_target_trackers,
             ):
                 logger.debug(
-                    "Content already exists on %s, skipping", api_instance.tracker_query
+                    "Content already exists on %s, skipping",
+                    api_instance.tracker_query,
                 )
                 continue
 
@@ -266,6 +272,7 @@ class NemorosaCore:
                     matched_torrent_id,
                     matched_torrent_hash,
                 ) = await self.process_torrent_search(
+                    torrent_client=torrent_client,
                     torrent_details=torrent_details,
                     api=api_instance,
                     torrent_object=torrent_object,
@@ -282,7 +289,7 @@ class NemorosaCore:
 
                 if matched_torrent_hash is not None:
                     any_success = True
-                    await self.torrent_client.track_verification(matched_torrent_hash)
+                    await torrent_client.track_verification(matched_torrent_hash)
                     logger.success("Successfully processed on %s", api_instance.server)
 
             except Exception as e:
@@ -294,7 +301,7 @@ class NemorosaCore:
         return any_success
 
     async def process_torrents(self):
-        """Process torrents in client, supporting multiple target sites."""
+        """Process torrents from all clients, supporting multiple target sites."""
         logger.section("===== Processing Torrents =====")
 
         target_trackers = [
@@ -304,26 +311,30 @@ class NemorosaCore:
         self.stats = ProcessorStats()
 
         try:
-            torrents = await self.torrent_client.get_filtered_torrents(target_trackers)
-            logger.debug(
-                "Found %d torrents in client matching the criteria", len(torrents)
-            )
-
-            for i, (torrent_name, torrent_details) in enumerate(torrents.items()):
-                logger.header(
-                    "Processing %d/%d: %s (%s)",
-                    i + 1,
+            # Merged mode: iterate over all clients
+            for torrent_client in self.torrent_clients:
+                torrents = await torrent_client.get_filtered_torrents(target_trackers)
+                logger.debug(
+                    "Found %d torrents in client matching the criteria",
                     len(torrents),
-                    torrent_name,
-                    torrent_details.hash,
                 )
 
-                any_success = await self.process_single_torrent_from_client(
-                    torrent_details=torrent_details,
-                )
+                for i, (torrent_name, torrent_details) in enumerate(torrents.items()):
+                    logger.header(
+                        "Processing %d/%d: %s (%s)",
+                        i + 1,
+                        len(torrents),
+                        torrent_name,
+                        torrent_details.hash,
+                    )
 
-                if any_success:
-                    logger.success("Torrent processed successfully")
+                    any_success = await self.process_single_torrent_from_client(
+                        torrent_client=torrent_client,
+                        torrent_details=torrent_details,
+                    )
+
+                    if any_success:
+                        logger.success("Torrent processed successfully")
 
         except Exception as e:
             logger.exception("Error processing torrents: %s", e)
@@ -379,13 +390,21 @@ class NemorosaCore:
 
                     logger.debug("Using API instance: %s", api_instance.server)
 
-                    local_torrent_info = await self.torrent_client.get_torrent_info(
-                        undownloaded.local_torrent_hash,
-                        fields=["name", "download_dir", "files"],
-                    )
-                    if not local_torrent_info:
+                    # Find the client that has this torrent
+                    local_torrent_info = None
+                    owning_client = None
+                    for torrent_client in self.torrent_clients:
+                        local_torrent_info = await torrent_client.get_torrent_info(
+                            undownloaded.local_torrent_hash,
+                            fields=["name", "download_dir", "files"],
+                        )
+                        if local_torrent_info:
+                            owning_client = torrent_client
+                            break
+
+                    if not local_torrent_info or not owning_client:
                         logger.warning(
-                            "Local torrent %s not found in client, "
+                            "Local torrent %s not found in any client, "
                             "deleting from database",
                             undownloaded.local_torrent_hash,
                         )
@@ -398,7 +417,10 @@ class NemorosaCore:
                     matched_torrent = await api_instance.download_torrent(torrent_id)
 
                     success = await self.injector.inject_matched_torrent(
-                        matched_torrent, local_torrent_info, hash_match=False
+                        owning_client,
+                        matched_torrent,
+                        local_torrent_info,
+                        hash_match=False,
                     )
                     if success:
                         retry_stats.successful += 1
@@ -450,21 +472,23 @@ class NemorosaCore:
             for matched_torrent_hash in matched_results:
                 stats.matches_checked += 1
 
-                result = await self.torrent_client.post_process_single_injected_torrent(
-                    matched_torrent_hash
-                )
+                # Try all clients for post-processing
+                for torrent_client in self.torrent_clients:
+                    result = await torrent_client.post_process_single_injected_torrent(
+                        matched_torrent_hash
+                    )
 
-                if result.status == PostProcessStatus.COMPLETED:
-                    stats.matches_completed += 1
-                    if result.started_downloading:
-                        stats.matches_started_downloading += 1
-                elif result.status == PostProcessStatus.PARTIAL_KEPT:
-                    pass
-                elif result.status in (
-                    PostProcessStatus.PARTIAL_REMOVED,
-                    PostProcessStatus.ERROR,
-                ):
-                    stats.matches_failed += 1
+                    if result.status != PostProcessStatus.NOT_FOUND:
+                        if result.status == PostProcessStatus.COMPLETED:
+                            stats.matches_completed += 1
+                            if result.started_downloading:
+                                stats.matches_started_downloading += 1
+                        elif result.status in (
+                            PostProcessStatus.PARTIAL_REMOVED,
+                            PostProcessStatus.ERROR,
+                        ):
+                            stats.matches_failed += 1
+                        break
 
         except Exception as e:
             logger.exception("Error processing injected torrents: %s", e)
@@ -484,6 +508,8 @@ class NemorosaCore:
     ) -> ProcessResponse:
         """Process a single torrent by infohash from torrent client.
 
+        Searches across all torrent clients for the given infohash.
+
         Args:
             infohash: Infohash of the torrent to process.
 
@@ -495,15 +521,22 @@ class NemorosaCore:
                 api_instance.tracker_query for api_instance in self.target_apis
             }
 
-            torrent_info = await self.torrent_client.get_single_torrent(
-                infohash, target_trackers
-            )
+            # Find the torrent across all clients
+            torrent_info = None
+            owning_client = None
+            for torrent_client in self.torrent_clients:
+                torrent_info = await torrent_client.get_single_torrent(
+                    infohash, target_trackers
+                )
+                if torrent_info:
+                    owning_client = torrent_client
+                    break
 
-            if not torrent_info:
+            if not torrent_info or not owning_client:
                 return ProcessResponse(
                     status=ProcessStatus.ERROR,
                     message=(
-                        f"Torrent with infohash {infohash} not found in client "
+                        f"Torrent with infohash {infohash} not found in any client "
                         f"or was filtered out"
                     ),
                 )
@@ -518,6 +551,7 @@ class NemorosaCore:
                 )
 
             any_success = await self.process_single_torrent_from_client(
+                torrent_client=owning_client,
                 torrent_details=torrent_info,
                 skip_scanned_check=True,
             )
@@ -642,6 +676,21 @@ class NemorosaCore:
         logger.success("Found matching torrent in client: %s", matched_torrent.name)
         return matched_torrent
 
+    async def _find_owning_client(self, torrent_hash: str) -> "TorrentClient | None":
+        """Find which torrent client owns a given torrent.
+
+        Args:
+            torrent_hash: Hash of the torrent to find.
+
+        Returns:
+            The TorrentClient that owns this torrent, or None.
+        """
+        for torrent_client in self.torrent_clients:
+            info = await torrent_client.get_torrent_info(torrent_hash, fields=["hash"])
+            if info:
+                return torrent_client
+        return None
+
     async def process_reverse_announce_torrent(
         self,
         torrent_name: str,
@@ -679,7 +728,10 @@ class NemorosaCore:
                     ),
                 )
 
-            await self.torrent_client.refresh_client_torrents_cache()
+            # Refresh cache for all clients
+            for torrent_client in self.torrent_clients:
+                await torrent_client.refresh_client_torrents_cache()
+
             has_album_match = await self.database.search_torrent_by_album_name(
                 album_keywords
             )
@@ -703,56 +755,26 @@ class NemorosaCore:
                 return match_result
             matched_torrent = match_result
 
-            try:
-                torrent_object = await torrent_api.download_torrent(tid)
-            except Exception as e:
-                logger.error("Failed to download torrent data: %s", e)
+            # Find which client owns this matched torrent
+            owning_client = await self._find_owning_client(matched_torrent.hash)
+            if not owning_client:
                 return ProcessResponse(
                     status=ProcessStatus.ERROR,
-                    message=f"Failed to download torrent data: {str(e)}",
-                )
-
-            rename_map = generate_rename_map(matched_torrent.fdict, fdict_torrent)
-
-            final_download_dir = await self.injector.prepare_linked_download_dir(
-                torrent_object,
-                matched_torrent.fdict,
-                fdict_torrent,
-                matched_torrent.download_dir,
-                matched_torrent.name,
-            )
-
-            success, _ = await self.torrent_client.inject_torrent(
-                torrent_object,
-                final_download_dir,
-                matched_torrent.name,
-                rename_map,
-                False,
-                matched_torrent.hash,
-            )
-            if success:
-                logger.success("Torrent injected successfully")
-                await self.torrent_client.track_verification(torrent_object.infohash)
-
-                if self.notifier:
-                    await self.notifier.send_announce_success(
-                        torrent_name=torrent_name,
-                        torrent_url=torrent_link,
-                    )
-
-                return ProcessResponse(
-                    status=ProcessStatus.SUCCESS,
                     message=(
-                        f"Successfully processed reverse announce torrent: "
-                        f"{torrent_name}"
+                        f"Could not find owning client for torrent: "
+                        f"{matched_torrent.hash}"
                     ),
                 )
-            else:
-                logger.error("Failed to inject torrent: %s", tid)
-                return ProcessResponse(
-                    status=ProcessStatus.ERROR,
-                    message=f"Failed to inject torrent: {tid}",
-                )
+
+            return await self._inject_reverse_announce(
+                owning_client,
+                torrent_api,
+                tid,
+                torrent_name,
+                torrent_link,
+                matched_torrent,
+                fdict_torrent,
+            )
 
         except Exception as e:
             logger.error(
@@ -763,4 +785,78 @@ class NemorosaCore:
             return ProcessResponse(
                 status=ProcessStatus.ERROR,
                 message=f"Error processing torrent: {str(e)}",
+            )
+
+    async def _inject_reverse_announce(
+        self,
+        owning_client: "TorrentClient",
+        torrent_api: "GazelleAPI",
+        tid: str,
+        torrent_name: str,
+        torrent_link: str,
+        matched_torrent: ClientTorrentInfo,
+        fdict_torrent: dict[str, int],
+    ) -> ProcessResponse:
+        """Download and inject a reverse announce torrent.
+
+        Args:
+            owning_client: The client that owns the matched local torrent.
+            torrent_api: API instance for the target site.
+            tid: Torrent ID on the target site.
+            torrent_name: Name of the torrent for logging.
+            torrent_link: Torrent link URL.
+            matched_torrent: Matched local torrent information.
+            fdict_torrent: File dictionary from the incoming torrent.
+
+        Returns:
+            Processing result with status and details.
+        """
+        try:
+            torrent_object = await torrent_api.download_torrent(tid)
+        except Exception as e:
+            logger.error("Failed to download torrent data: %s", e)
+            return ProcessResponse(
+                status=ProcessStatus.ERROR,
+                message=f"Failed to download torrent data: {str(e)}",
+            )
+
+        rename_map = generate_rename_map(matched_torrent.fdict, fdict_torrent)
+
+        final_download_dir = await self.injector.prepare_linked_download_dir(
+            torrent_object,
+            matched_torrent.fdict,
+            fdict_torrent,
+            matched_torrent.download_dir,
+            matched_torrent.name,
+        )
+
+        success, _ = await owning_client.inject_torrent(
+            torrent_object,
+            final_download_dir,
+            matched_torrent.name,
+            rename_map,
+            False,
+            matched_torrent.hash,
+        )
+        if success:
+            logger.success("Torrent injected successfully")
+            await owning_client.track_verification(torrent_object.infohash)
+
+            if self.notifier:
+                await self.notifier.send_announce_success(
+                    torrent_name=torrent_name,
+                    torrent_url=torrent_link,
+                )
+
+            return ProcessResponse(
+                status=ProcessStatus.SUCCESS,
+                message=(
+                    f"Successfully processed reverse announce torrent: {torrent_name}"
+                ),
+            )
+        else:
+            logger.error("Failed to inject torrent: %s", tid)
+            return ProcessResponse(
+                status=ProcessStatus.ERROR,
+                message=f"Failed to inject torrent: {tid}",
             )
