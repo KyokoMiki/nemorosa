@@ -6,6 +6,7 @@ from urllib.parse import urlparse
 import anyio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from ..config import DownloaderConfig
 from .client_common import TorrentClient
 from .deluge import DelugeClient
 from .qbittorrent import QBittorrentClient
@@ -27,7 +28,7 @@ TORRENT_CLIENT_MAPPING = {
 
 
 def create_torrent_client(
-    url: str,
+    downloader_config: DownloaderConfig,
     database: "NemorosaDatabase",
     scheduler: AsyncIOScheduler,
     notifier: "Notifier | None" = None,
@@ -35,7 +36,7 @@ def create_torrent_client(
     """Create a torrent client instance based on the URL scheme.
 
     Args:
-        url: The torrent client URL.
+        downloader_config: DownloaderConfig instance for this client.
         database: NemorosaDatabase instance for persistence.
         scheduler: AsyncIOScheduler instance for scheduling background tasks.
         notifier: Optional Notifier instance for push notifications.
@@ -46,6 +47,7 @@ def create_torrent_client(
     Raises:
         ValueError: If URL is empty, None, or client type is not supported.
     """
+    url = downloader_config.client
     if not url or not url.strip():
         raise ValueError("URL cannot be empty")
 
@@ -57,29 +59,30 @@ def create_torrent_client(
 
     return TORRENT_CLIENT_MAPPING[client_type](
         url,
+        downloader_config,
         database,
         scheduler,
         notifier,
     )
 
 
-# Global torrent client instance
-_torrent_client_instance: TorrentClient | None = None
-_torrent_client_lock = anyio.Lock()
+# Global torrent client instances
+_torrent_clients: list[TorrentClient] = []
+_torrent_clients_lock = anyio.Lock()
 
 
-async def init_torrent_client(
-    url: str,
+async def init_torrent_clients(
+    downloader_configs: list[DownloaderConfig],
     database: "NemorosaDatabase",
     scheduler: AsyncIOScheduler,
     notifier: "Notifier | None" = None,
 ) -> None:
-    """Initialize global torrent client instance.
+    """Initialize global torrent client instances.
 
     Should be called once during application startup.
 
     Args:
-        url: The torrent client URL.
+        downloader_configs: List of DownloaderConfig instances.
         database: NemorosaDatabase instance for persistence.
         scheduler: AsyncIOScheduler instance for scheduling background tasks.
         notifier: Optional Notifier instance for push notifications.
@@ -87,29 +90,30 @@ async def init_torrent_client(
     Raises:
         RuntimeError: If already initialized.
     """
-    global _torrent_client_instance
-    async with _torrent_client_lock:
-        if _torrent_client_instance is not None:
-            raise RuntimeError("Torrent client already initialized.")
+    global _torrent_clients
+    async with _torrent_clients_lock:
+        if _torrent_clients:
+            raise RuntimeError("Torrent clients already initialized.")
 
-        _torrent_client_instance = create_torrent_client(
-            url, database, scheduler, notifier
-        )
+        _torrent_clients = [
+            create_torrent_client(dl_config, database, scheduler, notifier)
+            for dl_config in downloader_configs
+        ]
 
 
-def get_torrent_client() -> TorrentClient:
-    """Get global torrent client instance.
+def get_torrent_clients() -> list[TorrentClient]:
+    """Get global torrent client instances.
 
-    Must be called after init_torrent_client() has been invoked.
+    Must be called after init_torrent_clients() has been invoked.
 
     Returns:
-        Torrent client instance.
+        List of torrent client instances.
 
     Raises:
-        RuntimeError: If torrent client has not been initialized.
+        RuntimeError: If torrent clients have not been initialized.
     """
-    if _torrent_client_instance is None:
+    if not _torrent_clients:
         raise RuntimeError(
-            "Torrent client not initialized. Call init_torrent_client() first."
+            "Torrent clients not initialized. Call init_torrent_clients() first."
         )
-    return _torrent_client_instance
+    return _torrent_clients

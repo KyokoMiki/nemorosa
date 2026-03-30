@@ -30,6 +30,7 @@ from .scgitransport import SCGITransport
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+    from ..config import DownloaderConfig
     from ..db import NemorosaDatabase
     from ..notifier import Notifier
 
@@ -165,14 +166,20 @@ class RTorrentClient(TorrentClient):
     def __init__(
         self,
         url: str,
+        downloader_config: "DownloaderConfig",
         database: "NemorosaDatabase",
         scheduler: "AsyncIOScheduler",
         notifier: "Notifier | None" = None,
     ):
-        super().__init__(database=database, scheduler=scheduler, notifier=notifier)
+        super().__init__(
+            downloader_config=downloader_config,
+            database=database,
+            scheduler=scheduler,
+            notifier=notifier,
+        )
         client_config = parse_libtc_url(url)
         self.torrents_dir = (
-            config.cfg.downloader.torrents_dir or client_config.torrents_dir or ""
+            downloader_config.torrents_dir or client_config.torrents_dir or ""
         )
 
         # Monkey-patch xmlrpc.client to mitigate XML vulnerabilities
@@ -555,7 +562,7 @@ class RTorrentClient(TorrentClient):
             cmd = [torrent_bytes, f'd.directory_base.set="{download_dir}"']
 
             # Set label if provided
-            label = config.cfg.downloader.label
+            label = self.downloader_config.label
             if label:
                 cmd.append(f"d.custom1.set={label}")
 

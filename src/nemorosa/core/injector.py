@@ -19,7 +19,6 @@ class TorrentInjector:
     """Handles torrent injection into client with file linking and renaming.
 
     Args:
-        torrent_client: TorrentClient instance for injection operations.
         link_fn: Optional file linking function. Defaults to
             create_file_links_for_torrent. Accepts (torrent_object,
             download_dir, torrent_name, file_mapping) and returns
@@ -28,17 +27,14 @@ class TorrentInjector:
 
     def __init__(
         self,
-        torrent_client: TorrentClient,
         link_fn: LinkFn = create_file_links_for_torrent,
     ) -> None:
         """Initialize the torrent injector.
 
         Args:
-            torrent_client: TorrentClient instance for injection operations.
             link_fn: File linking function. Defaults to
                 create_file_links_for_torrent.
         """
-        self.torrent_client = torrent_client
         self.link_fn = link_fn
 
     async def prepare_linked_download_dir(
@@ -77,6 +73,7 @@ class TorrentInjector:
 
     async def inject_matched_torrent(
         self,
+        torrent_client: TorrentClient,
         matched_torrent: Torrent,
         local_torrent_info: ClientTorrentInfo,
         hash_match: bool = False,
@@ -84,6 +81,7 @@ class TorrentInjector:
         """Inject matched torrent into client with file linking and renaming.
 
         Args:
+            torrent_client: TorrentClient instance to inject into.
             matched_torrent: The matched torrent to inject.
             local_torrent_info: Local torrent information.
             hash_match: Whether this is a hash match (skip verification).
@@ -106,7 +104,7 @@ class TorrentInjector:
         logger.debug("Download directory: %s", final_download_dir)
         logger.debug("Rename map: %s", rename_map)
 
-        success, _ = await self.torrent_client.inject_torrent(
+        success, _ = await torrent_client.inject_torrent(
             matched_torrent,
             final_download_dir,
             local_torrent_info.name,

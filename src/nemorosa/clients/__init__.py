@@ -14,8 +14,8 @@ from .deluge import DelugeClient
 from .qbittorrent import QBittorrentClient
 from .registry import (
     create_torrent_client,
-    get_torrent_client,
-    init_torrent_client,
+    get_torrent_clients,
+    init_torrent_clients,
 )
 from .rtorrent import RTorrentClient
 from .transmission import TransmissionClient
@@ -34,6 +34,6 @@ __all__ = [
     "TorrentState",
     "TransmissionClient",
     "create_torrent_client",
-    "get_torrent_client",
-    "init_torrent_client",
+    "get_torrent_clients",
+    "init_torrent_clients",
 ]

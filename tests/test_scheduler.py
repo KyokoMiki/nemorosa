@@ -66,7 +66,7 @@ def job_manager(
         scheduler=mock_scheduler,
         database=mock_database,
         core=mock_core,
-        torrent_client=mock_torrent_client,
+        torrent_clients=[mock_torrent_client],
     )
 
 
@@ -121,7 +121,7 @@ class TestRunSearchJob:
             scheduler=mock_scheduler,
             database=mock_database,
             core=mock_core,
-            torrent_client=mock_torrent_client,
+            torrent_clients=[mock_torrent_client],
         )
 
         await manager._run_search_job()

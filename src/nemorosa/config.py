@@ -216,7 +216,9 @@ class NemorosaConfig(msgspec.Struct):
     global_config: GlobalConfig = msgspec.field(
         name="global", default_factory=GlobalConfig
     )
-    downloader: DownloaderConfig = msgspec.field(default_factory=DownloaderConfig)
+    downloaders: list[DownloaderConfig] = msgspec.field(
+        name="downloader", default_factory=list
+    )
     server: ServerConfig = msgspec.field(default_factory=ServerConfig)
     target_sites: list[TargetSiteConfig] = msgspec.field(
         name="target_site", default_factory=list
@@ -224,6 +226,10 @@ class NemorosaConfig(msgspec.Struct):
     linking: LinkingConfig = msgspec.field(default_factory=LinkingConfig)
 
     def __post_init__(self):
+        # Validate downloaders
+        if not isinstance(self.downloaders, list) or len(self.downloaders) == 0:
+            raise ValueError("downloader must be a non-empty list")
+
         # Validate target_sites
         if not isinstance(self.target_sites, list):
             raise ValueError("target_site must be a list")
@@ -236,11 +242,9 @@ class NemorosaConfig(msgspec.Struct):
                 )
 
         # Validate rtorrent client requires enable_linking
-        if (
-            self.downloader.client.startswith("rtorrent+")
-            and not self.linking.enable_linking
-        ):
-            raise ValueError("rtorrent client requires enable linking")
+        for dl in self.downloaders:
+            if dl.client.startswith("rtorrent+") and not self.linking.enable_linking:
+                raise ValueError("rtorrent client requires enable linking")
 
 
 def get_user_config_path() -> Path:
@@ -367,7 +371,7 @@ server:
   cleanup_cadence: "1 day" # How often to run cleanup job
 
 downloader:
-  # Downloader settings
+  # Downloader settings (list of torrent clients)
   # Supported downloader formats:
 
   # transmission+http://user:pass@host:port/transmission/rpc?torrents_dir=/path/to/session/
@@ -379,28 +383,28 @@ downloader:
   # For Windows: Use forward slashes (/) in torrents_dir path
   # Example: ?torrents_dir=C:/Users/username/AppData/Local/qBittorrent/BT_backup
 
-  client: ""
-  # The directory where your torrent client stores its .torrent files.
-  # If set, this path overrides the torrents_dir parameter in the client URL above.
-  torrents_dir: ""
-  label: "nemorosa" # Download label
-  # Optional tags list, only for qBittorrent and Transmission.
-  # For qBittorrent, tags work with label
-  # For Transmission, default to use tags, if tags is null, use [label] as fallback
-  tags: null
-  # Use unified label and tags from config file. Default to true.
-  # When enabled, injected torrents will always use the label/tags specified above.
-  # When disabled, falls back to duplicate_categories behavior.
-  # Note: This setting only affects qBittorrent and Deluge.
-  # Transmission and rTorrent always use unified labels regardless of this setting.
-  use_unified_labels: true
-  # qBittorrent/Deluge specific (only takes effect when use_unified_labels is false).
-  # Whether to inject using the same labels/categories as the original torrent.
-  # - Without linking: category will be set to "{{original_category}}.nemorosa"
-  # - With linking enabled: category stays as label,
-  #   but "{{original_category}}.nemorosa" is added as tag
-  # Example: original category "Music" -> injected to "Music.nemorosa"
-  duplicate_categories: false
+  - client: ""
+    # The directory where your torrent client stores its .torrent files.
+    # If set, this path overrides the torrents_dir parameter in the client URL above.
+    torrents_dir: ""
+    label: "nemorosa" # Download label
+    # Optional tags list, only for qBittorrent and Transmission.
+    # For qBittorrent, tags work with label
+    # For Transmission, default to use tags, if tags is null, use [label] as fallback
+    tags: null
+    # Use unified label and tags from config file. Default to true.
+    # When enabled, injected torrents will always use the label/tags specified above.
+    # When disabled, falls back to duplicate_categories behavior.
+    # Note: This setting only affects qBittorrent and Deluge.
+    # Transmission and rTorrent always use unified labels regardless of this setting.
+    use_unified_labels: true
+    # qBittorrent/Deluge specific (only takes effect when use_unified_labels is false).
+    # Whether to inject using the same labels/categories as the original torrent.
+    # - Without linking: category will be set to "{{original_category}}.nemorosa"
+    # - With linking enabled: category stays as label,
+    #   but "{{original_category}}.nemorosa" is added as tag
+    # Example: original category "Music" -> injected to "Music.nemorosa"
+    duplicate_categories: false
 
 target_site:
   # Target site settings

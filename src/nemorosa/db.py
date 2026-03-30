@@ -15,7 +15,7 @@ import msgspec
 from platformdirs import user_config_dir
 from sqlalchemy import (
     Boolean,
-    ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Row,
@@ -23,7 +23,6 @@ from sqlalchemy import (
     delete,
     func,
     select,
-    text,
     update,
 )
 from sqlalchemy.dialects.sqlite import insert
@@ -84,6 +83,7 @@ class ClientTorrent(Base):
 
     __tablename__ = "client_torrents"
 
+    client_url: Mapped[str] = mapped_column(String, primary_key=True)
     hash: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     total_size: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -96,19 +96,20 @@ class ClientTorrent(Base):
     )
 
     @classmethod
-    def from_client_info(cls, info: "ClientTorrentInfo") -> "ClientTorrent":
+    def from_client_info(
+        cls, info: "ClientTorrentInfo", client_url: str
+    ) -> "ClientTorrent":
         """Alternative constructor: Create ClientTorrent from ClientTorrentInfo.
-
-        This is a factory method that provides a convenient way to create a
-        ClientTorrent ORM object from a ClientTorrentInfo business object.
 
         Args:
             info: ClientTorrentInfo object from torrent client.
+            client_url: Client URL that owns this torrent.
 
         Returns:
             ClientTorrent ORM object ready for database persistence.
         """
         return cls(
+            client_url=client_url,
             hash=info.hash,
             name=info.name,
             total_size=info.total_size,
@@ -119,6 +120,7 @@ class ClientTorrent(Base):
             # Add files through relationship
             files=[
                 TorrentFile(
+                    client_url=client_url,
                     torrent_hash=info.hash,
                     file_path=file_obj.name,
                     file_size=file_obj.size,
@@ -133,9 +135,8 @@ class TorrentFile(Base):
 
     __tablename__ = "torrent_files"
 
-    torrent_hash: Mapped[str] = mapped_column(
-        String, ForeignKey("client_torrents.hash", ondelete="CASCADE"), primary_key=True
-    )
+    client_url: Mapped[str] = mapped_column(String, primary_key=True)
+    torrent_hash: Mapped[str] = mapped_column(String, primary_key=True)
     file_path: Mapped[str] = mapped_column(String, primary_key=True)
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
 
@@ -144,7 +145,14 @@ class TorrentFile(Base):
         "ClientTorrent", back_populates="files"
     )
 
-    __table_args__ = (Index("idx_torrent_files_size", "file_size"),)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["client_url", "torrent_hash"],
+            ["client_torrents.client_url", "client_torrents.hash"],
+            ondelete="CASCADE",
+        ),
+        Index("idx_torrent_files_size", "file_size"),
+    )
 
 
 class Metadata(Base):
@@ -191,8 +199,6 @@ class NemorosaDatabase:
     async def init_database(self):
         """Initialize database table structure asynchronously."""
         async with self.engine.begin() as conn:
-            # Enable WAL mode for better concurrency
-            await conn.execute(text("PRAGMA journal_mode=WAL"))
             # Create all tables defined in Base metadata
             await conn.run_sync(Base.metadata.create_all)
 
@@ -418,66 +424,94 @@ class NemorosaDatabase:
 
     # region Client torrents cache
 
-    async def save_client_torrent_info(self, torrent_info: "ClientTorrentInfo"):
+    async def save_client_torrent_info(
+        self, torrent_info: "ClientTorrentInfo", client_url: str
+    ):
         """Save ClientTorrentInfo to database.
 
         Args:
             torrent_info: ClientTorrentInfo object from clients.client_common.
+            client_url: Client URL that owns this torrent.
         """
         async with self.async_session_maker.begin() as session:
             # Create ORM object from ClientTorrentInfo
-            client_torrent = ClientTorrent.from_client_info(torrent_info)
+            client_torrent = ClientTorrent.from_client_info(torrent_info, client_url)
             await session.merge(client_torrent)
 
-    async def get_all_cached_torrent_hashes(self) -> set[str]:
-        """Get all cached torrent hashes.
+    async def get_all_cached_torrent_hashes(self, client_url: str) -> set[str]:
+        """Get all cached torrent hashes for a specific client.
+
+        Args:
+            client_url: Client URL to filter by.
 
         Returns:
-            Set of all torrent hashes in cache.
+            Set of all torrent hashes in cache for this client.
         """
         async with self.async_session_maker() as session:
-            stmt = select(ClientTorrent.hash)
+            stmt = select(ClientTorrent.hash).where(
+                ClientTorrent.client_url == client_url
+            )
             result = await session.execute(stmt)
             return set(result.scalars())
 
-    async def delete_client_torrents(self, torrent_hashes: str | Collection[str]):
-        """Delete torrent(s) and their files from cache.
+    async def delete_client_torrents(
+        self, torrent_hashes: str | Collection[str], client_url: str
+    ):
+        """Delete torrent(s) and their files from cache for a specific client.
 
         Args:
             torrent_hashes: Torrent hash or collection of hashes to delete.
+            client_url: Client URL that owns these torrents.
         """
         if isinstance(torrent_hashes, str):
-            condition = ClientTorrent.hash == torrent_hashes
+            condition = (
+                ClientTorrent.hash == torrent_hashes,
+                ClientTorrent.client_url == client_url,
+            )
         else:
             if not torrent_hashes:
                 return
-            condition = ClientTorrent.hash.in_(torrent_hashes)
+            condition = (
+                ClientTorrent.hash.in_(torrent_hashes),
+                ClientTorrent.client_url == client_url,
+            )
 
         async with self.async_session_maker.begin() as session:
             # Files will be cascade deleted due to foreign key constraint
-            stmt = delete(ClientTorrent).where(condition)
+            stmt = delete(ClientTorrent).where(*condition)
             await session.execute(stmt)
 
-    async def clear_client_torrents_cache(self):
-        """Clear all cached client torrent information."""
+    async def clear_client_torrents_cache(self, client_url: str):
+        """Clear all cached client torrent information for a specific client.
+
+        Args:
+            client_url: Client URL whose cache should be cleared.
+        """
         async with self.async_session_maker.begin() as session:
             # Delete files first (or rely on cascade)
-            await session.execute(delete(TorrentFile))
-            await session.execute(delete(ClientTorrent))
+            await session.execute(
+                delete(TorrentFile).where(TorrentFile.client_url == client_url)
+            )
+            await session.execute(
+                delete(ClientTorrent).where(ClientTorrent.client_url == client_url)
+            )
 
-    async def batch_save_client_torrents(self, torrents: list["ClientTorrentInfo"]):
-        """Batch save multiple torrents to database.
+    async def batch_save_client_torrents(
+        self, torrents: list["ClientTorrentInfo"], client_url: str
+    ):
+        """Batch save multiple torrents to database for a specific client.
 
         Args:
             torrents: List of ClientTorrentInfo objects.
+            client_url: Client URL that owns these torrents.
         """
         if not torrents:
             return
 
         # SQLite has a limit on number of SQL variables:
         # - after 3.32.0 (2020-05-22): 32766 variables
-        TORRENT_BATCH_SIZE = 6553  # 32765 // 5
-        FILE_BATCH_SIZE = 10921  # 32765 // 3
+        TORRENT_BATCH_SIZE = 5460  # 32765 // 6
+        FILE_BATCH_SIZE = 8191  # 32765 // 4
 
         async with self.async_session_maker.begin() as session:
             # Process torrents in batches
@@ -487,6 +521,7 @@ class NemorosaDatabase:
                 # Prepare data for batch insert
                 torrent_data = [
                     {
+                        "client_url": client_url,
                         "hash": t.hash,
                         "name": t.name,
                         "total_size": t.total_size,
@@ -500,9 +535,9 @@ class NemorosaDatabase:
 
                 # Batch upsert torrents using INSERT ... ON CONFLICT
                 stmt = insert(ClientTorrent).values(torrent_data)
-                # On conflict (duplicate hash), update all fields
+                # On conflict (duplicate client_url + hash), update all fields
                 stmt = stmt.on_conflict_do_update(
-                    index_elements=["hash"],
+                    index_elements=["client_url", "hash"],
                     set_={
                         "name": stmt.excluded.name,
                         "total_size": stmt.excluded.total_size,
@@ -517,13 +552,15 @@ class NemorosaDatabase:
             for i in range(0, len(all_hashes), TORRENT_BATCH_SIZE):
                 batch_hashes = all_hashes[i : i + TORRENT_BATCH_SIZE]
                 delete_stmt = delete(TorrentFile).where(
-                    TorrentFile.torrent_hash.in_(batch_hashes)
+                    TorrentFile.client_url == client_url,
+                    TorrentFile.torrent_hash.in_(batch_hashes),
                 )
                 await session.execute(delete_stmt)
 
             # Prepare file data for batch insert
             file_data = [
                 {
+                    "client_url": client_url,
                     "torrent_hash": t.hash,
                     "file_path": file.name,
                     "file_size": file.size,
@@ -539,8 +576,13 @@ class NemorosaDatabase:
                 file_stmt = insert(TorrentFile).values(batch)
                 await session.execute(file_stmt)
 
-    async def get_all_client_torrents_basic(self) -> dict[str, tuple[str, str]]:
-        """Get basic info (name, download_dir) for all cached torrents.
+    async def get_all_client_torrents_basic(
+        self, client_url: str
+    ) -> dict[str, tuple[str, str]]:
+        """Get basic info (name, download_dir) for all cached torrents of a client.
+
+        Args:
+            client_url: Client URL to filter by.
 
         Returns:
             Mapping from hash to (name, download_dir).
@@ -548,7 +590,7 @@ class NemorosaDatabase:
         async with self.async_session_maker() as session:
             stmt = select(
                 ClientTorrent.hash, ClientTorrent.name, ClientTorrent.download_dir
-            )
+            ).where(ClientTorrent.client_url == client_url)
             result = await session.execute(stmt)
             return {
                 hash_val: (name, download_dir)
@@ -558,7 +600,9 @@ class NemorosaDatabase:
     async def search_torrent_by_file_match(
         self, target_file_size: int, fname_keywords: list[str]
     ) -> Sequence[Row]:
-        """Search torrents by file size and name keywords.
+        """Search torrents by file size and name keywords across all clients.
+
+        This searches across ALL clients (merged mode) to find cross-seed candidates.
 
         Args:
             target_file_size: Target file size to match.
@@ -575,17 +619,18 @@ class NemorosaDatabase:
                     func.lower(TorrentFile.file_path).like(f"%{keyword.lower()}%")
                 )
 
-            # Subquery to find matching torrent hashes
-            subquery = (
-                select(TorrentFile.torrent_hash)
+            # Subquery to find matching (client_url, torrent_hash) pairs
+            matching_files = (
+                select(TorrentFile.client_url, TorrentFile.torrent_hash)
                 .where(*conditions)
                 .distinct()
                 .subquery()
             )
 
-            # Main query to get all files for matching torrents
+            # Main query: join against matching pairs via composite key
             stmt = (
                 select(
+                    ClientTorrent.client_url,
                     ClientTorrent.hash,
                     ClientTorrent.name,
                     ClientTorrent.download_dir,
@@ -594,9 +639,17 @@ class NemorosaDatabase:
                     TorrentFile.file_path,
                     TorrentFile.file_size,
                 )
-                .join(TorrentFile, ClientTorrent.hash == TorrentFile.torrent_hash)
-                .where(ClientTorrent.hash.in_(select(subquery)))
-                .order_by(ClientTorrent.hash)
+                .join(
+                    matching_files,
+                    (ClientTorrent.client_url == matching_files.c.client_url)
+                    & (ClientTorrent.hash == matching_files.c.torrent_hash),
+                )
+                .join(
+                    TorrentFile,
+                    (ClientTorrent.client_url == TorrentFile.client_url)
+                    & (ClientTorrent.hash == TorrentFile.torrent_hash),
+                )
+                .order_by(ClientTorrent.client_url, ClientTorrent.hash)
             )
 
             result = await session.execute(stmt)
@@ -669,12 +722,6 @@ class NemorosaDatabase:
 
     async def close(self):
         """Close database connection."""
-        # Execute checkpoint to merge WAL file into main database
-        async with self.engine.connect() as conn:
-            # TRUNCATE mode: checkpoint all frames and truncate the WAL file
-            await conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
-            await conn.commit()
-
         await self.engine.dispose()
 
 

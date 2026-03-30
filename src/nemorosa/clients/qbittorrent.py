@@ -28,6 +28,7 @@ from .client_common import (
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+    from ..config import DownloaderConfig
     from ..db import NemorosaDatabase
     from ..notifier import Notifier
 
@@ -107,14 +108,20 @@ class QBittorrentClient(TorrentClient):
     def __init__(
         self,
         url: str,
+        downloader_config: "DownloaderConfig",
         database: "NemorosaDatabase",
         scheduler: "AsyncIOScheduler",
         notifier: "Notifier | None" = None,
     ):
-        super().__init__(database=database, scheduler=scheduler, notifier=notifier)
+        super().__init__(
+            downloader_config=downloader_config,
+            database=database,
+            scheduler=scheduler,
+            notifier=notifier,
+        )
         client_config = parse_libtc_url(url)
         self.torrents_dir = (
-            config.cfg.downloader.torrents_dir or client_config.torrents_dir or ""
+            downloader_config.torrents_dir or client_config.torrents_dir or ""
         )
         self.client = qbittorrentapi.Client(
             host=client_config.url or "http://localhost:8080",
@@ -361,18 +368,19 @@ class QBittorrentClient(TorrentClient):
         Returns:
             tuple[str, list[str] | None]: (category, tags) to use for the new torrent.
         """
-        default_label = config.cfg.downloader.label or ""
-        default_tags = config.cfg.downloader.tags
+        dl_cfg = self.downloader_config
+        default_label = dl_cfg.label or ""
+        default_tags = dl_cfg.tags
 
         # Short-circuit: use unified labels directly
-        if config.cfg.downloader.use_unified_labels:
+        if dl_cfg.use_unified_labels:
             return default_label, default_tags
 
         if is_linking:
             # Linking mode: always use default label as category
             # If duplicate_categories is enabled, add dupe category to tags
             if (
-                config.cfg.downloader.duplicate_categories
+                dl_cfg.duplicate_categories
                 and local_torrent_category
                 and local_torrent_category != default_label
             ):
@@ -388,7 +396,7 @@ class QBittorrentClient(TorrentClient):
             return default_label, default_tags
 
         # Non-linking mode: inherit original category
-        if not config.cfg.downloader.duplicate_categories:
+        if not dl_cfg.duplicate_categories:
             # duplicate_categories disabled: use original category as-is
             return local_torrent_category or default_label, default_tags
 
@@ -428,7 +436,7 @@ class QBittorrentClient(TorrentClient):
         local_torrent_category = ""
         local_torrent_auto_tmm = False
         need_local_info = local_torrent_hash and (
-            not config.cfg.downloader.use_unified_labels
+            not self.downloader_config.use_unified_labels
             or not config.cfg.linking.enable_linking
         )
         if need_local_info:
@@ -451,10 +459,10 @@ class QBittorrentClient(TorrentClient):
 
         # If autoTMM is enabled and we're using a new duplicated category (not default),
         # ensure the category exists with correct save path
-        default_label = config.cfg.downloader.label or ""
+        default_label = self.downloader_config.label or ""
         if (
             use_auto_tmm
-            and config.cfg.downloader.duplicate_categories
+            and self.downloader_config.duplicate_categories
             and category
             and category != default_label
         ):

@@ -7,7 +7,7 @@ import anyio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from . import config, logger
-from .clients import get_torrent_client, init_torrent_client
+from .clients import get_torrent_clients, init_torrent_clients
 from .core import get_core, init_core
 from .db import cleanup_database, get_database, init_database
 from .notifier import get_notifier, init_notifier
@@ -80,13 +80,6 @@ def setup_argument_parser():
         help="if set, don't download .torrent files, only save URLs",
     )
 
-    # Torrent client options
-    client_group = parser.add_argument_group("Torrent client options")
-    client_group.add_argument(
-        "--client",
-        help="Torrent client URL (e.g. transmission+http://user:pass@localhost:9091)",
-    )
-
     # Server options
     server_group = parser.add_argument_group("Server options")
     server_group.add_argument(
@@ -133,10 +126,6 @@ def override_config_with_args(args):
     if args.no_download:
         config.cfg.global_config.no_download = True
 
-    # Override client if specified
-    if args.client is not None:
-        config.cfg.downloader.client = args.client
-
     # Override server host if specified
     if args.host is not None:
         config.cfg.server.host = args.host
@@ -155,11 +144,11 @@ async def async_init():
         1. Scheduler (AsyncIOScheduler, no dependencies)
         2. Database
         3. Notifier (optional, depends on config)
-        4. Torrent client (receives database, scheduler, notifier via DI)
-        5. Cache rebuild (if client URL changed)
+        4. Torrent clients (receives database, scheduler, notifier via DI)
+        5. Cache rebuild (if client URLs changed)
         6. API connections
         7. Core processor
-        8. Job manager (receives scheduler, core, torrent_client — fully constructed)
+        8. Job manager (receives scheduler, core, torrent_clients — fully constructed)
     """
     # 1. Create and start scheduler (no dependencies, created first)
     scheduler = AsyncIOScheduler()
@@ -179,47 +168,50 @@ async def async_init():
         init_notifier(config.cfg.global_config.notification_urls)
         notifier = get_notifier()
 
-    # 4. Initialize torrent client (with scheduler, not job_manager)
-    logger.debug(
-        "Connecting to torrent client at %s...",
-        logger.redact_url_password(config.cfg.downloader.client),
-    )
-    await init_torrent_client(
-        config.cfg.downloader.client,
+    # 4. Initialize torrent clients (with scheduler, not job_manager)
+    for dl_config in config.cfg.downloaders:
+        logger.debug(
+            "Connecting to torrent client at %s...",
+            logger.redact_url_password(dl_config.client),
+        )
+    await init_torrent_clients(
+        config.cfg.downloaders,
         database=database,
         scheduler=scheduler,
         notifier=notifier,
     )
-    logger.info("Successfully connected to torrent client")
+    logger.info(
+        "Successfully connected to %d torrent client(s)",
+        len(config.cfg.downloaders),
+    )
 
-    # 5. Check if client URL has changed and rebuild cache if needed
-    current_client_url = config.cfg.downloader.client
-    cached_client_url = await database.get_metadata("client_url")
+    # 5. Check if client URLs have changed and rebuild cache if needed
+    current_client_urls = ",".join(dl.client for dl in config.cfg.downloaders)
+    cached_client_urls = await database.get_metadata("client_urls")
 
-    if cached_client_url != current_client_url:
-        logger.debug(
-            "Client URL changed from %s to %s",
-            logger.redact_url_password(cached_client_url)
-            if cached_client_url
-            else "None",
-            logger.redact_url_password(current_client_url),
-        )
+    if cached_client_urls != current_client_urls:
+        logger.debug("Client URLs changed, rebuilding cache...")
         logger.info("Rebuilding client torrents cache...")
 
-        # Get all torrents from the new client
-        app_torrent_client = get_torrent_client()
-        all_torrents = await app_torrent_client.get_torrents(
-            fields=["hash", "name", "total_size", "files", "trackers", "download_dir"]
-        )
+        for torrent_client in get_torrent_clients():
+            all_torrents = await torrent_client.get_torrents(
+                fields=[
+                    "hash",
+                    "name",
+                    "total_size",
+                    "files",
+                    "trackers",
+                    "download_dir",
+                ]
+            )
+            await torrent_client.rebuild_client_torrents_cache(all_torrents)
+            logger.success(
+                "Rebuilt cache with %s torrents from client",
+                len(all_torrents),
+            )
 
-        # Rebuild cache
-        await app_torrent_client.rebuild_client_torrents_cache(all_torrents)
-        logger.success(
-            "Rebuilt cache with %s torrents from new client", len(all_torrents)
-        )
-
-        # Update cached client URL
-        await database.set_metadata("client_url", current_client_url)
+        # Update cached client URLs
+        await database.set_metadata("client_urls", current_client_urls)
 
     # 6. Initialize API connections
     await init_api(config.cfg.target_sites)
@@ -236,7 +228,7 @@ async def async_init():
         scheduler=scheduler,
         database=database,
         core=get_core(),
-        torrent_client=get_torrent_client(),
+        torrent_clients=get_torrent_clients(),
     )
 
 
@@ -263,9 +255,9 @@ def main():
     logger.debug("Config file: %s", args.config or "auto-detected")
     logger.debug("No download: %s", config.cfg.global_config.no_download)
     logger.debug("Log level: %s", config.cfg.global_config.loglevel)
-    logger.debug(
-        "Client URL: %s", logger.redact_url_password(config.cfg.downloader.client)
-    )
+    logger.debug("Torrent clients configured: %d", len(config.cfg.downloaders))
+    for i, dl in enumerate(config.cfg.downloaders, 1):
+        logger.debug("  Client %d: %s", i, logger.redact_url_password(dl.client))
     check_trackers = config.cfg.global_config.check_trackers
     logger.debug(
         "CHECK_TRACKERS: %s",
@@ -328,13 +320,13 @@ async def _async_main(args):
             await processor.process_torrents()
     finally:
         # Wait for torrent monitoring to complete all tracked torrents
-        client = get_torrent_client()
-        if client and client.monitoring:
-            logger.debug(
-                "Stopping torrent monitoring and waiting for tracked "
-                "torrents to complete..."
-            )
-            await client.wait_for_monitoring_completion()
+        for client in get_torrent_clients():
+            if client.monitoring:
+                logger.debug(
+                    "Stopping torrent monitoring and waiting for tracked "
+                    "torrents to complete..."
+                )
+                await client.wait_for_monitoring_completion()
 
         # Close all API client sessions
         await cleanup_api()
