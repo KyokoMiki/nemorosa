@@ -1,12 +1,11 @@
 """Torrent client registry and global instance management for nemorosa."""
 
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse
 
 import anyio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from ..config import DownloaderConfig
+from ..config import ClientType, DownloaderConfig
 from .client_common import TorrentClient
 from .deluge import DelugeClient
 from .qbittorrent import QBittorrentClient
@@ -20,10 +19,10 @@ if TYPE_CHECKING:
 
 # Torrent client factory mapping
 TORRENT_CLIENT_MAPPING = {
-    "transmission": TransmissionClient,
-    "qbittorrent": QBittorrentClient,
-    "deluge": DelugeClient,
-    "rtorrent": RTorrentClient,
+    ClientType.TRANSMISSION: TransmissionClient,
+    ClientType.QBITTORRENT: QBittorrentClient,
+    ClientType.DELUGE: DelugeClient,
+    ClientType.RTORRENT: RTorrentClient,
 }
 
 
@@ -33,32 +32,26 @@ def create_torrent_client(
     scheduler: AsyncIOScheduler,
     notifier: "Notifier | None" = None,
 ) -> TorrentClient:
-    """Create a torrent client instance based on the URL scheme.
+    """Create a torrent client instance based on client_type.
 
     Args:
         downloader_config: DownloaderConfig instance for this client.
         database: NemorosaDatabase instance for persistence.
-        scheduler: AsyncIOScheduler instance for scheduling background tasks.
+        scheduler: AsyncIOScheduler instance for scheduling.
         notifier: Optional Notifier instance for push notifications.
 
     Returns:
         Configured torrent client instance.
 
     Raises:
-        ValueError: If URL is empty, None, or client type is not supported.
+        ValueError: If client type is not supported.
     """
-    url = downloader_config.client
-    if not url or not url.strip():
-        raise ValueError("URL cannot be empty")
-
-    parsed = urlparse(url)
-    client_type = parsed.scheme.split("+")[0]
+    client_type = downloader_config.type
 
     if client_type not in TORRENT_CLIENT_MAPPING:
         raise ValueError(f"Unsupported torrent client type: {client_type}")
 
     return TORRENT_CLIENT_MAPPING[client_type](
-        url,
         downloader_config,
         database,
         scheduler,

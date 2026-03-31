@@ -14,7 +14,6 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from itertools import groupby
 from typing import TYPE_CHECKING, Any
-from urllib.parse import parse_qs, unquote, urlparse
 
 import anyio
 import msgspec
@@ -193,7 +192,7 @@ class TorrentClient(ABC):
     @property
     def client_url(self) -> str:
         """Client URL used as identity for database cache isolation."""
-        return self.downloader_config.client
+        return self.downloader_config.url
 
     # region Abstract Public
 
@@ -1452,92 +1451,3 @@ class TorrentClient(ABC):
             return len(self._tracked_torrents)
 
     # endregion
-
-
-class TorrentClientConfig(msgspec.Struct):
-    """Configuration for torrent client connection."""
-
-    # Common fields
-    username: str | None = None
-    password: str | None = None
-    torrents_dir: str | None = None
-
-    # For qBittorrent and rutorrent
-    url: str | None = None
-
-    # For Transmission and Deluge
-    scheme: str | None = None
-    host: str | None = None
-    port: int | None = None
-    path: str | None = None
-
-
-def parse_libtc_url(url: str) -> TorrentClientConfig:
-    """Parse torrent client URL and extract connection parameters.
-
-    Supported URL formats:
-    - transmission+http://127.0.0.1:9091/?torrents_dir=/path
-    - rtorrent+http://RUTORRENT_ADDRESS:9380/plugins/rpc/rpc.php
-    - deluge://username:password@127.0.0.1:58664
-    - qbittorrent+http://username:password@127.0.0.1:8080
-
-    Args:
-        url: The torrent client URL to parse
-
-    Returns:
-        TorrentClientConfig: Structured configuration object
-
-    Raises:
-        ValueError: If the URL scheme is not supported or URL is malformed
-    """
-    if not url:
-        raise ValueError("URL cannot be empty")
-
-    parsed = urlparse(url)
-    if not parsed.scheme:
-        raise ValueError("URL must have a scheme")
-
-    scheme = parsed.scheme.split("+")
-
-    client = scheme[0]
-    torrents_dir = parse_qs(parsed.query).get("torrents_dir", [None])[0]
-
-    # Validate supported client types
-    supported_clients = ("transmission", "qbittorrent", "deluge", "rtorrent")
-    if client not in supported_clients:
-        raise ValueError(
-            f"Unsupported client type: {client}. "
-            f"Supported clients: {', '.join(supported_clients)}"
-        )
-
-    if client == "qbittorrent":
-        # qBittorrent: separate auth from URL (uses hostname:port only)
-        netloc = (
-            f"{parsed.hostname}:{parsed.port}"
-            if parsed.port
-            else (parsed.hostname or "")
-        )
-        client_url = f"{scheme[-1]}://{netloc}{parsed.path}"
-        return TorrentClientConfig(
-            username=unquote(parsed.username) if parsed.username else None,
-            password=unquote(parsed.password) if parsed.password else None,
-            url=client_url,
-            torrents_dir=torrents_dir,
-        )
-    elif client == "rtorrent":
-        # rTorrent: include auth in URL via netloc (user:pass@host:port format)
-        client_url = f"{scheme[-1]}://{parsed.netloc}{parsed.path}"
-        return TorrentClientConfig(
-            url=client_url,
-            torrents_dir=torrents_dir,
-        )
-    else:
-        return TorrentClientConfig(
-            username=unquote(parsed.username) if parsed.username else None,
-            password=unquote(parsed.password) if parsed.password else None,
-            scheme=scheme[-1],
-            host=parsed.hostname,
-            port=parsed.port,
-            path=parsed.path,
-            torrents_dir=torrents_dir,
-        )

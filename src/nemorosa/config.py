@@ -14,6 +14,15 @@ from . import logger
 APPNAME = "nemorosa"
 
 
+class ClientType(StrEnum):
+    """Torrent client type enumeration."""
+
+    DELUGE = "deluge"
+    TRANSMISSION = "transmission"
+    QBITTORRENT = "qbittorrent"
+    RTORRENT = "rtorrent"
+
+
 class LinkType(StrEnum):
     """Link type enumeration."""
 
@@ -116,7 +125,8 @@ class GlobalConfig(msgspec.Struct):
 class DownloaderConfig(msgspec.Struct):
     """Downloader configuration."""
 
-    client: str = ""
+    type: ClientType
+    url: str
     torrents_dir: str = ""
     label: str | None = "nemorosa"
     tags: list[str] | None = None
@@ -124,14 +134,25 @@ class DownloaderConfig(msgspec.Struct):
     duplicate_categories: bool = False
 
     def __post_init__(self):
-        if not self.client or not self.client.strip():
-            raise ValueError("Downloader client URL is required")
+        if not self.url or not self.url.strip():
+            raise ValueError("Downloader URL is required")
 
-        # Validate client URL format
-        if not self.client.startswith(
-            ("deluge://", "transmission+", "qbittorrent+", "rtorrent+")
-        ):
-            raise ValueError(f"Invalid client URL format: {self.client}")
+        # Validate URL format based on client type
+        if self.type == ClientType.DELUGE:
+            if not self.url.startswith("deluge://"):
+                raise ValueError("URL must start with deluge:// for deluge client")
+        elif self.type == ClientType.RTORRENT:
+            if not self.url.startswith(
+                ("http://", "https://", "scgi://")
+            ):
+                raise ValueError(
+                    "URL must start with http://, https://, or scgi:// "
+                    "for rtorrent client"
+                )
+        elif not self.url.startswith(("http://", "https://")):
+            raise ValueError(
+                f"URL must start with http:// or https:// for {self.type} client"
+            )
 
         # Validate tags content
         validate_string_list(self.tags, "tags")
@@ -243,7 +264,7 @@ class NemorosaConfig(msgspec.Struct):
 
         # Validate rtorrent client requires enable_linking
         for dl in self.downloaders:
-            if dl.client.startswith("rtorrent+") and not self.linking.enable_linking:
+            if dl.type == ClientType.RTORRENT and not self.linking.enable_linking:
                 raise ValueError("rtorrent client requires enable linking")
 
 
@@ -372,20 +393,21 @@ server:
 
 downloader:
   # Downloader settings (list of torrent clients)
-  # Supported downloader formats:
+  # Supported client types: deluge, transmission, qbittorrent, rtorrent
 
-  # transmission+http://user:pass@host:port/transmission/rpc?torrents_dir=/path/to/session/
-  # deluge://username:password@host:port/?torrents_dir=/path/to/session/
-  # qbittorrent+http://username:password@host:port/?torrents_dir=/path/to/session/
-  # qbittorrent+http://username:password@host:port
-  # For qBittorrent 4.5.0+, torrents_dir is not needed
+  # URL format examples:
+  # transmission: http://user:pass@host:port/transmission/rpc
+  # deluge: deluge://username:password@host:port
+  # qbittorrent: http://username:password@host:port
+  # rtorrent: http://RUTORRENT_ADDRESS:9380/plugins/rpc/rpc.php
 
-  # For Windows: Use forward slashes (/) in torrents_dir path
-  # Example: ?torrents_dir=C:/Users/username/AppData/Local/qBittorrent/BT_backup
-
-  - client: ""
+  # Client type: deluge, transmission, qbittorrent, rtorrent
+  - type: "qbittorrent"
+    url: "" # Client connection URL
     # The directory where your torrent client stores its .torrent files.
-    # If set, this path overrides the torrents_dir parameter in the client URL above.
+    # For qBittorrent 4.5.0+, torrents_dir is not needed.
+    # For Windows: Use forward slashes (/) in path
+    # Example: C:/Users/username/AppData/Local/qBittorrent/BT_backup
     torrents_dir: ""
     label: "nemorosa" # Download label
     # Optional tags list, only for qBittorrent and Transmission.

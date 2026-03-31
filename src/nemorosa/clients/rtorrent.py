@@ -23,7 +23,6 @@ from .client_common import (
     TorrentConflictError,
     TorrentState,
     decode_bitfield_bytes,
-    parse_libtc_url,
 )
 from .scgitransport import SCGITransport
 
@@ -165,7 +164,6 @@ class RTorrentClient(TorrentClient):
 
     def __init__(
         self,
-        url: str,
         downloader_config: "DownloaderConfig",
         database: "NemorosaDatabase",
         scheduler: "AsyncIOScheduler",
@@ -177,16 +175,13 @@ class RTorrentClient(TorrentClient):
             scheduler=scheduler,
             notifier=notifier,
         )
-        client_config = parse_libtc_url(url)
-        self.torrents_dir = (
-            downloader_config.torrents_dir or client_config.torrents_dir or ""
-        )
+        self.torrents_dir = downloader_config.torrents_dir
 
         # Monkey-patch xmlrpc.client to mitigate XML vulnerabilities
         defusedxml.xmlrpc.monkey_patch()
 
-        # rTorrent uses XML-RPC with optional SCGI support
-        self.client = create_proxy(client_config.url or "http://localhost:80/RPC2")
+        # rTorrent uses XML-RPC — URL passed directly (includes auth)
+        self.client = create_proxy(downloader_config.url)
 
         # Use the field specifications constant
         self.field_config = _RTORRENT_FIELD_SPECS
