@@ -7,6 +7,7 @@ import base64
 import posixpath
 import re
 from typing import TYPE_CHECKING
+from urllib.parse import unquote, urlparse
 
 import deluge_client
 from anyio import Path
@@ -21,7 +22,6 @@ from .client_common import (
     TorrentClient,
     TorrentConflictError,
     TorrentState,
-    parse_libtc_url,
 )
 
 if TYPE_CHECKING:
@@ -96,7 +96,6 @@ class DelugeClient(TorrentClient):
 
     def __init__(
         self,
-        url: str,
         downloader_config: "DownloaderConfig",
         database: "NemorosaDatabase",
         scheduler: "AsyncIOScheduler",
@@ -108,15 +107,13 @@ class DelugeClient(TorrentClient):
             scheduler=scheduler,
             notifier=notifier,
         )
-        client_config = parse_libtc_url(url)
-        self.torrents_dir = (
-            downloader_config.torrents_dir or client_config.torrents_dir or ""
-        )
+        parsed = urlparse(downloader_config.url)
+        self.torrents_dir = downloader_config.torrents_dir
         self.client = deluge_client.DelugeRPCClient(
-            host=client_config.host or "localhost",
-            port=client_config.port or 58846,
-            username=client_config.username or "",
-            password=client_config.password or "",
+            host=parsed.hostname or "localhost",
+            port=parsed.port or 58846,
+            username=unquote(parsed.username) if parsed.username else "",
+            password=unquote(parsed.password) if parsed.password else "",
             decode_utf8=True,
             timeout=TORRENT_CLIENT_TIMEOUT,
         )

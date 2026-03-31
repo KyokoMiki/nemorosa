@@ -172,7 +172,7 @@ async def async_init():
     for dl_config in config.cfg.downloaders:
         logger.debug(
             "Connecting to torrent client at %s...",
-            logger.redact_url_password(dl_config.client),
+            logger.redact_url_password(dl_config.url),
         )
     await init_torrent_clients(
         config.cfg.downloaders,
@@ -186,7 +186,7 @@ async def async_init():
     )
 
     # 5. Check if client URLs have changed and rebuild cache if needed
-    current_client_urls = ",".join(dl.client for dl in config.cfg.downloaders)
+    current_client_urls = ",".join(dl.url for dl in config.cfg.downloaders)
     cached_client_urls = await database.get_metadata("client_urls")
 
     if cached_client_urls != current_client_urls:
@@ -257,7 +257,7 @@ def main():
     logger.debug("Log level: %s", config.cfg.global_config.loglevel)
     logger.debug("Torrent clients configured: %d", len(config.cfg.downloaders))
     for i, dl in enumerate(config.cfg.downloaders, 1):
-        logger.debug("  Client %d: %s", i, logger.redact_url_password(dl.client))
+        logger.debug("  Client %d: %s", i, logger.redact_url_password(dl.url))
     check_trackers = config.cfg.global_config.check_trackers
     logger.debug(
         "CHECK_TRACKERS: %s",

@@ -6,6 +6,7 @@ Provides integration with Transmission via its RPC interface.
 import base64
 import posixpath
 from typing import TYPE_CHECKING
+from urllib.parse import unquote, urlparse
 
 import msgspec
 import transmission_rpc
@@ -23,7 +24,6 @@ from .client_common import (
     TorrentConflictError,
     TorrentState,
     decode_bitfield_bytes,
-    parse_libtc_url,
 )
 
 if TYPE_CHECKING:
@@ -97,7 +97,6 @@ class TransmissionClient(TorrentClient):
 
     def __init__(
         self,
-        url: str,
         downloader_config: "DownloaderConfig",
         database: "NemorosaDatabase",
         scheduler: "AsyncIOScheduler",
@@ -109,23 +108,21 @@ class TransmissionClient(TorrentClient):
             scheduler=scheduler,
             notifier=notifier,
         )
-        client_config = parse_libtc_url(url)
-        self.torrents_dir = (
-            downloader_config.torrents_dir or client_config.torrents_dir or ""
-        )
+        parsed = urlparse(downloader_config.url)
+        self.torrents_dir = downloader_config.torrents_dir
 
         # Ensure protocol is either 'http' or 'https'
-        protocol = client_config.scheme
+        protocol = parsed.scheme
         if protocol not in ("http", "https"):
             protocol = "http"  # Default to http if scheme is None or invalid
 
         self.client = transmission_rpc.Client(
             protocol=protocol,
-            username=client_config.username,
-            password=client_config.password,
-            host=client_config.host or "localhost",
-            port=client_config.port or 9091,
-            path=client_config.path or "/transmission/rpc",
+            username=(unquote(parsed.username) if parsed.username else None),
+            password=(unquote(parsed.password) if parsed.password else None),
+            host=parsed.hostname or "localhost",
+            port=parsed.port or 9091,
+            path=parsed.path or "/transmission/rpc",
             timeout=TORRENT_CLIENT_TIMEOUT,
         )
 
