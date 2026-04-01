@@ -4,6 +4,7 @@ import sys
 from enum import StrEnum
 from pathlib import Path
 from secrets import token_urlsafe
+from urllib.parse import urlparse
 
 import msgspec
 from humanfriendly import parse_timespan
@@ -159,6 +160,16 @@ class DownloaderConfig(msgspec.Struct):
 
         if self.label is not None and not self.label.strip():
             self.label = None
+
+    @property
+    def client_key(self) -> str:
+        """Unique client identifier for database cache isolation (no credentials)."""
+        parsed = urlparse(self.url)
+        clean_netloc = parsed.hostname or ""
+        if parsed.port:
+            clean_netloc += f":{parsed.port}"
+        clean_url = f"{parsed.scheme}://{clean_netloc}{parsed.path}"
+        return f"{self.type.value}+{clean_url}"
 
 
 class ServerConfig(msgspec.Struct):
