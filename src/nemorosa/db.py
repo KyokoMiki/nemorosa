@@ -83,7 +83,7 @@ class ClientTorrent(Base):
 
     __tablename__ = "client_torrents"
 
-    client_url: Mapped[str] = mapped_column(String, primary_key=True)
+    client_key: Mapped[str] = mapped_column(String, primary_key=True)
     hash: Mapped[str] = mapped_column(String, primary_key=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     total_size: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -97,19 +97,19 @@ class ClientTorrent(Base):
 
     @classmethod
     def from_client_info(
-        cls, info: "ClientTorrentInfo", client_url: str
+        cls, info: "ClientTorrentInfo", client_key: str
     ) -> "ClientTorrent":
         """Alternative constructor: Create ClientTorrent from ClientTorrentInfo.
 
         Args:
             info: ClientTorrentInfo object from torrent client.
-            client_url: Client URL that owns this torrent.
+            client_key: Client key that owns this torrent.
 
         Returns:
             ClientTorrent ORM object ready for database persistence.
         """
         return cls(
-            client_url=client_url,
+            client_key=client_key,
             hash=info.hash,
             name=info.name,
             total_size=info.total_size,
@@ -120,7 +120,7 @@ class ClientTorrent(Base):
             # Add files through relationship
             files=[
                 TorrentFile(
-                    client_url=client_url,
+                    client_key=client_key,
                     torrent_hash=info.hash,
                     file_path=file_obj.name,
                     file_size=file_obj.size,
@@ -135,7 +135,7 @@ class TorrentFile(Base):
 
     __tablename__ = "torrent_files"
 
-    client_url: Mapped[str] = mapped_column(String, primary_key=True)
+    client_key: Mapped[str] = mapped_column(String, primary_key=True)
     torrent_hash: Mapped[str] = mapped_column(String, primary_key=True)
     file_path: Mapped[str] = mapped_column(String, primary_key=True)
     file_size: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -147,8 +147,8 @@ class TorrentFile(Base):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["client_url", "torrent_hash"],
-            ["client_torrents.client_url", "client_torrents.hash"],
+            ["client_key", "torrent_hash"],
+            ["client_torrents.client_key", "client_torrents.hash"],
             ondelete="CASCADE",
         ),
         Index("idx_torrent_files_size", "file_size"),
@@ -425,55 +425,66 @@ class NemorosaDatabase:
     # region Client torrents cache
 
     async def save_client_torrent_info(
-        self, torrent_info: "ClientTorrentInfo", client_url: str
+        self, torrent_info: "ClientTorrentInfo", client_key: str
     ):
         """Save ClientTorrentInfo to database.
 
         Args:
             torrent_info: ClientTorrentInfo object from clients.client_common.
-            client_url: Client URL that owns this torrent.
+            client_key: Client key that owns this torrent.
         """
         async with self.async_session_maker.begin() as session:
             # Create ORM object from ClientTorrentInfo
-            client_torrent = ClientTorrent.from_client_info(torrent_info, client_url)
+            client_torrent = ClientTorrent.from_client_info(torrent_info, client_key)
             await session.merge(client_torrent)
 
-    async def get_all_cached_torrent_hashes(self, client_url: str) -> set[str]:
+    async def get_cached_client_keys(self) -> set[str]:
+        """Get all distinct client keys present in the cache.
+
+        Returns:
+            Set of client keys that have cached torrents.
+        """
+        async with self.async_session_maker() as session:
+            stmt = select(ClientTorrent.client_key).distinct()
+            result = await session.execute(stmt)
+            return set(result.scalars())
+
+    async def get_all_cached_torrent_hashes(self, client_key: str) -> set[str]:
         """Get all cached torrent hashes for a specific client.
 
         Args:
-            client_url: Client URL to filter by.
+            client_key: Client key to filter by.
 
         Returns:
             Set of all torrent hashes in cache for this client.
         """
         async with self.async_session_maker() as session:
             stmt = select(ClientTorrent.hash).where(
-                ClientTorrent.client_url == client_url
+                ClientTorrent.client_key == client_key
             )
             result = await session.execute(stmt)
             return set(result.scalars())
 
     async def delete_client_torrents(
-        self, torrent_hashes: str | Collection[str], client_url: str
+        self, torrent_hashes: str | Collection[str], client_key: str
     ):
         """Delete torrent(s) and their files from cache for a specific client.
 
         Args:
             torrent_hashes: Torrent hash or collection of hashes to delete.
-            client_url: Client URL that owns these torrents.
+            client_key: Client key that owns these torrents.
         """
         if isinstance(torrent_hashes, str):
             condition = (
                 ClientTorrent.hash == torrent_hashes,
-                ClientTorrent.client_url == client_url,
+                ClientTorrent.client_key == client_key,
             )
         else:
             if not torrent_hashes:
                 return
             condition = (
                 ClientTorrent.hash.in_(torrent_hashes),
-                ClientTorrent.client_url == client_url,
+                ClientTorrent.client_key == client_key,
             )
 
         async with self.async_session_maker.begin() as session:
@@ -481,29 +492,29 @@ class NemorosaDatabase:
             stmt = delete(ClientTorrent).where(*condition)
             await session.execute(stmt)
 
-    async def clear_client_torrents_cache(self, client_url: str):
+    async def clear_client_torrents_cache(self, client_key: str):
         """Clear all cached client torrent information for a specific client.
 
         Args:
-            client_url: Client URL whose cache should be cleared.
+            client_key: Client key whose cache should be cleared.
         """
         async with self.async_session_maker.begin() as session:
             # Delete files first (or rely on cascade)
             await session.execute(
-                delete(TorrentFile).where(TorrentFile.client_url == client_url)
+                delete(TorrentFile).where(TorrentFile.client_key == client_key)
             )
             await session.execute(
-                delete(ClientTorrent).where(ClientTorrent.client_url == client_url)
+                delete(ClientTorrent).where(ClientTorrent.client_key == client_key)
             )
 
     async def batch_save_client_torrents(
-        self, torrents: list["ClientTorrentInfo"], client_url: str
+        self, torrents: list["ClientTorrentInfo"], client_key: str
     ):
         """Batch save multiple torrents to database for a specific client.
 
         Args:
             torrents: List of ClientTorrentInfo objects.
-            client_url: Client URL that owns these torrents.
+            client_key: Client key that owns these torrents.
         """
         if not torrents:
             return
@@ -521,7 +532,7 @@ class NemorosaDatabase:
                 # Prepare data for batch insert
                 torrent_data = [
                     {
-                        "client_url": client_url,
+                        "client_key": client_key,
                         "hash": t.hash,
                         "name": t.name,
                         "total_size": t.total_size,
@@ -535,9 +546,9 @@ class NemorosaDatabase:
 
                 # Batch upsert torrents using INSERT ... ON CONFLICT
                 stmt = insert(ClientTorrent).values(torrent_data)
-                # On conflict (duplicate client_url + hash), update all fields
+                # On conflict (duplicate client_key + hash), update all fields
                 stmt = stmt.on_conflict_do_update(
-                    index_elements=["client_url", "hash"],
+                    index_elements=["client_key", "hash"],
                     set_={
                         "name": stmt.excluded.name,
                         "total_size": stmt.excluded.total_size,
@@ -552,7 +563,7 @@ class NemorosaDatabase:
             for i in range(0, len(all_hashes), TORRENT_BATCH_SIZE):
                 batch_hashes = all_hashes[i : i + TORRENT_BATCH_SIZE]
                 delete_stmt = delete(TorrentFile).where(
-                    TorrentFile.client_url == client_url,
+                    TorrentFile.client_key == client_key,
                     TorrentFile.torrent_hash.in_(batch_hashes),
                 )
                 await session.execute(delete_stmt)
@@ -560,7 +571,7 @@ class NemorosaDatabase:
             # Prepare file data for batch insert
             file_data = [
                 {
-                    "client_url": client_url,
+                    "client_key": client_key,
                     "torrent_hash": t.hash,
                     "file_path": file.name,
                     "file_size": file.size,
@@ -577,12 +588,12 @@ class NemorosaDatabase:
                 await session.execute(file_stmt)
 
     async def get_all_client_torrents_basic(
-        self, client_url: str
+        self, client_key: str
     ) -> dict[str, tuple[str, str]]:
         """Get basic info (name, download_dir) for all cached torrents of a client.
 
         Args:
-            client_url: Client URL to filter by.
+            client_key: Client key to filter by.
 
         Returns:
             Mapping from hash to (name, download_dir).
@@ -590,7 +601,7 @@ class NemorosaDatabase:
         async with self.async_session_maker() as session:
             stmt = select(
                 ClientTorrent.hash, ClientTorrent.name, ClientTorrent.download_dir
-            ).where(ClientTorrent.client_url == client_url)
+            ).where(ClientTorrent.client_key == client_key)
             result = await session.execute(stmt)
             return {
                 hash_val: (name, download_dir)
@@ -619,9 +630,9 @@ class NemorosaDatabase:
                     func.lower(TorrentFile.file_path).like(f"%{keyword.lower()}%")
                 )
 
-            # Subquery to find matching (client_url, torrent_hash) pairs
+            # Subquery to find matching (client_key, torrent_hash) pairs
             matching_files = (
-                select(TorrentFile.client_url, TorrentFile.torrent_hash)
+                select(TorrentFile.client_key, TorrentFile.torrent_hash)
                 .where(*conditions)
                 .distinct()
                 .subquery()
@@ -630,7 +641,7 @@ class NemorosaDatabase:
             # Main query: join against matching pairs via composite key
             stmt = (
                 select(
-                    ClientTorrent.client_url,
+                    ClientTorrent.client_key,
                     ClientTorrent.hash,
                     ClientTorrent.name,
                     ClientTorrent.download_dir,
@@ -641,15 +652,15 @@ class NemorosaDatabase:
                 )
                 .join(
                     matching_files,
-                    (ClientTorrent.client_url == matching_files.c.client_url)
+                    (ClientTorrent.client_key == matching_files.c.client_key)
                     & (ClientTorrent.hash == matching_files.c.torrent_hash),
                 )
                 .join(
                     TorrentFile,
-                    (ClientTorrent.client_url == TorrentFile.client_url)
+                    (ClientTorrent.client_key == TorrentFile.client_key)
                     & (ClientTorrent.hash == TorrentFile.torrent_hash),
                 )
-                .order_by(ClientTorrent.client_url, ClientTorrent.hash)
+                .order_by(ClientTorrent.client_key, ClientTorrent.hash)
             )
 
             result = await session.execute(stmt)

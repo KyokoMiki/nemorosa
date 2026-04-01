@@ -190,9 +190,9 @@ class TorrentClient(ABC):
         self.field_config: dict[str, FieldSpec] = {}
 
     @property
-    def client_url(self) -> str:
-        """Client URL used as identity for database cache isolation."""
-        return self.downloader_config.url
+    def client_key(self) -> str:
+        """Client key used as identity for database cache isolation."""
+        return self.downloader_config.client_key
 
     # region Abstract Public
 
@@ -365,14 +365,14 @@ class TorrentClient(ABC):
             torrents (list[ClientTorrentInfo]): List of torrents to cache.
         """
         try:
-            await self.database.clear_client_torrents_cache(self.client_url)
+            await self.database.clear_client_torrents_cache(self.client_key)
 
             if not torrents:
                 logger.debug("No torrents provided for cache rebuild")
                 return
 
             # Batch save to database
-            await self.database.batch_save_client_torrents(torrents, self.client_url)
+            await self.database.batch_save_client_torrents(torrents, self.client_key)
             logger.success("Cached %d torrents to database", len(torrents))
 
         except Exception as e:
@@ -396,14 +396,14 @@ class TorrentClient(ABC):
                 logger.debug("No torrents provided for cache sync")
                 # Clear all cached torrents if the new list is empty
                 with anyio.CancelScope(shield=True):
-                    await self.database.clear_client_torrents_cache(self.client_url)
+                    await self.database.clear_client_torrents_cache(self.client_key)
                 return
 
             # Get current cached torrent hashes
             cached_hashes: set[str] = set()
             with anyio.CancelScope(shield=True):
                 cached_hashes = await self.database.get_all_cached_torrent_hashes(
-                    self.client_url
+                    self.client_key
                 )
             new_hashes = {torrent.hash for torrent in torrents}
 
@@ -412,7 +412,7 @@ class TorrentClient(ABC):
             if torrents_to_delete:
                 with anyio.CancelScope(shield=True):
                     await self.database.delete_client_torrents(
-                        torrents_to_delete, self.client_url
+                        torrents_to_delete, self.client_key
                     )
                 logger.debug("Deleted %d torrents from cache", len(torrents_to_delete))
 
@@ -420,7 +420,7 @@ class TorrentClient(ABC):
             for torrent in torrents:
                 with anyio.CancelScope(shield=True):
                     await self.database.save_client_torrent_info(
-                        torrent, self.client_url
+                        torrent, self.client_key
                     )
                 await anyio.sleep(0)  # Yield control to allow other async tasks to run
 
@@ -456,7 +456,7 @@ class TorrentClient(ABC):
 
             # Step 2: Get all cached torrents in one query (batch optimized)
             cached_torrents = await self.database.get_all_client_torrents_basic(
-                self.client_url
+                self.client_key
             )
 
             # Step 3: Check which torrents need to be updated
@@ -490,7 +490,7 @@ class TorrentClient(ABC):
                 # Step 5: Update database
                 if modified_torrents:
                     await self.database.batch_save_client_torrents(
-                        modified_torrents, self.client_url
+                        modified_torrents, self.client_key
                     )
                     logger.debug(
                         "Updated %s modified torrents in database cache",
@@ -502,7 +502,7 @@ class TorrentClient(ABC):
             # Step 6: Delete torrents that no longer exist in client
             if torrents_to_delete:
                 await self.database.delete_client_torrents(
-                    torrents_to_delete, self.client_url
+                    torrents_to_delete, self.client_key
                 )
                 logger.debug(
                     "Deleted %s torrents from database cache (removed from client)",
@@ -531,10 +531,10 @@ class TorrentClient(ABC):
             target_file_size, fname_keywords
         )
 
-        # Group rows by (client_url, hash) — ordered from the query
+        # Group rows by (client_key, hash) — ordered from the query
         torrents = []
 
-        for _, group_rows in groupby(rows, key=lambda row: (row.client_url, row.hash)):
+        for _, group_rows in groupby(rows, key=lambda row: (row.client_key, row.hash)):
             # Convert group iterator to list for processing
             group_list = list(group_rows)
             if not group_list:

@@ -185,33 +185,37 @@ async def async_init():
         len(config.cfg.downloaders),
     )
 
-    # 5. Check if client URLs have changed and rebuild cache if needed
-    current_client_urls = ",".join(dl.url for dl in config.cfg.downloaders)
-    cached_client_urls = await database.get_metadata("client_urls")
+    # 5. Sync client torrents cache with current configuration
+    current_keys = {dl.client_key for dl in config.cfg.downloaders}
+    cached_keys = await database.get_cached_client_keys()
 
-    if cached_client_urls != current_client_urls:
-        logger.debug("Client URLs changed, rebuilding cache...")
-        logger.info("Rebuilding client torrents cache...")
+    # Remove stale cache for clients no longer in config
+    stale_keys = cached_keys - current_keys
+    for key in stale_keys:
+        await database.clear_client_torrents_cache(key)
+        logger.info("Cleared stale cache for client: %s", key)
 
+    # Build cache for new clients not yet cached
+    new_keys = current_keys - cached_keys
+    if new_keys:
+        logger.info("Building cache for %d new client(s)...", len(new_keys))
         for torrent_client in get_torrent_clients():
-            all_torrents = await torrent_client.get_torrents(
-                fields=[
-                    "hash",
-                    "name",
-                    "total_size",
-                    "files",
-                    "trackers",
-                    "download_dir",
-                ]
-            )
-            await torrent_client.rebuild_client_torrents_cache(all_torrents)
-            logger.success(
-                "Rebuilt cache with %s torrents from client",
-                len(all_torrents),
-            )
-
-        # Update cached client URLs
-        await database.set_metadata("client_urls", current_client_urls)
+            if torrent_client.client_key in new_keys:
+                all_torrents = await torrent_client.get_torrents(
+                    fields=[
+                        "hash",
+                        "name",
+                        "total_size",
+                        "files",
+                        "trackers",
+                        "download_dir",
+                    ]
+                )
+                await torrent_client.rebuild_client_torrents_cache(all_torrents)
+                logger.success(
+                    "Built cache with %s torrents from client",
+                    len(all_torrents),
+                )
 
     # 6. Initialize API connections
     await init_api(config.cfg.target_sites)
