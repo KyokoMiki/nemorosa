@@ -50,11 +50,11 @@ class TorrentSearcher:
         torrent_copy = Torrent.copy(torrent_object)
         target_source_flag = api.source_flag
 
-        source_flags = [target_source_flag, ""]
+        source_flags = {target_source_flag, ""}
         if target_source_flag == "RED":
-            source_flags.append("PTH")
+            source_flags.add("PTH")
         elif target_source_flag == "OPS":
-            source_flags.append("APL")
+            source_flags.add("APL")
 
         for flag in source_flags:
             try:
@@ -244,8 +244,7 @@ class TorrentSearcher:
             )
 
             try:
-                resp = await api.torrent(t.torrent_id)
-                resp_files = resp.get("fileList", {})
+                resp_files = await api.get_torrent_fdict(t.torrent_id)
             except Exception as e:
                 torrent_id = t.torrent_id
                 logger.exception(

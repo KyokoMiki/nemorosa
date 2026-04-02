@@ -13,9 +13,10 @@ from .api_common import TrackerSpec
 from .gazelle_games import GazelleGamesNet
 from .gazelle_html import GazelleParser
 from .gazelle_json import GazelleJSONAPI
+from .jpopsuki import JPopSuki
 
 # Type alias for API instance types
-GazelleAPI: TypeAlias = GazelleJSONAPI | GazelleParser | GazelleGamesNet
+GazelleAPI: TypeAlias = GazelleJSONAPI | GazelleParser | GazelleGamesNet | JPopSuki
 
 TRACKER_REGISTRY: dict[str, tuple[type[GazelleAPI], TrackerSpec]] = {
     "https://redacted.sh": (
@@ -79,6 +80,16 @@ TRACKER_REGISTRY: dict[str, tuple[type[GazelleAPI], TrackerSpec]] = {
             source_flag="GGn",
             tracker_url="https://tracker.gazellegames.net",
             tracker_query="tracker.gazellegames.net",
+        ),
+    ),
+    "https://jpopsuki.eu": (
+        JPopSuki,
+        TrackerSpec(
+            rate_limit_max_requests=2,
+            rate_limit_period=10.0,
+            source_flag="",
+            tracker_url="http://jpopsuki.eu:7531",
+            tracker_query="jpopsuki.eu",
         ),
     ),
 }

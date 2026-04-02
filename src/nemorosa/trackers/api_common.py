@@ -66,6 +66,7 @@ class TorrentSearchResult(msgspec.Struct):
     title: str
 
 
+
 class TrackerSpec(msgspec.Struct):
     """Predefined Tracker specification."""
 
@@ -141,37 +142,33 @@ class GazelleBase(ABC):
         """Close the aiohttp ClientSession."""
         await self.client.close()
 
-    async def torrent(self, torrent_id: int | str) -> dict[str, Any]:
-        """Get torrent object - subclasses need to implement specific request logic.
+    async def get_torrent_fdict(self, torrent_id: int | str) -> dict[str, int]:
+        """Get file dictionary for a torrent by its ID.
 
         Args:
-            torrent_id (int | str): The ID of the torrent to retrieve.
+            torrent_id: The ID of the torrent to retrieve.
 
         Returns:
-            dict[str, Any]: Torrent object data, empty dict on error.
+            Mapping of filename to file size in bytes. Empty dict on error.
         """
-        torrent_object = {}
         logger.debug("Getting torrent by id: %s", torrent_id)
         try:
             torrent_lookup = await self._get_torrent_data(torrent_id)
         except Exception as e:
             logger.error("Failed to get torrent by id %s. Error: %s", torrent_id, e)
-            return torrent_object  # return empty dict on error
+            return {}
 
-        torrent_lookup_status = torrent_lookup.get("status", None)
-        if torrent_lookup_status == "success":
-            logger.debug("Torrent lookup successful for id: %s", torrent_id)
-            torrent_object = torrent_lookup["response"]["torrent"]
-            torrent_object["fileList"] = self.parse_file_list(
-                torrent_object.get("fileList", "")
-            )
-        else:
+        if torrent_lookup.get("status") != "success":
             logger.error(
                 "Torrent lookup failed for id: %s. Status: %s",
                 torrent_id,
-                torrent_lookup_status,
+                torrent_lookup.get("status"),
             )
-        return torrent_object
+            return {}
+
+        logger.debug("Torrent lookup successful for id: %s", torrent_id)
+        torrent_data = torrent_lookup["response"]["torrent"]
+        return self.parse_file_list(torrent_data.get("fileList", ""))
 
     async def _get_torrent_data(self, torrent_id: int | str) -> dict[str, Any]:
         """Get torrent data using the Gazelle API.
