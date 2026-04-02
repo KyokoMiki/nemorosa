@@ -9,6 +9,7 @@ from .. import config, logger
 from ..filecompare import (
     check_conflicts,
     is_music_file,
+    is_size_approx_equal,
     make_search_query,
     select_search_filenames,
 )
@@ -74,6 +75,59 @@ class TorrentSearcher:
 
         return None, None
 
+    async def _search_with_fallback(
+        self,
+        fname: str,
+        api: "GazelleAPI",
+    ) -> list["TorrentSearchResult"]:
+        """Search by filename, falling back to basename for music files.
+
+        Args:
+            fname: Filename to search for.
+            api: API instance for the target site.
+
+        Returns:
+            List of search results.
+        """
+        try:
+            torrents = await api.search_torrent_by_filename(fname)
+        except Exception as e:
+            logger.error("Error searching for file '%s': %s", fname, e)
+            raise
+
+        logger.debug("Found %s potential matches for file '%s'", len(torrents), fname)
+
+        if len(torrents) == 0 and is_music_file(fname):
+            basename_query = make_search_query(posixpath.basename(fname))
+            if basename_query != fname:
+                logger.debug(
+                    "No results for '%s', trying basename: '%s'",
+                    fname,
+                    basename_query,
+                )
+                try:
+                    fallback = await api.search_torrent_by_filename(basename_query)
+                    if fallback:
+                        logger.debug(
+                            "Fallback found %s matches for '%s'",
+                            len(fallback),
+                            basename_query,
+                        )
+                        return fallback
+                    logger.debug(
+                        "Fallback also found no results for '%s'",
+                        basename_query,
+                    )
+                except Exception as e:
+                    logger.error(
+                        "Error in fallback search for '%s': %s",
+                        basename_query,
+                        e,
+                    )
+                    raise
+
+        return torrents
+
     async def _search_single_filename(
         self,
         fname: str,
@@ -95,50 +149,7 @@ class TorrentSearcher:
             Tuple of (torrent_id, should_continue_loop).
         """
         logger.debug("Searching for file: %s", fname)
-        fname_query = fname
-        try:
-            torrents = await api.search_torrent_by_filename(fname_query)
-        except Exception as e:
-            logger.error("Error searching for file '%s': %s", fname_query, e)
-            raise
-
-        logger.debug(
-            "Found %s potential matches for file '%s'", len(torrents), fname_query
-        )
-
-        # If no results found and it's a music file, try fallback search
-        if len(torrents) == 0 and is_music_file(fname):
-            fname_query = make_search_query(posixpath.basename(fname))
-            if fname_query != fname:
-                logger.debug(
-                    "No results found for '%s', trying fallback search "
-                    "with basename: '%s'",
-                    fname,
-                    fname_query,
-                )
-                try:
-                    fallback_torrents = await api.search_torrent_by_filename(
-                        fname_query
-                    )
-                    if fallback_torrents:
-                        torrents = fallback_torrents
-                        logger.debug(
-                            "Fallback search found %s potential matches for '%s'",
-                            len(torrents),
-                            fname_query,
-                        )
-                    else:
-                        logger.debug(
-                            "Fallback search also found no results for '%s'",
-                            fname_query,
-                        )
-                except Exception as e:
-                    logger.error(
-                        "Error in fallback search for file basename '%s': %s",
-                        fname_query,
-                        e,
-                    )
-                    raise
+        torrents = await self._search_with_fallback(fname, api)
 
         # Match by total size
         tid = next((t.torrent_id for t in torrents if t.size == tsize), None)
@@ -150,22 +161,37 @@ class TorrentSearcher:
         if len(torrents) > MAX_SEARCH_RESULTS:
             logger.warning(
                 "Too many results found for file '%s' (%s). Skipping.",
-                fname_query,
+                fname,
                 len(torrents),
             )
             return None, True
 
-        # Match by file content
-        logger.debug(
-            "No size match found. Checking file contents for '%s'", fname_query
-        )
-        tid = await self.match_by_file_content(
-            torrents=torrents,
-            fname=fname,
-            fdict=fdict,
-            scan_querys=scan_querys,
-            api=api,
-        )
+        # Determine the file to check and its expected size
+        check_file = self._select_check_file(fname, scan_querys)
+        check_size = fdict.get(check_file)
+        if check_size is None:
+            logger.debug("Key '%s' not found in fdict, skipping", check_file)
+            return None, True
+
+        # Match by file content — choose strategy based on size precision
+        logger.debug("No size match found. Checking file contents for '%s'", fname)
+        if api.has_precise_sizes:
+            tid = await self._match_by_file_content(
+                torrents=torrents,
+                check_size=check_size,
+                check_file=check_file,
+                fdict=fdict,
+                api=api,
+            )
+        else:
+            tid = await self._match_by_download_verify(
+                torrents=torrents,
+                check_size=check_size,
+                check_file=check_file,
+                fdict=fdict,
+                tsize=tsize,
+                api=api,
+            )
 
         if tid is not None:
             logger.debug("Match found with file '%s'. Stopping search.", fname)
@@ -217,22 +243,76 @@ class TorrentSearcher:
             )
             return tid, None
 
-    async def match_by_file_content(
+    def _select_check_file(
+        self,
+        fname: str,
+        scan_querys: list[str],
+    ) -> str:
+        """Select the file to use for size checking.
+
+        Args:
+            fname: Original filename.
+            scan_querys: List of scan queries.
+
+        Returns:
+            Filename to use for size comparison.
+        """
+        if is_music_file(fname):
+            return fname
+        return scan_querys[-1] if scan_querys else fname
+
+    def _check_file_match(
+        self,
+        check_size: int,
+        fdict: dict[str, int],
+        resp_files: dict[str, int],
+        torrent_id: int,
+        check_file: str,
+    ) -> int | None:
+        """Check if check_size matches and no conflicts exist.
+
+        Args:
+            check_size: Expected file size in bytes.
+            fdict: Local file dictionary.
+            resp_files: Remote file dictionary.
+            torrent_id: Torrent ID for logging.
+            check_file: Filename for logging.
+
+        Returns:
+            torrent_id if matched, None otherwise.
+        """
+        if check_size not in resp_files.values():
+            return None
+
+        if config.cfg.linking.enable_linking or not check_conflicts(fdict, resp_files):
+            logger.success(
+                "File match found! Torrent ID: %s (File: %s)",
+                torrent_id,
+                check_file,
+            )
+            return torrent_id
+
+        logger.debug("Conflict detected. Skipping this torrent.")
+        return None
+
+    async def _match_by_file_content(
         self,
         *,
         torrents: list["TorrentSearchResult"],
-        fname: str,
-        fdict: dict,
-        scan_querys: list[str],
+        check_size: int,
+        check_file: str,
+        fdict: dict[str, int],
         api: "GazelleAPI",
     ) -> int | None:
-        """Match torrents by file content.
+        """Match torrents by exact file size comparison.
+
+        Used for trackers that provide precise byte-level sizes.
 
         Args:
             torrents: List of torrents to check.
-            fname: Original filename.
+            check_size: Expected file size in bytes.
+            check_file: Filename for logging.
             fdict: File dictionary mapping filename to size.
-            scan_querys: List of scan queries.
             api: API instance for the target site.
 
         Returns:
@@ -240,49 +320,115 @@ class TorrentSearcher:
         """
         for t_index, t in enumerate(torrents, 1):
             logger.debug(
-                "Checking torrent #%s/%s: ID %s", t_index, len(torrents), t.torrent_id
+                "Checking torrent #%s/%s: ID %s",
+                t_index,
+                len(torrents),
+                t.torrent_id,
             )
 
             try:
                 resp_files = await api.get_torrent_fdict(t.torrent_id)
             except Exception as e:
-                torrent_id = t.torrent_id
                 logger.exception(
                     "Failed to get torrent data for ID %s: %s. "
                     "Continuing with next torrent.",
-                    torrent_id,
+                    t.torrent_id,
                     e,
                 )
                 continue
 
-            check_music_file = (
-                fname
-                if is_music_file(fname)
-                else (scan_querys[-1] if scan_querys else fname)
+            result = self._check_file_match(
+                check_size, fdict, resp_files, t.torrent_id, check_file
+            )
+            if result is not None:
+                return result
+
+        return None
+
+    async def _match_by_download_verify(
+        self,
+        *,
+        torrents: list["TorrentSearchResult"],
+        check_size: int,
+        check_file: str,
+        fdict: dict[str, int],
+        tsize: int,
+        api: "GazelleAPI",
+    ) -> int | None:
+        """Match torrents using approximate sizes, then verify via download.
+
+        Used for trackers that only provide human-readable sizes (e.g.
+        "154.66 MB") which cannot be compared exactly. Candidates are
+        sorted by total size similarity first. Then for each candidate,
+        filters by approximate file size and downloads the .torrent file
+        to obtain exact sizes for final verification.
+
+        Args:
+            torrents: List of torrents to check.
+            check_size: Expected file size in bytes.
+            check_file: Filename for logging.
+            fdict: File dictionary mapping filename to size.
+            tsize: Total size of the local torrent for similarity sorting.
+            api: API instance for the target site.
+
+        Returns:
+            Torrent ID if found, None otherwise.
+        """
+        # Sort by total size similarity — closer to tsize first
+        sorted_torrents = sorted(torrents, key=lambda t: abs(t.size - tsize))
+
+        for t_index, t in enumerate(sorted_torrents, 1):
+            logger.debug(
+                "Fuzzy checking torrent #%s/%s: ID %s",
+                t_index,
+                len(sorted_torrents),
+                t.torrent_id,
             )
 
-            check_size = fdict.get(check_music_file)
-            if check_size is None:
-                logger.debug(
-                    "Key '%s' not found in fdict, skipping torrent %s",
-                    check_music_file,
+            # Stage 1: approximate match using HTML-parsed fdict
+            try:
+                approx_files = await api.get_torrent_fdict(t.torrent_id)
+            except Exception as e:
+                logger.exception(
+                    "Failed to get torrent data for ID %s: %s. "
+                    "Continuing with next torrent.",
                     t.torrent_id,
+                    e,
                 )
                 continue
 
-            if check_size in resp_files.values():
-                if config.cfg.linking.enable_linking or not check_conflicts(
-                    fdict, resp_files
-                ):
-                    logger.success(
-                        "File match found! Torrent ID: %s (File: %s)",
-                        t.torrent_id,
-                        check_music_file,
-                    )
-                    return t.torrent_id
-                else:
-                    logger.debug("Conflict detected. Skipping this torrent.")
-                    return None
+            has_approx_match = any(
+                is_size_approx_equal(check_size, size) for size in approx_files.values()
+            )
+            if not has_approx_match:
+                continue
+
+            logger.debug(
+                "Approximate file size match for torrent %s, "
+                "downloading for exact verification",
+                t.torrent_id,
+            )
+
+            # Stage 2: download .torrent for exact sizes
+            try:
+                torrent_obj = await api.download_torrent(t.torrent_id)
+                exact_files = {
+                    posixpath.relpath(f.name, torrent_obj.name): f.size
+                    for f in torrent_obj.files
+                }
+            except Exception as e:
+                logger.error(
+                    "Failed to download torrent %s for verification: %s",
+                    t.torrent_id,
+                    e,
+                )
+                continue
+
+            result = self._check_file_match(
+                check_size, fdict, exact_files, t.torrent_id, check_file
+            )
+            if result is not None:
+                return result
 
         return None
 

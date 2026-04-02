@@ -32,7 +32,8 @@ def mock_api() -> MagicMock:
     api.search_torrent_by_hash = AsyncMock(return_value=None)
     api.search_torrent_by_filename = AsyncMock(return_value=[])
     api.download_torrent = AsyncMock()
-    api.torrent = AsyncMock(return_value={})
+    api.get_torrent_fdict = AsyncMock(return_value={})
+    api.has_precise_sizes = True
     api.get_torrent_url = MagicMock(
         side_effect=lambda tid: f"https://redacted.sh/torrents.php?torrentid={tid}"
     )
@@ -212,11 +213,291 @@ class TestFilenameSearch:
         assert matched is None
 
 
-# --- Tests for match_by_file_content ---
+# --- Tests for _match_by_download_verify ---
+
+
+class TestMatchByDownloadVerify:
+    """Tests for TorrentSearcher._match_by_download_verify (fuzzy matching)."""
+
+    async def test_fuzzy_match_with_approximate_size_and_successful_verification(
+        self, searcher: TorrentSearcher, mock_api: MagicMock
+    ) -> None:
+        """Should return torrent ID when approximate size matches
+        and verification succeeds."""
+        # Set API to not have precise sizes (triggers fuzzy matching path)
+        mock_api.has_precise_sizes = False
+
+        torrents = [
+            TorrentSearchResult(torrent_id=301, size=50000000, title="Torrent A"),
+        ]
+        fdict = {"01 - Track.flac": 30000000}
+        check_file = "01 - Track.flac"
+        check_size = 30000000
+        tsize = 50000000
+
+        # Stage 1: get_torrent_fdict returns approximate size
+        mock_api.get_torrent_fdict = AsyncMock(
+            return_value={"01 - Track.flac": 30100000}  # Approximate match
+        )
+
+        # Stage 2: download_torrent returns torrent with exact sizes
+        mock_torrent = MagicMock(spec=Torrent)
+        mock_torrent.name = "Test Album"
+        mock_file = MagicMock()
+        mock_file.name = "Test Album/01 - Track.flac"
+        mock_file.size = 30000000  # Exact match
+        mock_torrent.files = [mock_file]
+        mock_api.download_torrent = AsyncMock(return_value=mock_torrent)
+
+        with patch("nemorosa.core.searcher.config") as mock_config:
+            mock_config.cfg.linking.enable_linking = False
+
+            tid = await searcher._match_by_download_verify(
+                torrents=torrents,
+                check_size=check_size,
+                check_file=check_file,
+                fdict=fdict,
+                tsize=tsize,
+                api=mock_api,
+            )
+
+        assert tid == 301
+        # Verify download was called for verification
+        mock_api.download_torrent.assert_called_once_with(301)
+
+    async def test_fuzzy_match_skips_torrent_without_approximate_match(
+        self, searcher: TorrentSearcher, mock_api: MagicMock
+    ) -> None:
+        """Should skip torrent when approximate size does not match."""
+        mock_api.has_precise_sizes = False
+
+        torrents = [
+            TorrentSearchResult(torrent_id=302, size=50000000, title="Torrent B"),
+        ]
+        fdict = {"01 - Track.flac": 30000000}
+        check_file = "01 - Track.flac"
+        check_size = 30000000
+        tsize = 50000000
+
+        # get_torrent_fdict returns size that doesn't match approximately
+        mock_api.get_torrent_fdict = AsyncMock(
+            return_value={"01 - Track.flac": 99999999}  # No approximate match
+        )
+        mock_api.download_torrent = AsyncMock()
+
+        with patch("nemorosa.core.searcher.config") as mock_config:
+            mock_config.cfg.linking.enable_linking = False
+
+            tid = await searcher._match_by_download_verify(
+                torrents=torrents,
+                check_size=check_size,
+                check_file=check_file,
+                fdict=fdict,
+                tsize=tsize,
+                api=mock_api,
+            )
+
+        assert tid is None
+        # Verify download was NOT called since approximate match failed
+        mock_api.download_torrent.assert_not_called()
+
+    async def test_fuzzy_match_download_failure_continues_to_next_torrent(
+        self, searcher: TorrentSearcher, mock_api: MagicMock
+    ) -> None:
+        """Should continue to next torrent when download fails during verification."""
+        mock_api.has_precise_sizes = False
+
+        torrents = [
+            TorrentSearchResult(torrent_id=303, size=50000000, title="Torrent C"),
+            TorrentSearchResult(torrent_id=304, size=50000100, title="Torrent D"),
+        ]
+        fdict = {"01 - Track.flac": 30000000}
+        check_file = "01 - Track.flac"
+        check_size = 30000000
+        tsize = 50000000
+
+        # Both torrents have approximate matches
+        mock_api.get_torrent_fdict = AsyncMock(
+            return_value={"01 - Track.flac": 30100000}
+        )
+
+        # First download fails, second succeeds
+        mock_torrent = MagicMock(spec=Torrent)
+        mock_torrent.name = "Test Album"
+        mock_file = MagicMock()
+        mock_file.name = "Test Album/01 - Track.flac"
+        mock_file.size = 30000000
+        mock_torrent.files = [mock_file]
+
+        mock_api.download_torrent = AsyncMock(
+            side_effect=[
+                Exception("Download failed"),  # First torrent fails
+                mock_torrent,  # Second torrent succeeds
+            ]
+        )
+
+        with patch("nemorosa.core.searcher.config") as mock_config:
+            mock_config.cfg.linking.enable_linking = False
+
+            tid = await searcher._match_by_download_verify(
+                torrents=torrents,
+                check_size=check_size,
+                check_file=check_file,
+                fdict=fdict,
+                tsize=tsize,
+                api=mock_api,
+            )
+
+        assert tid == 304
+        # Verify download was called for both torrents
+        assert mock_api.download_torrent.call_count == 2
+
+    async def test_fuzzy_match_verification_fails_with_size_mismatch(
+        self, searcher: TorrentSearcher, mock_api: MagicMock
+    ) -> None:
+        """Should reject torrent when exact verification reveals size mismatch."""
+        mock_api.has_precise_sizes = False
+
+        torrents = [
+            TorrentSearchResult(torrent_id=305, size=50000000, title="Torrent E"),
+        ]
+        fdict = {"01 - Track.flac": 30000000}
+        check_file = "01 - Track.flac"
+        check_size = 30000000
+        tsize = 50000000
+
+        # Approximate match found
+        mock_api.get_torrent_fdict = AsyncMock(
+            return_value={"01 - Track.flac": 30100000}
+        )
+
+        # But exact verification shows different size
+        mock_torrent = MagicMock(spec=Torrent)
+        mock_torrent.name = "Test Album"
+        mock_file = MagicMock()
+        mock_file.name = "Test Album/01 - Track.flac"
+        mock_file.size = 35000000  # Different from expected
+        mock_torrent.files = [mock_file]
+        mock_api.download_torrent = AsyncMock(return_value=mock_torrent)
+
+        with patch("nemorosa.core.searcher.config") as mock_config:
+            mock_config.cfg.linking.enable_linking = False
+
+            tid = await searcher._match_by_download_verify(
+                torrents=torrents,
+                check_size=check_size,
+                check_file=check_file,
+                fdict=fdict,
+                tsize=tsize,
+                api=mock_api,
+            )
+
+        assert tid is None
+
+    async def test_fuzzy_match_sorts_by_total_size_similarity(
+        self, searcher: TorrentSearcher, mock_api: MagicMock
+    ) -> None:
+        """Should prioritize torrents with total size closer to target."""
+        mock_api.has_precise_sizes = False
+
+        torrents = [
+            TorrentSearchResult(torrent_id=306, size=90000000, title="Far Match"),
+            TorrentSearchResult(torrent_id=307, size=50000100, title="Close Match"),
+            TorrentSearchResult(torrent_id=308, size=10000000, title="Very Far Match"),
+        ]
+        fdict = {"01 - Track.flac": 30000000}
+        check_file = "01 - Track.flac"
+        check_size = 30000000
+        tsize = 50000000  # Closest to torrent_id 307
+
+        call_order = []
+
+        async def track_fdict_call(tid):
+            call_order.append(tid)
+            return {"01 - Track.flac": 30100000}
+
+        async def track_download_call(tid):
+            call_order.append(f"download_{tid}")
+            if tid == 307:  # Match on second torrent
+                mock_torrent = MagicMock(spec=Torrent)
+                mock_torrent.name = "Test Album"
+                mock_file = MagicMock()
+                mock_file.name = "Test Album/01 - Track.flac"
+                mock_file.size = 30000000
+                mock_torrent.files = [mock_file]
+                return mock_torrent
+            raise Exception("Should not reach here")
+
+        mock_api.get_torrent_fdict = AsyncMock(side_effect=track_fdict_call)
+        mock_api.download_torrent = AsyncMock(side_effect=track_download_call)
+
+        with patch("nemorosa.core.searcher.config") as mock_config:
+            mock_config.cfg.linking.enable_linking = False
+
+            tid = await searcher._match_by_download_verify(
+                torrents=torrents,
+                check_size=check_size,
+                check_file=check_file,
+                fdict=fdict,
+                tsize=tsize,
+                api=mock_api,
+            )
+
+        assert tid == 307
+        # Verify torrents were checked in order of size similarity (307, 306, 308)
+        assert call_order[0] == 307  # Closest to tsize
+
+    async def test_fuzzy_match_api_error_continues_to_next_torrent(
+        self, searcher: TorrentSearcher, mock_api: MagicMock
+    ) -> None:
+        """Should continue checking next torrent when get_torrent_fdict fails."""
+        mock_api.has_precise_sizes = False
+
+        torrents = [
+            TorrentSearchResult(torrent_id=309, size=50000000, title="Torrent F"),
+            TorrentSearchResult(torrent_id=310, size=50000100, title="Torrent G"),
+        ]
+        fdict = {"01 - Track.flac": 30000000}
+        check_file = "01 - Track.flac"
+        check_size = 30000000
+        tsize = 50000000
+
+        # First API call fails, second succeeds
+        mock_api.get_torrent_fdict = AsyncMock(
+            side_effect=[
+                Exception("API error"),
+                {"01 - Track.flac": 30100000},
+            ]
+        )
+
+        mock_torrent = MagicMock(spec=Torrent)
+        mock_torrent.name = "Test Album"
+        mock_file = MagicMock()
+        mock_file.name = "Test Album/01 - Track.flac"
+        mock_file.size = 30000000
+        mock_torrent.files = [mock_file]
+        mock_api.download_torrent = AsyncMock(return_value=mock_torrent)
+
+        with patch("nemorosa.core.searcher.config") as mock_config:
+            mock_config.cfg.linking.enable_linking = False
+
+            tid = await searcher._match_by_download_verify(
+                torrents=torrents,
+                check_size=check_size,
+                check_file=check_file,
+                fdict=fdict,
+                tsize=tsize,
+                api=mock_api,
+            )
+
+        assert tid == 310
+
+
+# --- Tests for _match_by_file_content ---
 
 
 class TestMatchByFileContent:
-    """Tests for TorrentSearcher.match_by_file_content."""
+    """Tests for TorrentSearcher._match_by_file_content."""
 
     async def test_match_found_by_file_size(
         self, searcher: TorrentSearcher, mock_api: MagicMock
@@ -226,20 +507,19 @@ class TestMatchByFileContent:
             TorrentSearchResult(torrent_id=201, size=50000000, title="Torrent A"),
         ]
         fdict = {"01 - Track.flac": 30000000}
-        scan_querys = ["01 - Track.flac"]
 
-        mock_api.torrent = AsyncMock(
-            return_value={"fileList": {"01 - Track.flac": 30000000}}
+        mock_api.get_torrent_fdict = AsyncMock(
+            return_value={"01 - Track.flac": 30000000}
         )
 
         with patch("nemorosa.core.searcher.config") as mock_config:
             mock_config.cfg.linking.enable_linking = False
 
-            tid = await searcher.match_by_file_content(
+            tid = await searcher._match_by_file_content(
                 torrents=torrents,
-                fname="01 - Track.flac",
+                check_size=30000000,
+                check_file="01 - Track.flac",
                 fdict=fdict,
-                scan_querys=scan_querys,
                 api=mock_api,
             )
 
@@ -253,20 +533,19 @@ class TestMatchByFileContent:
             TorrentSearchResult(torrent_id=201, size=50000000, title="Torrent A"),
         ]
         fdict = {"01 - Track.flac": 30000000}
-        scan_querys = ["01 - Track.flac"]
 
-        mock_api.torrent = AsyncMock(
-            return_value={"fileList": {"01 - Track.flac": 99999999}}
+        mock_api.get_torrent_fdict = AsyncMock(
+            return_value={"01 - Track.flac": 99999999}
         )
 
         with patch("nemorosa.core.searcher.config") as mock_config:
             mock_config.cfg.linking.enable_linking = False
 
-            tid = await searcher.match_by_file_content(
+            tid = await searcher._match_by_file_content(
                 torrents=torrents,
-                fname="01 - Track.flac",
+                check_size=30000000,
+                check_file="01 - Track.flac",
                 fdict=fdict,
-                scan_querys=scan_querys,
                 api=mock_api,
             )
 
@@ -283,26 +562,23 @@ class TestMatchByFileContent:
             "01 - Track.flac": 30000000,
             "cover.jpg": 5000,
         }
-        scan_querys = ["01 - Track.flac"]
 
         # File size matches for the music file, but cover.jpg has conflict
-        mock_api.torrent = AsyncMock(
+        mock_api.get_torrent_fdict = AsyncMock(
             return_value={
-                "fileList": {
-                    "01 - Track.flac": 30000000,
-                    "cover.jpg": 9999,
-                }
+                "01 - Track.flac": 30000000,
+                "cover.jpg": 9999,
             }
         )
 
         with patch("nemorosa.core.searcher.config") as mock_config:
             mock_config.cfg.linking.enable_linking = False
 
-            tid = await searcher.match_by_file_content(
+            tid = await searcher._match_by_file_content(
                 torrents=torrents,
-                fname="01 - Track.flac",
+                check_size=30000000,
+                check_file="01 - Track.flac",
                 fdict=fdict,
-                scan_querys=scan_querys,
                 api=mock_api,
             )
 
@@ -319,25 +595,22 @@ class TestMatchByFileContent:
             "01 - Track.flac": 30000000,
             "cover.jpg": 5000,
         }
-        scan_querys = ["01 - Track.flac"]
 
-        mock_api.torrent = AsyncMock(
+        mock_api.get_torrent_fdict = AsyncMock(
             return_value={
-                "fileList": {
-                    "01 - Track.flac": 30000000,
-                    "cover.jpg": 9999,
-                }
+                "01 - Track.flac": 30000000,
+                "cover.jpg": 9999,
             }
         )
 
         with patch("nemorosa.core.searcher.config") as mock_config:
             mock_config.cfg.linking.enable_linking = True
 
-            tid = await searcher.match_by_file_content(
+            tid = await searcher._match_by_file_content(
                 torrents=torrents,
-                fname="01 - Track.flac",
+                check_size=30000000,
+                check_file="01 - Track.flac",
                 fdict=fdict,
-                scan_querys=scan_querys,
                 api=mock_api,
             )
 
@@ -352,23 +625,22 @@ class TestMatchByFileContent:
             TorrentSearchResult(torrent_id=202, size=50000000, title="Torrent B"),
         ]
         fdict = {"01 - Track.flac": 30000000}
-        scan_querys = ["01 - Track.flac"]
 
-        mock_api.torrent = AsyncMock(
+        mock_api.get_torrent_fdict = AsyncMock(
             side_effect=[
                 Exception("API error"),
-                {"fileList": {"01 - Track.flac": 30000000}},
+                {"01 - Track.flac": 30000000},
             ]
         )
 
         with patch("nemorosa.core.searcher.config") as mock_config:
             mock_config.cfg.linking.enable_linking = False
 
-            tid = await searcher.match_by_file_content(
+            tid = await searcher._match_by_file_content(
                 torrents=torrents,
-                fname="01 - Track.flac",
+                check_size=30000000,
+                check_file="01 - Track.flac",
                 fdict=fdict,
-                scan_querys=scan_querys,
                 api=mock_api,
             )
 
