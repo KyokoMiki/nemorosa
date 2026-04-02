@@ -66,7 +66,6 @@ class TorrentSearchResult(msgspec.Struct):
     title: str
 
 
-
 class TrackerSpec(msgspec.Struct):
     """Predefined Tracker specification."""
 
@@ -108,6 +107,11 @@ class GazelleBase(ABC):
         self.authkey = None
         self.passkey = None
         self.auth_method = AuthMethod.COOKIES  # Default authentication method
+
+        # Whether this tracker provides exact byte-level sizes from search
+        # results and file lists. False means sizes are approximate (parsed
+        # from human-readable strings like "154.66 MB").
+        self.has_precise_sizes = True
 
         # API configuration - subclasses can override these
         self._api_endpoint = "/ajax.php"

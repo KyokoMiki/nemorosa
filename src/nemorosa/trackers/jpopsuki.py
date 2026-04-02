@@ -1,13 +1,15 @@
 """JPopSuki HTML scraping implementation for nemorosa."""
 
 from contextlib import suppress
+from http.cookies import SimpleCookie
 from typing import Any
 
+from aiohttp import ClientSession
 from bs4 import BeautifulSoup
 from humanfriendly import InvalidSize, parse_size
 
 from .. import logger
-from .api_common import TorrentSearchResult
+from .api_common import TorrentSearchResult, TrackerSpec
 from .gazelle_html import GazelleParser
 
 
@@ -18,6 +20,17 @@ class JPopSuki(GazelleParser):
 
     # Size column is at index 5 (category, cover, name, files, added, size)
     _size_column_index = 5
+
+    def __init__(
+        self,
+        server: str,
+        spec: TrackerSpec,
+        cookies: SimpleCookie | None = None,
+        api_key: str | None = None,
+        session: ClientSession | None = None,
+    ) -> None:
+        super().__init__(server, spec, cookies, api_key, session)
+        self.has_precise_sizes = False
 
     async def search_torrent_by_filename(
         self, filename: str
@@ -48,9 +61,7 @@ class JPopSuki(GazelleParser):
         )
         return torrents
 
-    async def search_torrent_by_hash(
-        self, torrent_hash: str
-    ) -> dict[str, Any] | None:
+    async def search_torrent_by_hash(self, torrent_hash: str) -> dict[str, Any] | None:
         """JPopSuki does not support hash-based search.
 
         Args:
@@ -76,9 +87,7 @@ class JPopSuki(GazelleParser):
                 "torrents.php", params={"torrentid": torrent_id}
             )
         except Exception as e:
-            logger.error(
-                "Failed to get torrent page for id %s: %s", torrent_id, e
-            )
+            logger.error("Failed to get torrent page for id %s: %s", torrent_id, e)
             return {}
 
         return self._parse_torrent_file_table(content, torrent_id)
@@ -101,9 +110,7 @@ class JPopSuki(GazelleParser):
         soup = BeautifulSoup(html_content, "lxml")
         detail_row = soup.select_one(f"tr#torrent_{torrent_id}")
         if not detail_row:
-            logger.warning(
-                "Could not find detail row for torrent %s", torrent_id
-            )
+            logger.warning("Could not find detail row for torrent %s", torrent_id)
             return {}
 
         # The file table is a nested <table> inside the detail row;
@@ -121,7 +128,5 @@ class JPopSuki(GazelleParser):
             with suppress(InvalidSize, ValueError):
                 file_list[filename] = parse_size(size_text, binary=True)
 
-        logger.debug(
-            "Parsed %d file(s) for torrent %s", len(file_list), torrent_id
-        )
+        logger.debug("Parsed %d file(s) for torrent %s", len(file_list), torrent_id)
         return file_list

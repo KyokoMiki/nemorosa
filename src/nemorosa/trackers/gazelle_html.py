@@ -115,9 +115,7 @@ class GazelleParser(GazelleBase):
         if len(cells) > self._size_column_index:
             with suppress(InvalidSize, ValueError):
                 size_text = (
-                    cells[self._size_column_index]
-                    .get_text(strip=True)
-                    .replace(",", "")
+                    cells[self._size_column_index].get_text(strip=True).replace(",", "")
                 )
                 return parse_size(size_text, binary=True)
 

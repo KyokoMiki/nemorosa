@@ -241,6 +241,28 @@ def filename_match(torrent_name: str, local_names: list[str]) -> str | None:
     return best_match
 
 
+def is_size_approx_equal(size_a: int, size_b: int, tolerance: float = 0.01) -> bool:
+    """Check if two sizes are approximately equal within a tolerance.
+
+    Useful for comparing sizes parsed from human-readable strings
+    (e.g. "154.66 MB") against exact byte counts.
+
+    Args:
+        size_a: First size in bytes.
+        size_b: Second size in bytes.
+        tolerance: Maximum allowed relative difference. Defaults to 0.01 (1%).
+
+    Returns:
+        True if sizes are within tolerance of each other.
+    """
+    if size_a == size_b:
+        return True
+    max_size = max(size_a, size_b)
+    if max_size == 0:
+        return False
+    return abs(size_a - size_b) / max_size <= tolerance
+
+
 def check_conflicts(fdict_local, fdict_torrent):
     """Detect conflicts of same-name files with different sizes.
 
