@@ -1,6 +1,7 @@
 """Torrent injection logic for nemorosa."""
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from asyncer import asyncify
@@ -12,7 +13,7 @@ from ..filecompare import generate_link_map, generate_rename_map
 from ..filelinking import create_file_links_for_torrent
 
 # Type alias for the link function signature
-LinkFn = Callable[[Torrent, str, str, dict[str, Any]], str | None]
+LinkFn = Callable[[Torrent, Path, str, dict[str, Any]], Path | None]
 
 
 class TorrentInjector:
@@ -62,14 +63,14 @@ class TorrentInjector:
 
         file_mapping = generate_link_map(local_fdict, matched_fdict)
         final_dir = await asyncify(self.link_fn)(
-            torrent_object, download_dir, torrent_name, file_mapping
+            torrent_object, Path(download_dir), torrent_name, file_mapping
         )
         if final_dir is None:
             logger.error(
                 "Failed to create file links, falling back to original directory"
             )
             return download_dir
-        return final_dir
+        return str(final_dir)
 
     async def inject_matched_torrent(
         self,
