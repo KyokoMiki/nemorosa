@@ -68,9 +68,6 @@ class LinkingConfig(msgspec.Struct):
     link_dirs: list[str] = msgspec.field(default_factory=list)
     link_type: LinkType = LinkType.HARDLINK
 
-    # Directory creation mode (octal digits as integer, e.g., 775 = 0o775)
-    dir_mode: int = 775
-
     def __post_init__(self):
         # Validate link_dirs when linking is enabled
         if self.enable_linking:
@@ -80,25 +77,6 @@ class LinkingConfig(msgspec.Struct):
             for item in self.link_dirs:
                 if not item.strip():
                     raise ValueError("link_dirs cannot contain empty strings")
-
-        # Validate and convert dir_mode
-        mode_str = str(self.dir_mode)
-
-        # Parse octal digits as octal value (e.g., "775" -> 0o775)
-        # Validates each digit is valid for octal (0-7)
-        try:
-            self.dir_mode = int(mode_str, 8)
-        except ValueError as err:
-            raise ValueError(
-                f"dir_mode must contain only octal digits 0-7; got: {mode_str}"
-            ) from err
-
-        # Check if the octal value is within valid permission range (0o0 to 0o777)
-        if not (0o0 <= self.dir_mode <= 0o777):
-            raise ValueError(
-                f"dir_mode must be between 0 and 777 (octal permissions), "
-                f"got: {mode_str}"
-            )
 
 
 class GlobalConfig(msgspec.Struct):
@@ -143,9 +121,7 @@ class DownloaderConfig(msgspec.Struct):
             if not self.url.startswith("deluge://"):
                 raise ValueError("URL must start with deluge:// for deluge client")
         elif self.type == ClientType.RTORRENT:
-            if not self.url.startswith(
-                ("http://", "https://", "scgi://")
-            ):
+            if not self.url.startswith(("http://", "https://", "scgi://")):
                 raise ValueError(
                     "URL must start with http://, https://, or scgi:// "
                     "for rtorrent client"
@@ -389,8 +365,6 @@ linking:
   enable_linking: false # Whether to enable file linking
   link_dirs: [] # List of directories to create links in
   link_type: "hardlink" # Type of link: symlink, hardlink, reflink, reflink_or_copy
-  # Directory creation mode, default 775 (rwxrwxr-x) to allow torrent client writes
-  dir_mode: 775
 
 server:
   # Web server settings
