@@ -609,8 +609,8 @@ class NemorosaCore:
             )
 
         try:
-            torrent_info = await torrent_api.torrent(tid)
-            if not torrent_info:
+            fdict_torrent = await torrent_api.get_torrent_fdict(tid)
+            if not fdict_torrent:
                 return ProcessResponse(
                     status=ProcessStatus.ERROR,
                     message=f"Failed to get torrent info for ID: {tid}",
@@ -622,7 +622,6 @@ class NemorosaCore:
                 message=f"Failed to get torrent info: {str(e)}",
             )
 
-        fdict_torrent = torrent_info.get("fileList", {})
         return torrent_api, fdict_torrent
 
     async def _find_reverse_announce_match(

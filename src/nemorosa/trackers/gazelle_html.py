@@ -19,6 +19,14 @@ from .api_common import (
 
 
 class GazelleParser(GazelleBase):
+    # CSS selector for torrent rows in search results HTML.
+    # Subclasses can override to match different table structures.
+    _torrent_row_selector = "tr.group_torrent"
+
+    # Column index (0-based) for the torrent size cell.
+    # Subclasses can override if the table layout differs.
+    _size_column_index = 4
+
     def __init__(
         self,
         server: str,
@@ -83,7 +91,7 @@ class GazelleParser(GazelleBase):
         soup = BeautifulSoup(html_content, "lxml")
 
         # Find all torrents under albums
-        torrent_rows = soup.select("tr.group_torrent")
+        torrent_rows = soup.select(self._torrent_row_selector)
         logger.debug("Found %d torrent row(s) in HTML", len(torrent_rows))
 
         torrents = [
@@ -103,10 +111,14 @@ class GazelleParser(GazelleBase):
         Returns:
             Parsed size in bytes, or 0 if parsing fails.
         """
-        # Try column 4 first (standard structure)
-        if len(cells) > 4:
+        # Try configured size column first
+        if len(cells) > self._size_column_index:
             with suppress(InvalidSize, ValueError):
-                size_text = cells[4].get_text(strip=True).replace(",", "")
+                size_text = (
+                    cells[self._size_column_index]
+                    .get_text(strip=True)
+                    .replace(",", "")
+                )
                 return parse_size(size_text, binary=True)
 
         # Fallback: search for a cell that parses as size
