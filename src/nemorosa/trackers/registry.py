@@ -57,6 +57,8 @@ TRACKER_REGISTRY: dict[str, tuple[type[GazelleAPI], TrackerSpec]] = {
             source_flag="#bemaniso tracker",
             tracker_url="https://tracker.bemaniso.ws",
             tracker_query="tracker.bemaniso.ws",
+            response_key="data",
+            error_key="data",
         ),
     ),
     "https://libble.me": (
@@ -256,7 +258,7 @@ def find_api_by_tracker(
 
     for api_instance in apis:
         for tracker in tracker_list:
-            if api_instance.tracker_query in tracker:
+            if api_instance.spec.tracker_query in tracker:
                 return api_instance
 
     return None

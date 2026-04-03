@@ -74,10 +74,25 @@ class TrackerSpec(msgspec.Struct):
     source_flag: str
     tracker_url: str
     tracker_query: str
+    # Top-level keys for API response envelope.
+    # Standard Gazelle uses "response" for data and "error" for errors.
+    # Some trackers (e.g. bemaniso) use "data" for both.
+    response_key: str = "response"
+    error_key: str = "error"
 
 
 class GazelleBase(ABC):
     """Base class for Gazelle API, containing common attributes and methods."""
+
+    # API configuration — subclasses override at class level
+    _api_endpoint: str = "/ajax.php"
+    _api_action_key: str = "action"
+    _auth_action: str = "index"
+
+    # Whether this tracker provides exact byte-level sizes from search
+    # results and file lists. False means sizes are approximate (parsed
+    # from human-readable strings like "154.66 MB").
+    has_precise_sizes: bool = True
 
     def __init__(
         self,
@@ -108,35 +123,21 @@ class GazelleBase(ABC):
         self.passkey = None
         self.auth_method = AuthMethod.COOKIES  # Default authentication method
 
-        # Whether this tracker provides exact byte-level sizes from search
-        # results and file lists. False means sizes are approximate (parsed
-        # from human-readable strings like "154.66 MB").
-        self.has_precise_sizes = True
-
-        # API configuration - subclasses can override these
-        self._api_endpoint = "/ajax.php"
-        self._api_action_key = "action"
-        self._auth_action = "index"  # Action name for authentication API call
-
         self._rate_limiter = None
-        self.rate_limit_max_requests = spec.rate_limit_max_requests
-        self.rate_limit_period = spec.rate_limit_period
-        self.source_flag = spec.source_flag
-        self.tracker_url = spec.tracker_url
-        self.tracker_query = spec.tracker_query
+        self.spec = spec
 
     @property
     def rate_limiter(self) -> AsyncLimiter:
         """Get rate limiter for current event loop."""
         if self._rate_limiter is None:
             self._rate_limiter = AsyncLimiter(
-                self.rate_limit_max_requests, self.rate_limit_period
+                self.spec.rate_limit_max_requests, self.spec.rate_limit_period
             )
         return self._rate_limiter
 
     @property
     def announce(self) -> str:
-        return f"{self.tracker_url}/{self.passkey}/announce"
+        return f"{self.spec.tracker_url}/{self.passkey}/announce"
 
     @property
     def site_host(self) -> str:
@@ -171,7 +172,7 @@ class GazelleBase(ABC):
             return {}
 
         logger.debug("Torrent lookup successful for id: %s", torrent_id)
-        torrent_data = torrent_lookup["response"]["torrent"]
+        torrent_data = torrent_lookup[self.spec.response_key]["torrent"]
         return self.parse_file_list(torrent_data.get("fileList", ""))
 
     async def _get_torrent_data(self, torrent_id: int | str) -> dict[str, Any]:
@@ -284,29 +285,40 @@ class GazelleBase(ABC):
             list[TorrentSearchResult]: List containing torrent information.
         """
 
-    async def search_torrent_by_hash(self, torrent_hash: str) -> dict[str, Any] | None:
+    async def search_torrent_by_hash(
+        self, torrent_hash: str
+    ) -> TorrentSearchResult | None:
         """Search torrent by hash using the Gazelle API.
 
         Args:
-            torrent_hash (str): Torrent hash to search for.
+            torrent_hash: Torrent hash to search for.
 
         Returns:
-            dict[str, Any] | None: Search result with torrent info, or None
-                if not found.
+            TorrentSearchResult if found, None otherwise.
+
+        Raises:
+            RequestException: If the API returns an unexpected error.
         """
         try:
             response = await self.api("torrent", hash=torrent_hash)
             if response.get("status") == "success":
                 logger.debug("Hash search successful for hash '%s'", torrent_hash)
-                return response
+                data = response[self.spec.response_key]
+                torrent_data = data["torrent"]
+                group_name = data.get("group", {}).get("name", "")
+                return TorrentSearchResult(
+                    torrent_id=int(torrent_data["id"]),
+                    size=int(torrent_data.get("size", 0)),
+                    title=group_name or f"Torrent {torrent_data['id']}",
+                )
             else:
-                if response.get("error") in ("bad parameters", "bad hash parameter"):
+                error = response.get(self.spec.error_key, "unknown error")
+                if error in ("bad parameters", "bad hash parameter"):
                     logger.debug("No torrent found matching hash '%s'", torrent_hash)
                     return None
                 else:
                     raise RequestException(
-                        f"Error searching for torrent by hash "
-                        f"'{torrent_hash}': {response.get('error')}"
+                        f"Error searching for torrent by hash '{torrent_hash}': {error}"
                     )
         except RequestException:
             raise
@@ -401,12 +413,12 @@ class GazelleBase(ABC):
         """
         accountinfo = await self.api(self._auth_action)
         if accountinfo.get("status") != "success":
-            error = accountinfo.get("error", "unknown error")
+            error = accountinfo.get(self.spec.error_key, "unknown error")
             if error in ("bad credentials", "invalid token", "APIKey is not valid."):
                 raise InvalidCredentialsException(f"Invalid credentials: {error}")
             raise RequestException(f"Authentication failed: {error}")
         try:
-            self.authkey = accountinfo["response"]["authkey"]
-            self.passkey = accountinfo["response"]["passkey"]
+            self.authkey = accountinfo[self.spec.response_key]["authkey"]
+            self.passkey = accountinfo[self.spec.response_key]["passkey"]
         except KeyError as e:
             raise RequestException(f"Invalid response format: missing {e}") from e

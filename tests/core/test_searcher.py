@@ -25,7 +25,7 @@ def searcher() -> TorrentSearcher:
 def mock_api() -> MagicMock:
     """Create a mock API instance with common attributes."""
     api = MagicMock()
-    api.source_flag = "RED"
+    api.spec.source_flag = "RED"
     api.server = "https://redacted.sh"
     api.site_host = "redacted.sh"
     api.announce = "https://flacsfor.me/testpasskey/announce"
@@ -51,9 +51,9 @@ class TestHashBasedSearch:
     ) -> None:
         """Should return torrent ID when hash search succeeds."""
         mock_api.search_torrent_by_hash = AsyncMock(
-            return_value={
-                "response": {"torrent": {"id": 42}},
-            }
+            return_value=TorrentSearchResult(
+                torrent_id=42, size=50000000, title="Test Torrent"
+            ),
         )
 
         tid, matched = await searcher.hash_based_search(
@@ -87,7 +87,9 @@ class TestHashBasedSearch:
             nonlocal call_count
             call_count += 1
             if call_count == 3:  # Third call (PTH flag)
-                return {"response": {"torrent": {"id": 99}}}
+                return TorrentSearchResult(
+                    torrent_id=99, size=50000000, title="Test Torrent"
+                )
             return None
 
         mock_api.search_torrent_by_hash = AsyncMock(side_effect=side_effect)
@@ -103,14 +105,16 @@ class TestHashBasedSearch:
         self, searcher: TorrentSearcher, mock_api: MagicMock, sample_torrent: Torrent
     ) -> None:
         """Should try OPS, empty, and APL source flags for OPS tracker."""
-        mock_api.source_flag = "OPS"
+        mock_api.spec.source_flag = "OPS"
         call_count = 0
 
         async def side_effect(torrent_hash: str):
             nonlocal call_count
             call_count += 1
             if call_count == 3:  # Third call (APL flag)
-                return {"response": {"torrent": {"id": 77}}}
+                return TorrentSearchResult(
+                    torrent_id=77, size=50000000, title="Test Torrent"
+                )
             return None
 
         mock_api.search_torrent_by_hash = AsyncMock(side_effect=side_effect)
@@ -134,7 +138,9 @@ class TestHashBasedSearch:
             if call_count == 1:
                 raise Exception("Network error")
             if call_count == 2:
-                return {"response": {"torrent": {"id": 55}}}
+                return TorrentSearchResult(
+                    torrent_id=55, size=50000000, title="Test Torrent"
+                )
             return None
 
         mock_api.search_torrent_by_hash = AsyncMock(side_effect=side_effect)

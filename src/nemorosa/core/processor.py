@@ -253,16 +253,16 @@ class NemorosaCore:
             logger.debug(
                 "Trying target site: %s (tracker: %s)",
                 api_instance.server,
-                api_instance.tracker_query,
+                api_instance.spec.tracker_query,
             )
 
             if should_skip_target_site(
-                api_instance.tracker_query,
+                api_instance.spec.tracker_query,
                 torrent_details.existing_target_trackers,
             ):
                 logger.debug(
                     "Content already exists on %s, skipping",
-                    api_instance.tracker_query,
+                    api_instance.spec.tracker_query,
                 )
                 continue
 
@@ -305,7 +305,7 @@ class NemorosaCore:
         logger.section("===== Processing Torrents =====")
 
         target_trackers = [
-            api_instance.tracker_query for api_instance in self.target_apis
+            api_instance.spec.tracker_query for api_instance in self.target_apis
         ]
 
         self.stats = ProcessorStats()
@@ -518,7 +518,7 @@ class NemorosaCore:
         """
         try:
             target_trackers = {
-                api_instance.tracker_query for api_instance in self.target_apis
+                api_instance.spec.tracker_query for api_instance in self.target_apis
             }
 
             # Find the torrent across all clients
