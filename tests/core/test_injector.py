@@ -8,6 +8,7 @@ from torf import Torrent
 
 from nemorosa.clients.client_common import ClientTorrentInfo, TorrentClient
 from nemorosa.core.injector import TorrentInjector
+from nemorosa.filelinking import create_file_links_for_torrent
 
 pytestmark = pytest.mark.anyio
 
@@ -210,8 +211,6 @@ class TestInjectableLinkFn:
 
     async def test_default_link_fn_is_create_file_links(self) -> None:
         """Should default to create_file_links_for_torrent."""
-        from nemorosa.filelinking import create_file_links_for_torrent
-
         injector = TorrentInjector()
         assert injector.link_fn is create_file_links_for_torrent
 

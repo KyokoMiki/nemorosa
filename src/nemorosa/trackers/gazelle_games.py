@@ -25,6 +25,10 @@ class GazelleGamesNet(GazelleBase):
     This class implements GGN's specific API endpoints using api.php.
     """
 
+    _api_endpoint = "/api.php"
+    _api_action_key = "request"
+    _auth_action = "quick_user"
+
     def __init__(
         self,
         server: str,
@@ -34,11 +38,6 @@ class GazelleGamesNet(GazelleBase):
         session: ClientSession | None = None,
     ) -> None:
         super().__init__(server, spec, session=session)
-
-        # GGN uses different API configuration
-        self._api_endpoint = "/api.php"
-        self._api_action_key = "request"
-        self._auth_action = "quick_user"
 
         if api_key:
             # GGN API documentation specifies X-API-Key header (not Authorization)
@@ -66,18 +65,19 @@ class GazelleGamesNet(GazelleBase):
         response = await self.request(download_url)
         return Torrent.read_stream(response)
 
-    async def search_torrent_by_hash(self, torrent_hash: str) -> dict[str, Any] | None:
+    async def search_torrent_by_hash(
+        self, torrent_hash: str
+    ) -> TorrentSearchResult | None:
         """Search torrent by hash using GGN's api.php endpoint.
 
         GGN requires uppercase hash for search.
 
         Args:
-            torrent_hash (str): Torrent hash to search for (can be lowercase
+            torrent_hash: Torrent hash to search for (can be lowercase
                 or uppercase).
 
         Returns:
-            dict[str, Any] | None: Search result with torrent info, or None
-                if not found.
+            Torrent ID if found, None otherwise.
         """
         return await super().search_torrent_by_hash(torrent_hash.upper())
 

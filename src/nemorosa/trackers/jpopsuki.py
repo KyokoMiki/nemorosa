@@ -1,15 +1,12 @@
 """JPopSuki HTML scraping implementation for nemorosa."""
 
 from contextlib import suppress
-from http.cookies import SimpleCookie
-from typing import Any
 
-from aiohttp import ClientSession
 from bs4 import BeautifulSoup
 from humanfriendly import InvalidSize, parse_size
 
 from .. import logger
-from .api_common import TorrentSearchResult, TrackerSpec
+from .api_common import TorrentSearchResult
 from .gazelle_html import GazelleParser
 
 
@@ -21,16 +18,7 @@ class JPopSuki(GazelleParser):
     # Size column is at index 5 (category, cover, name, files, added, size)
     _size_column_index = 5
 
-    def __init__(
-        self,
-        server: str,
-        spec: TrackerSpec,
-        cookies: SimpleCookie | None = None,
-        api_key: str | None = None,
-        session: ClientSession | None = None,
-    ) -> None:
-        super().__init__(server, spec, cookies, api_key, session)
-        self.has_precise_sizes = False
+    has_precise_sizes = False
 
     async def search_torrent_by_filename(
         self, filename: str
@@ -61,7 +49,9 @@ class JPopSuki(GazelleParser):
         )
         return torrents
 
-    async def search_torrent_by_hash(self, torrent_hash: str) -> dict[str, Any] | None:
+    async def search_torrent_by_hash(
+        self, torrent_hash: str
+    ) -> TorrentSearchResult | None:
         """JPopSuki does not support hash-based search.
 
         Args:

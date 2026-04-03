@@ -58,7 +58,7 @@ class GazelleJSONAPI(GazelleBase):
 
             # Process search results
             results = []
-            for group in response["response"]["results"]:
+            for group in response[self.spec.response_key]["results"]:
                 if "torrents" not in group:
                     continue
                 group_name = group.get("groupName", "")

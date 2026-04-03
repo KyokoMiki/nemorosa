@@ -49,7 +49,7 @@ class TorrentSearcher:
             Torrent ID and matched torrent if found, (None, None) otherwise.
         """
         torrent_copy = Torrent.copy(torrent_object)
-        target_source_flag = api.source_flag
+        target_source_flag = api.spec.source_flag
 
         source_flags = {target_source_flag, ""}
         if target_source_flag == "RED":
@@ -62,14 +62,13 @@ class TorrentSearcher:
                 torrent_copy.source = flag
                 torrent_hash = torrent_copy.infohash
 
-                search_result = await api.search_torrent_by_hash(torrent_hash)
-                if search_result:
+                result = await api.search_torrent_by_hash(torrent_hash)
+                if result is not None:
                     logger.success("Found torrent by hash! Hash: %s", torrent_hash)
-                    tid = int(search_result["response"]["torrent"]["id"])
-                    logger.success("Found match! Torrent ID: %d", tid)
-                    torrent_copy.comment = api.get_torrent_url(tid)
+                    logger.success("Found match! Torrent ID: %d", result.torrent_id)
+                    torrent_copy.comment = api.get_torrent_url(result.torrent_id)
                     torrent_copy.trackers = [api.announce]
-                    return tid, torrent_copy
+                    return result.torrent_id, torrent_copy
             except Exception as e:
                 logger.debug("Hash search failed for source '%s': %s", flag, e)
 
@@ -397,10 +396,8 @@ class TorrentSearcher:
                 )
                 continue
 
-            has_approx_match = any(
-                is_size_approx_equal(check_size, size) for size in approx_files.values()
-            )
-            if not has_approx_match:
+            approx_size = approx_files.get(check_file)
+            if approx_size is None or not is_size_approx_equal(check_size, approx_size):
                 continue
 
             logger.debug(
@@ -412,10 +409,7 @@ class TorrentSearcher:
             # Stage 2: download .torrent for exact sizes
             try:
                 torrent_obj = await api.download_torrent(t.torrent_id)
-                exact_files = {
-                    posixpath.relpath(f.name, torrent_obj.name): f.size
-                    for f in torrent_obj.files
-                }
+                exact_files = {"/".join(f.parts[1:]): f.size for f in torrent_obj.files}
             except Exception as e:
                 logger.error(
                     "Failed to download torrent %s for verification: %s",
