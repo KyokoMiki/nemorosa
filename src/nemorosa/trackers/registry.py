@@ -49,6 +49,16 @@ TRACKER_REGISTRY: dict[str, tuple[type[GazelleAPI], TrackerSpec]] = {
             tracker_query="tracker.52dic.vip",
         ),
     ),
+    "https://bemaniso.ws": (
+        GazelleJSONAPI,
+        TrackerSpec(
+            rate_limit_max_requests=2,
+            rate_limit_period=10.0,
+            source_flag="#bemaniso tracker",
+            tracker_url="https://tracker.bemaniso.ws",
+            tracker_query="tracker.bemaniso.ws",
+        ),
+    ),
     "https://libble.me": (
         GazelleParser,
         TrackerSpec(
