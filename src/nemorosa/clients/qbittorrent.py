@@ -7,7 +7,6 @@ import os
 import posixpath
 import time
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urlparse
 
 import qbittorrentapi
 from anyio import Path
@@ -118,23 +117,15 @@ class QBittorrentClient(TorrentClient):
             scheduler=scheduler,
             notifier=notifier,
         )
-        parsed = urlparse(downloader_config.url)
         self.torrents_dir = downloader_config.torrents_dir
-        # Build URL without credentials for qBittorrent API
-        netloc = (
-            f"{parsed.hostname}:{parsed.port}"
-            if parsed.port
-            else (parsed.hostname or "")
-        )
-        clean_url = f"{parsed.scheme}://{netloc}{parsed.path}"
         self.client = qbittorrentapi.Client(
-            host=clean_url or "http://localhost:8080",
-            username=(unquote(parsed.username) if parsed.username else None),
-            password=(unquote(parsed.password) if parsed.password else None),
+            host=downloader_config.url or "http://localhost:8080",
+            username=downloader_config.username or None,
+            password=downloader_config.password or None,
             REQUESTS_ARGS={"timeout": TORRENT_CLIENT_TIMEOUT},
         )
         # Authenticate with qBittorrent
-        if parsed.username and parsed.password:
+        if downloader_config.username and downloader_config.password:
             self.client.auth_log_in()
 
         # Initialize sync state for incremental updates

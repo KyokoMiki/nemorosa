@@ -6,7 +6,7 @@ Provides integration with Transmission via its RPC interface.
 import base64
 import posixpath
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 
 import msgspec
 import transmission_rpc
@@ -118,8 +118,8 @@ class TransmissionClient(TorrentClient):
 
         self.client = transmission_rpc.Client(
             protocol=protocol,
-            username=(unquote(parsed.username) if parsed.username else None),
-            password=(unquote(parsed.password) if parsed.password else None),
+            username=downloader_config.username or None,
+            password=downloader_config.password or None,
             host=parsed.hostname or "localhost",
             port=parsed.port or 9091,
             path=parsed.path or "/transmission/rpc",
