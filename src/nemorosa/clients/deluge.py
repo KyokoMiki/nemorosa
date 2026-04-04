@@ -7,7 +7,7 @@ import base64
 import posixpath
 import re
 from typing import TYPE_CHECKING
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 
 import deluge_client
 from anyio import Path
@@ -112,8 +112,8 @@ class DelugeClient(TorrentClient):
         self.client = deluge_client.DelugeRPCClient(
             host=parsed.hostname or "localhost",
             port=parsed.port or 58846,
-            username=unquote(parsed.username) if parsed.username else "",
-            password=unquote(parsed.password) if parsed.password else "",
+            username=downloader_config.username,
+            password=downloader_config.password,
             decode_utf8=True,
             timeout=TORRENT_CLIENT_TIMEOUT,
         )

@@ -6,7 +6,7 @@ Provides integration with rTorrent via XML-RPC interface using SCGI transport.
 import posixpath
 import xmlrpc.client  # nosec B411
 from typing import TYPE_CHECKING
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import anyio
 import defusedxml.xmlrpc
@@ -133,6 +133,25 @@ def _decode_bitfield(
     return decode_bitfield_bytes(bitfield_data, piece_count)
 
 
+def _build_authenticated_url(url: str, username: str, password: str | None) -> str:
+    """Build URL with embedded credentials for HTTP Basic Auth.
+
+    Args:
+        url: Original URL without credentials.
+        username: Username for authentication.
+        password: Password for authentication, or None.
+
+    Returns:
+        URL with credentials embedded in the netloc.
+    """
+    parsed = urlsplit(url)
+    quoted_user = quote(username, safe="")
+    quoted_pass = f":{quote(password, safe='')}" if password else ""
+    # Extract host:port from netloc, preserving IPv6 brackets
+    host_port = parsed.netloc.rsplit("@", 1)[-1]
+    return parsed._replace(netloc=f"{quoted_user}{quoted_pass}@{host_port}").geturl()
+
+
 def create_proxy(url: str) -> xmlrpc.client.ServerProxy:
     """Create XML-RPC proxy with SCGI support.
 
@@ -180,8 +199,17 @@ class RTorrentClient(TorrentClient):
         # Monkey-patch xmlrpc.client to mitigate XML vulnerabilities
         defusedxml.xmlrpc.monkey_patch()
 
-        # rTorrent uses XML-RPC — URL passed directly (includes auth)
-        self.client = create_proxy(downloader_config.url)
+        # rTorrent uses XML-RPC — rebuild URL with credentials for HTTP Basic Auth
+        url = (
+            _build_authenticated_url(
+                downloader_config.url,
+                downloader_config.username,
+                downloader_config.password,
+            )
+            if downloader_config.username
+            else downloader_config.url
+        )
+        self.client = create_proxy(url)
 
         # Use the field specifications constant
         self.field_config = _RTORRENT_FIELD_SPECS

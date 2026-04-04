@@ -4,7 +4,6 @@ import sys
 from enum import StrEnum
 from pathlib import Path
 from secrets import token_urlsafe
-from urllib.parse import urlparse
 
 import msgspec
 from humanfriendly import parse_timespan
@@ -106,6 +105,8 @@ class DownloaderConfig(msgspec.Struct):
 
     type: ClientType
     url: str
+    username: str = ""
+    password: str = ""
     torrents_dir: str = ""
     label: str | None = "nemorosa"
     tags: list[str] | None = None
@@ -139,13 +140,8 @@ class DownloaderConfig(msgspec.Struct):
 
     @property
     def client_key(self) -> str:
-        """Unique client identifier for database cache isolation (no credentials)."""
-        parsed = urlparse(self.url)
-        clean_netloc = parsed.hostname or ""
-        if parsed.port:
-            clean_netloc += f":{parsed.port}"
-        clean_url = f"{parsed.scheme}://{clean_netloc}{parsed.path}"
-        return f"{self.type.value}+{clean_url}"
+        """Unique client identifier for database cache isolation."""
+        return f"{self.type.value}+{self.url}"
 
 
 class ServerConfig(msgspec.Struct):
@@ -381,14 +377,16 @@ downloader:
   # Supported client types: deluge, transmission, qbittorrent, rtorrent
 
   # URL format examples:
-  # transmission: http://user:pass@host:port/transmission/rpc
-  # deluge: deluge://username:password@host:port
-  # qbittorrent: http://username:password@host:port
-  # rtorrent: http://RUTORRENT_ADDRESS:9380/plugins/rpc/rpc.php
+  # transmission: http://host:port/transmission/rpc
+  # deluge: deluge://host:port
+  # qbittorrent: http://host:port
+  # rtorrent: http://host:port/plugins/rpc/rpc.php
 
   # Client type: deluge, transmission, qbittorrent, rtorrent
   - type: "qbittorrent"
     url: "" # Client connection URL
+    username: "" # Client username
+    password: "" # Client password
     # The directory where your torrent client stores its .torrent files.
     # For qBittorrent 4.5.0+, torrents_dir is not needed.
     # For Windows: Use forward slashes (/) in path

@@ -436,7 +436,7 @@ def run_webserver():
     )
     logger.info("Torrent clients configured: %d", len(config.cfg.downloaders))
     for i, dl in enumerate(config.cfg.downloaders, 1):
-        logger.info("  Client %d: %s", i, logger.redact_url_password(dl.url))
+        logger.info("  Client %d: %s", i, dl.url)
     logger.info("Target sites: %d", len(config.cfg.target_sites))
 
     # Check if API key is configured
