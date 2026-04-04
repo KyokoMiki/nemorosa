@@ -7,12 +7,11 @@ name = "nemorosa"
 version = "0.4.3"
 description = "A specialized cross-seeding tool designed for music torrents, featuring automatic file mapping, partial matching, and seamless torrent injection"
 readme = "README.md"
-license = { text = "GPL-3.0-or-later" }
+license = "GPL-3.0-or-later"
 authors = [{ name = "KyokoMiki" }]
 keywords = ["torrent", "cross-seed"]
 classifiers = [
     "Development Status :: 4 - Beta",
-    "License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
