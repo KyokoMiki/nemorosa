@@ -204,48 +204,11 @@ def get_target_apis() -> list[GazelleAPI]:
     return _target_apis_instance
 
 
-def get_api_by_tracker(
-    trackers: str | Collection[str],
-) -> GazelleAPI | None:
-    """Get API instance by matching tracker query string (global wrapper).
-
-    Args:
-        trackers (str | Collection[str]): A single tracker URL string or a
-            collection of tracker URLs.
-
-    Returns:
-        The first matching API instance, or None if no match is found.
-
-    Raises:
-        RuntimeError: If target APIs have not been initialized.
-    """
-    return find_api_by_tracker(get_target_apis(), trackers)
-
-
-def get_api_by_site_host(
-    site_host: str,
-) -> GazelleAPI | None:
-    """Get API instance by matching site hostname (global wrapper).
-
-    Args:
-        site_host (str): Site hostname (e.g., 'redacted.sh', 'orpheus.network').
-
-    Returns:
-        The matching API instance, or None if no match is found.
-
-    Raises:
-        RuntimeError: If target APIs have not been initialized.
-    """
-    return find_api_by_site_host(get_target_apis(), site_host)
-
-
 def find_api_by_tracker(
     apis: list[GazelleAPI],
     trackers: str | Collection[str],
 ) -> GazelleAPI | None:
     """Find API instance by matching tracker query string.
-
-    Pure function: no global state access.
 
     Args:
         apis: List of API instances to search.
@@ -269,8 +232,6 @@ def find_api_by_site_host(
     site_host: str,
 ) -> GazelleAPI | None:
     """Find API instance by matching site hostname.
-
-    Pure function: no global state access.
 
     Args:
         apis: List of API instances to search.
