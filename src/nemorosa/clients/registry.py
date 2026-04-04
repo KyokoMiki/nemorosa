@@ -110,3 +110,19 @@ def get_torrent_clients() -> list[TorrentClient]:
             "Torrent clients not initialized. Call init_torrent_clients() first."
         )
     return _torrent_clients
+
+
+def find_client_by_key(
+    clients: list[TorrentClient],
+    client_key: str,
+) -> TorrentClient | None:
+    """Find torrent client by client key.
+
+    Args:
+        clients: List of torrent client instances to search.
+        client_key: Client key to match.
+
+    Returns:
+        The matching TorrentClient, or None if no match is found.
+    """
+    return next((c for c in clients if c.client_key == client_key), None)

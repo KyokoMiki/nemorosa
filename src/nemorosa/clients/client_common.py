@@ -1210,7 +1210,7 @@ class TorrentClient(ABC):
                     result.started_downloading = False
                 # Mark as checked since it's 100% complete
                 await self.database.update_scan_result_checked(
-                    matched_torrent_hash, True
+                    self.client_key, matched_torrent_hash, True
                 )
                 result.status = PostProcessStatus.COMPLETED
             # If matched torrent is not 100% complete, check file progress patterns
@@ -1230,7 +1230,7 @@ class TorrentClient(ABC):
                     )
                     # Mark as checked since we're keeping the partial torrent
                     await self.database.update_scan_result_checked(
-                        matched_torrent_hash, True
+                        self.client_key, matched_torrent_hash, True
                     )
                     result.status = PostProcessStatus.PARTIAL_KEPT
                 else:
@@ -1244,7 +1244,7 @@ class TorrentClient(ABC):
                             matched_torrent.name,
                         )
                         await self.database.update_scan_result_checked(
-                            matched_torrent_hash, True
+                            self.client_key, matched_torrent_hash, True
                         )
                         result.status = PostProcessStatus.PARTIAL_KEPT
                     else:
@@ -1255,7 +1255,7 @@ class TorrentClient(ABC):
                         await self._remove_torrent(matched_torrent.hash)
                         # Clear matched torrent information from database
                         await self.database.clear_matched_torrent_info(
-                            matched_torrent_hash
+                            self.client_key, matched_torrent_hash
                         )
                         result.status = PostProcessStatus.PARTIAL_REMOVED
 

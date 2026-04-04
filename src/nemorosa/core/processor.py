@@ -10,6 +10,7 @@ from ..clients import (
     ClientTorrentInfo,
     PostProcessStatus,
     TorrentConflictError,
+    find_client_by_key,
 )
 from ..filecompare import (
     check_conflicts,
@@ -239,6 +240,7 @@ class NemorosaCore:
 
         for api_instance in self.target_apis:
             if not skip_scanned_check and await self.database.is_hash_scanned(
+                client_key=torrent_client.client_key,
                 local_torrent_hash=torrent_details.hash,
                 site_host=api_instance.site_host,
             ):
@@ -280,6 +282,7 @@ class NemorosaCore:
 
                 if search_success:
                     await self.database.add_scan_result(
+                        client_key=torrent_client.client_key,
                         local_torrent_hash=torrent_details.hash,
                         site_host=api_instance.site_host,
                         local_torrent_name=torrent_details.name,
@@ -409,7 +412,9 @@ class NemorosaCore:
                             undownloaded.local_torrent_hash,
                         )
                         await self.database.delete_scan_result(
-                            undownloaded.local_torrent_hash, undownloaded.site_host
+                            undownloaded.client_key,
+                            undownloaded.local_torrent_hash,
+                            undownloaded.site_host,
                         )
                         retry_stats.removed += 1
                         continue
@@ -427,6 +432,7 @@ class NemorosaCore:
                         retry_stats.removed += 1
 
                         await self.database.mark_torrent_downloaded(
+                            undownloaded.client_key,
                             undownloaded.local_torrent_hash,
                             undownloaded.site_host,
                             matched_torrent.infohash,
@@ -462,33 +468,38 @@ class NemorosaCore:
         stats = PostProcessStats()
 
         try:
-            matched_results = await self.database.get_matched_scan_results()
-            if not matched_results:
+            unchecked = await self.database.get_unchecked_matched_hashes()
+            if not unchecked:
                 logger.debug("No matched torrents found")
                 return
 
-            logger.info("Found %d matched torrents", len(matched_results))
+            logger.info("Found %d unchecked matched torrents", len(unchecked))
 
-            for matched_torrent_hash in matched_results:
+            for client_key, matched_torrent_hash in unchecked:
                 stats.matches_checked += 1
 
-                # Try all clients for post-processing
-                for torrent_client in self.torrent_clients:
-                    result = await torrent_client.post_process_single_injected_torrent(
-                        matched_torrent_hash
+                torrent_client = find_client_by_key(self.torrent_clients, client_key)
+                if not torrent_client:
+                    logger.warning(
+                        "Client %s not found, skipping torrent %s",
+                        client_key,
+                        matched_torrent_hash,
                     )
+                    continue
 
-                    if result.status != PostProcessStatus.NOT_FOUND:
-                        if result.status == PostProcessStatus.COMPLETED:
-                            stats.matches_completed += 1
-                            if result.started_downloading:
-                                stats.matches_started_downloading += 1
-                        elif result.status in (
-                            PostProcessStatus.PARTIAL_REMOVED,
-                            PostProcessStatus.ERROR,
-                        ):
-                            stats.matches_failed += 1
-                        break
+                result = await torrent_client.post_process_single_injected_torrent(
+                    matched_torrent_hash
+                )
+
+                if result.status == PostProcessStatus.COMPLETED:
+                    stats.matches_completed += 1
+                    if result.started_downloading:
+                        stats.matches_started_downloading += 1
+                elif result.status in (
+                    PostProcessStatus.PARTIAL_REMOVED,
+                    PostProcessStatus.ERROR,
+                ):
+                    stats.matches_failed += 1
 
         except Exception as e:
             logger.exception("Error processing injected torrents: %s", e)
