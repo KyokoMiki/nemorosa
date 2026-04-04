@@ -51,6 +51,7 @@ class ScanResult(Base):
 
     __tablename__ = "scan_results"
 
+    client_key: Mapped[str] = mapped_column(String, primary_key=True)
     local_torrent_hash: Mapped[str] = mapped_column(String, primary_key=True)
     site_host: Mapped[str] = mapped_column(
         String, primary_key=True, server_default="default"
@@ -206,6 +207,7 @@ class NemorosaDatabase:
 
     async def add_scan_result(
         self,
+        client_key: str,
         local_torrent_hash: str,
         site_host: str,
         local_torrent_name: str | None = None,
@@ -215,6 +217,7 @@ class NemorosaDatabase:
         """Add scan result record.
 
         Args:
+            client_key: Client key that owns this torrent.
             local_torrent_hash: Local torrent hash.
             local_torrent_name: Local torrent name.
             matched_torrent_id: Matched torrent ID (can be None to indicate not found).
@@ -224,6 +227,7 @@ class NemorosaDatabase:
         async with self.async_session_maker.begin() as session:
             # Use merge to insert or update
             scan_result = ScanResult(
+                client_key=client_key,
                 local_torrent_hash=local_torrent_hash,
                 site_host=site_host,
                 local_torrent_name=local_torrent_name,
@@ -232,10 +236,13 @@ class NemorosaDatabase:
             )
             await session.merge(scan_result)
 
-    async def is_hash_scanned(self, local_torrent_hash: str, site_host: str) -> bool:
+    async def is_hash_scanned(
+        self, client_key: str, local_torrent_hash: str, site_host: str
+    ) -> bool:
         """Check if specified local torrent hash has been scanned on specific site.
 
         Args:
+            client_key: Client key that owns this torrent.
             local_torrent_hash: Local torrent hash.
             site_host: Site hostname.
 
@@ -244,6 +251,7 @@ class NemorosaDatabase:
         """
         async with self.async_session_maker() as session:
             stmt = select(ScanResult).where(
+                ScanResult.client_key == client_key,
                 ScanResult.local_torrent_hash == local_torrent_hash,
                 ScanResult.site_host == site_host,
             )
@@ -275,11 +283,16 @@ class NemorosaDatabase:
             return result_set.scalars().all()
 
     async def mark_torrent_downloaded(
-        self, local_torrent_hash: str, site_host: str, matched_torrent_hash: str
+        self,
+        client_key: str,
+        local_torrent_hash: str,
+        site_host: str,
+        matched_torrent_hash: str,
     ):
         """Mark a torrent as downloaded by updating its matched_torrent_hash.
 
         Args:
+            client_key: Client key that owns this torrent.
             local_torrent_hash: Local torrent hash.
             site_host: Site hostname.
             matched_torrent_hash: Hash of the successfully downloaded matched torrent.
@@ -288,6 +301,7 @@ class NemorosaDatabase:
             stmt = (
                 update(ScanResult)
                 .where(
+                    ScanResult.client_key == client_key,
                     ScanResult.local_torrent_hash == local_torrent_hash,
                     ScanResult.site_host == site_host,
                 )
@@ -295,15 +309,19 @@ class NemorosaDatabase:
             )
             await session.execute(stmt)
 
-    async def delete_scan_result(self, local_torrent_hash: str, site_host: str):
+    async def delete_scan_result(
+        self, client_key: str, local_torrent_hash: str, site_host: str
+    ):
         """Delete a scan result from the database.
 
         Args:
+            client_key: Client key that owns this torrent.
             local_torrent_hash: Local torrent hash.
             site_host: Site hostname.
         """
         async with self.async_session_maker.begin() as session:
             stmt = delete(ScanResult).where(
+                ScanResult.client_key == client_key,
                 ScanResult.local_torrent_hash == local_torrent_hash,
                 ScanResult.site_host == site_host,
             )
@@ -313,48 +331,63 @@ class NemorosaDatabase:
 
     # region Post-processing
 
-    async def get_matched_scan_results(self) -> Sequence[str]:
-        """Get matched torrent hashes for all sites that haven't been checked.
+    async def get_unchecked_matched_hashes(
+        self,
+    ) -> Sequence[tuple[str, str]]:
+        """Get (client_key, matched_torrent_hash) pairs that haven't been checked.
 
         Returns:
-            List of matched torrent hashes.
+            List of (client_key, matched_torrent_hash) tuples.
         """
         async with self.async_session_maker() as session:
-            stmt = select(ScanResult.matched_torrent_hash).where(
-                ScanResult.matched_torrent_hash.is_not(None),
-                ScanResult.checked.is_(False),
+            stmt = (
+                select(ScanResult.client_key, ScanResult.matched_torrent_hash)
+                .where(
+                    ScanResult.matched_torrent_hash.is_not(None),
+                    ScanResult.checked.is_(False),
+                )
+                .distinct()
             )
             result_set = await session.execute(stmt)
-            # Cast to tell type checker we've filtered out None values in query
-            return cast("Sequence[str]", result_set.scalars().unique().all())
+            return cast("Sequence[tuple[str, str]]", result_set.all())
 
     async def update_scan_result_checked(
-        self, matched_torrent_hash: str, checked: bool
+        self, client_key: str, matched_torrent_hash: str, checked: bool
     ):
         """Update checked status for a scan result.
 
         Args:
+            client_key: Client key that owns this torrent.
             matched_torrent_hash: Matched torrent hash.
             checked: Checked status.
         """
         async with self.async_session_maker.begin() as session:
             stmt = (
                 update(ScanResult)
-                .where(ScanResult.matched_torrent_hash == matched_torrent_hash)
+                .where(
+                    ScanResult.client_key == client_key,
+                    ScanResult.matched_torrent_hash == matched_torrent_hash,
+                )
                 .values(checked=checked)
             )
             await session.execute(stmt)
 
-    async def clear_matched_torrent_info(self, matched_torrent_hash: str):
+    async def clear_matched_torrent_info(
+        self, client_key: str, matched_torrent_hash: str
+    ):
         """Clear matched torrent information for a scan result.
 
         Args:
+            client_key: Client key that owns this torrent.
             matched_torrent_hash: Matched torrent hash.
         """
         async with self.async_session_maker.begin() as session:
             stmt = (
                 update(ScanResult)
-                .where(ScanResult.matched_torrent_hash == matched_torrent_hash)
+                .where(
+                    ScanResult.client_key == client_key,
+                    ScanResult.matched_torrent_hash == matched_torrent_hash,
+                )
                 .values(matched_torrent_id=None, matched_torrent_hash=None)
             )
             await session.execute(stmt)
