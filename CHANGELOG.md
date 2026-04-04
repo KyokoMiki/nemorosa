@@ -5,7 +5,79 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.4.3...HEAD)
+## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.5.0...HEAD)
+
+## [0.5.0](https://github.com/KyokoMiki/nemorosa/compare/0.4.3...0.5.0) - 2026-04-04
+
+### Added
+
+- **Multiple Torrent Clients Support**: Added support for configuring and using multiple torrent clients simultaneously. The `downloader` config section now accepts a list of clients, enabling cross-seeding across different clients (**BREAKING CHANGE**: The `downloader` config must be updated to list format. Please refer to the [wiki](https://github.com/KyokoMiki/nemorosa/wiki) for migration details)
+- **Jpopsuki Tracker Support**: Added support for Jpopsuki tracker (filename search only, hash search not supported)
+- **Bemaniso Tracker Support**: Added support for Bemaniso tracker (supports both hash search and filename search)
+- **Approximate Size Matching**: Added two-stage matching strategy for trackers that only provide human-readable sizes (e.g., JPopSuki): first filter by approximate file size, then download .torrent for exact verification
+
+### Changed
+
+- **Database Client Isolation**: Added `client_key` to database tables to isolate scan results per client (**BREAKING CHANGE**: Database schema changed, please delete your old database file)
+- **Default Python Version**: Bumped the default Python version to 3.14
+
+### Removed
+
+- **Removed dir_mode Config**: Removed `dir_mode` configuration option from linking. If you encounter permission issues, please specify the user in your `docker-compose.yml` to be the same as your downloader's user (**BREAKING CHANGE**: `dir_mode` configuration option has been removed)
+
+### Performance
+
+- **Architecture Refactoring**: Replaced implicit singletons with constructor-based dependency injection; decomposed monolithic `core.py` and `api.py` into focused packages (`core/`, `trackers/`, `clients/`) with proper factory patterns
+
+### Fixed
+
+- **DNS Resolution on Windows**: Fixed DNS resolution errors on Windows caused by `aiodns` incompatibility
+- **Client Timeouts**: Fixed an issue where the timeout duration for some clients was too short
+
+### What's Changed
+
+* build(deps): bump fastapi from 0.128.0 to 0.128.6 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/101
+* build(deps-dev): update uv-build requirement from <0.10.0,>=0.9.1 to >=0.9.1,<0.11.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/102
+* build(deps-dev): bump ruff from 0.14.14 to 0.15.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/103
+* build(deps): bump tenacity from 9.1.2 to 9.1.4 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/104
+* build(deps): bump platformdirs from 4.5.1 to 4.9.2 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/106
+* build(deps): bump fastapi from 0.128.6 to 0.129.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/105
+* build(deps-dev): bump ruff from 0.15.0 to 0.15.1 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/107
+* build(deps): bump asyncer from 0.0.12 to 0.0.14 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/108
+* build(deps): bump fastapi from 0.129.0 to 0.132.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/110
+* build(deps): bump asyncer from 0.0.14 to 0.0.17 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/111
+* build(deps-dev): bump ruff from 0.15.1 to 0.15.2 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/112
+* fix(ci): move tag to version bump commit in release workflow by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/113
+* refactor: replace implicit singletons with DI and decompose monolithic modules by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/114
+* test: add test infrastructure and initial test suite by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/115
+* build(deps): bump fastapi from 0.134.0 to 0.135.1 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/116
+* build(deps): bump docker/setup-qemu-action from 3 to 4 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/118
+* build(deps): bump docker/login-action from 3 to 4 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/119
+* build(deps-dev): bump ruff from 0.15.4 to 0.15.5 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/122
+* build(deps): bump docker/build-push-action from 6 to 7 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/123
+* build(deps): bump platformdirs from 4.9.2 to 4.9.4 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/124
+* build(deps): bump docker/setup-buildx-action from 3 to 4 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/125
+* build(deps): bump docker/metadata-action from 5 to 6 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/126
+* build(deps): bump apprise from 1.9.7 to 1.9.8 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/127
+* fix(filelinking): apply dir_mode via chmod on newly created directories by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/121
+* refactor(clients): unify torrent client timeout and fix win32 deps by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/129
+* build(deps): bump apprise from 1.9.8 to 1.9.9 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/131
+* build(deps-dev): update uv-build requirement from <0.11.0,>=0.9.1 to >=0.9.1,<0.12.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/132
+* build(deps): bump winloop from 0.5.0 to 0.6.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/133
+* build(deps): bump anyio from 4.12.1 to 4.13.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/134
+* build(deps): bump fastapi from 0.135.1 to 0.135.2 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/135
+* build(deps): bump requests from 2.32.5 to 2.33.0 in the uv group across 1 directory by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/136
+* build(deps): bump aiohttp from 3.13.3 to 3.13.4 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/137
+* build(deps-dev): bump ruff from 0.15.6 to 0.15.8 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/138
+* feat!: support multiple torrent clients with redesigned configuration by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/139
+* refactor!: remove dir_mode config option from linking by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/140
+* feat(trackers): add JPopsuki and Bemaniso tracker support with fuzzy size matching by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/141
+* refactor(trackers): restructure tracker API architecture for alternative envelope structures by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/142
+* refactor(clients)!: scope scan results by client_key for multi-client isolation by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/143
+* refactor(config)!: extract credentials from URL into separate config fields by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/144
+* chore: bump default Python to 3.14 and migrate license to PEP 639 by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/145
+
+**Full Changelog**: https://github.com/KyokoMiki/nemorosa/compare/0.4.3...0.5.0
 
 ## [0.4.3](https://github.com/KyokoMiki/nemorosa/compare/0.4.2...0.4.3) - 2026-02-07
 

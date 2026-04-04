@@ -1152,7 +1152,7 @@ wheels = [
 
 [[package]]
 name = "nemorosa"
-version = "0.4.3"
+version = "0.5.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
