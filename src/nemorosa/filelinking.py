@@ -268,7 +268,12 @@ def create_file_links_for_torrent(
             logger.warning("No trackers found in torrent")
             return None
         tracker = torrent_object.trackers.flat[0]
-        tracker_name = urlparse(tracker).hostname or "unknown"
+        hostname = urlparse(tracker).hostname
+        tracker_name = (
+            config.cfg.linking.tracker_aliases.get(hostname, hostname)
+            if hostname
+            else "unknown"
+        )
 
         original_download_dir = local_download_dir / local_torrent_name
 

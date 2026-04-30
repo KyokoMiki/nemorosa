@@ -66,6 +66,7 @@ class LinkingConfig(msgspec.Struct):
     enable_linking: bool = False
     link_dirs: list[str] = msgspec.field(default_factory=list)
     link_type: LinkType = LinkType.HARDLINK
+    tracker_aliases: dict[str, str] = msgspec.field(default_factory=dict)
 
     def __post_init__(self):
         # Validate link_dirs when linking is enabled
@@ -76,6 +77,15 @@ class LinkingConfig(msgspec.Struct):
             for item in self.link_dirs:
                 if not item.strip():
                     raise ValueError("link_dirs cannot contain empty strings")
+
+        # Validate tracker_aliases: keys and values must not be empty strings
+        for key, value in self.tracker_aliases.items():
+            if not key.strip():
+                raise ValueError("tracker_aliases cannot contain empty keys")
+            if not value.strip():
+                raise ValueError(
+                    f"tracker_aliases value for '{key}' cannot be an empty string"
+                )
 
 
 class GlobalConfig(msgspec.Struct):
