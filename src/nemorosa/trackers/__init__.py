@@ -14,6 +14,7 @@ from .gazelle_json import GazelleJSONAPI
 from .registry import (
     TRACKER_REGISTRY,
     GazelleAPI,
+    UnsupportedTrackerError,
     cleanup_api,
     find_api_by_site_host,
     find_api_by_tracker,
@@ -34,6 +35,7 @@ __all__ = [
     "TRACKER_REGISTRY",
     "TorrentSearchResult",
     "TrackerSpec",
+    "UnsupportedTrackerError",
     "cleanup_api",
     "find_api_by_site_host",
     "find_api_by_tracker",

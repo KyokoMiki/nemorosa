@@ -18,6 +18,11 @@ from .jpopsuki import JPopSuki
 # Type alias for API instance types
 GazelleAPI: TypeAlias = GazelleJSONAPI | GazelleParser | GazelleGamesNet | JPopSuki
 
+
+class UnsupportedTrackerError(Exception):
+    """Raised when the configured server has no registered tracker implementation."""
+
+
 TRACKER_REGISTRY: dict[str, tuple[type[GazelleAPI], TrackerSpec]] = {
     "https://redacted.sh": (
         GazelleJSONAPI,
@@ -123,10 +128,10 @@ def get_api_instance(
         API instance for the given server.
 
     Raises:
-        ValueError: If unsupported server is provided.
+        UnsupportedTrackerError: If unsupported server is provided.
     """
     if server not in TRACKER_REGISTRY:
-        raise ValueError(f"Unsupported server: {server}")
+        raise UnsupportedTrackerError(f"Unsupported server: {server}")
 
     api_class, spec = TRACKER_REGISTRY[server]
     return api_class(server=server, spec=spec, cookies=cookies, api_key=api_key)
@@ -166,11 +171,20 @@ async def init_api(target_sites: list[TargetSiteConfig]) -> None:
                 len(target_sites),
                 site.server,
             )
-            api_instance = get_api_instance(
-                server=site.server, api_key=site.api_key, cookies=site_cookies
-            )
+
+            try:
+                api_instance = get_api_instance(
+                    server=site.server, api_key=site.api_key, cookies=site_cookies
+                )
+            except UnsupportedTrackerError as e:
+                logger.warning(
+                    "Skipping unsupported target site %s: %s", site.server, e
+                )
+                continue
+
             if site.link_dir_override:
                 api_instance.link_dir = site.link_dir_override
+
             try:
                 await api_instance.auth()
                 target_apis.append(api_instance)

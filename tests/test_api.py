@@ -11,6 +11,7 @@ from nemorosa.trackers import (
     GazelleJSONAPI,
     GazelleParser,
     TrackerSpec,
+    UnsupportedTrackerError,
     get_api_instance,
 )
 
@@ -365,6 +366,6 @@ class TestGetApiInstance:
         await api.close()
 
     def test_raises_for_unsupported_server(self) -> None:
-        """Should raise ValueError for unsupported server."""
-        with pytest.raises(ValueError, match="Unsupported server"):
+        """Should raise UnsupportedTrackerError for unsupported server."""
+        with pytest.raises(UnsupportedTrackerError, match="Unsupported server"):
             get_api_instance("https://unknown.example.com")
