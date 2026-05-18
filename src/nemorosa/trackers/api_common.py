@@ -125,6 +125,7 @@ class GazelleBase(ABC):
 
         self._rate_limiter = None
         self.spec = spec
+        self.link_dir: str = urlparse(spec.tracker_url).hostname or "unknown"
 
     @property
     def rate_limiter(self) -> AsyncLimiter:

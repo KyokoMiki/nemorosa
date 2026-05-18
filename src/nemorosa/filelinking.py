@@ -8,7 +8,6 @@ import errno
 import shutil
 import uuid
 from pathlib import Path
-from urllib.parse import urlparse
 
 from reflink_copy import reflink, reflink_or_copy
 from torf import Torrent
@@ -250,6 +249,7 @@ def create_file_links_for_torrent(
     local_download_dir: Path,
     local_torrent_name: str,
     file_mapping: dict,
+    link_dir: str,
 ) -> Path | None:
     """Create file links for a torrent instead of renaming files.
 
@@ -258,28 +258,18 @@ def create_file_links_for_torrent(
         local_download_dir: Download directory.
         local_torrent_name: Torrent name.
         file_mapping: File mapping for linking operations.
+        link_dir: Subdirectory name under the link root directory.
 
     Returns:
-        Parent directory of the linked torrent (link_dir/tracker), or None if failed.
+        Parent directory of the linked torrent (link_root/link_dir), or
+        None if failed.
     """
     try:
-        # Extract tracker name from torrent data
-        if not torrent_object.trackers or not torrent_object.trackers.flat:
-            logger.warning("No trackers found in torrent")
-            return None
-        tracker = torrent_object.trackers.flat[0]
-        hostname = urlparse(tracker).hostname
-        tracker_name = (
-            config.cfg.linking.tracker_aliases.get(hostname, hostname)
-            if hostname
-            else "unknown"
-        )
-
         original_download_dir = local_download_dir / local_torrent_name
 
-        # Get the link directory
-        link_dir = get_link_directory(original_download_dir)
-        if not link_dir:
+        # Get the link root directory
+        link_root_dir = get_link_directory(original_download_dir)
+        if not link_root_dir:
             logger.warning(
                 "No suitable link directory found for %s", original_download_dir
             )
@@ -290,7 +280,7 @@ def create_file_links_for_torrent(
             return None
 
         # Create torrent-specific directory (following cross-seed structure)
-        final_download_dir = link_dir / tracker_name
+        final_download_dir = link_root_dir / link_dir
         torrent_link_dir = final_download_dir / torrent_object.name
 
         # Create directory links

@@ -186,6 +186,7 @@ class NemorosaCore:
                     torrent_client,
                     result.matched_torrent,
                     torrent_details,
+                    api.link_dir,
                     result.hash_match,
                 )
                 if injection_success:
@@ -425,6 +426,7 @@ class NemorosaCore:
                         owning_client,
                         matched_torrent,
                         local_torrent_info,
+                        api_instance.link_dir,
                         hash_match=False,
                     )
                     if success:
@@ -838,6 +840,7 @@ class NemorosaCore:
             fdict_torrent,
             matched_torrent.download_dir,
             matched_torrent.name,
+            torrent_api.link_dir,
         )
 
         success, _ = await owning_client.inject_torrent(
