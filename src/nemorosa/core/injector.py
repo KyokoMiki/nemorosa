@@ -13,7 +13,7 @@ from ..filecompare import generate_link_map, generate_rename_map
 from ..filelinking import create_file_links_for_torrent
 
 # Type alias for the link function signature
-LinkFn = Callable[[Torrent, Path, str, dict[str, Any]], Path | None]
+LinkFn = Callable[[Torrent, Path, str, dict[str, Any], str], Path | None]
 
 
 class TorrentInjector:
@@ -22,7 +22,7 @@ class TorrentInjector:
     Args:
         link_fn: Optional file linking function. Defaults to
             create_file_links_for_torrent. Accepts (torrent_object,
-            download_dir, torrent_name, file_mapping) and returns
+            download_dir, torrent_name, file_mapping, link_dir) and returns
             linked directory path or None.
     """
 
@@ -45,6 +45,7 @@ class TorrentInjector:
         matched_fdict: dict[str, int],
         download_dir: str,
         torrent_name: str,
+        link_dir: str,
     ) -> str:
         """Prepare download directory with file linking if enabled.
 
@@ -54,6 +55,7 @@ class TorrentInjector:
             matched_fdict: Matched torrent file dictionary.
             download_dir: Original download directory.
             torrent_name: Name of the torrent.
+            link_dir: Override directory name under the link directory.
 
         Returns:
             Final download directory path (linked or original).
@@ -63,7 +65,11 @@ class TorrentInjector:
 
         file_mapping = generate_link_map(local_fdict, matched_fdict)
         final_dir = await asyncify(self.link_fn)(
-            torrent_object, Path(download_dir), torrent_name, file_mapping
+            torrent_object,
+            Path(download_dir),
+            torrent_name,
+            file_mapping,
+            link_dir,
         )
         if final_dir is None:
             logger.error(
@@ -77,6 +83,7 @@ class TorrentInjector:
         torrent_client: TorrentClient,
         matched_torrent: Torrent,
         local_torrent_info: ClientTorrentInfo,
+        link_dir: str,
         hash_match: bool = False,
     ) -> bool:
         """Inject matched torrent into client with file linking and renaming.
@@ -85,6 +92,7 @@ class TorrentInjector:
             torrent_client: TorrentClient instance to inject into.
             matched_torrent: The matched torrent to inject.
             local_torrent_info: Local torrent information.
+            link_dir: Subdirectory name under the link root directory.
             hash_match: Whether this is a hash match (skip verification).
 
         Returns:
@@ -99,6 +107,7 @@ class TorrentInjector:
             matched_fdict,
             local_torrent_info.download_dir,
             local_torrent_info.name,
+            link_dir,
         )
 
         logger.debug("Attempting to inject torrent: %s", local_torrent_info.name)

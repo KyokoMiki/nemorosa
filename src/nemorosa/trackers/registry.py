@@ -169,6 +169,8 @@ async def init_api(target_sites: list[TargetSiteConfig]) -> None:
             api_instance = get_api_instance(
                 server=site.server, api_key=site.api_key, cookies=site_cookies
             )
+            if site.link_dir_override:
+                api_instance.link_dir = site.link_dir_override
             try:
                 await api_instance.auth()
                 target_apis.append(api_instance)

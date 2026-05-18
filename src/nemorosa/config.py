@@ -66,7 +66,6 @@ class LinkingConfig(msgspec.Struct):
     enable_linking: bool = False
     link_dirs: list[str] = msgspec.field(default_factory=list)
     link_type: LinkType = LinkType.HARDLINK
-    tracker_aliases: dict[str, str] = msgspec.field(default_factory=dict)
 
     def __post_init__(self):
         # Validate link_dirs when linking is enabled
@@ -77,15 +76,6 @@ class LinkingConfig(msgspec.Struct):
             for item in self.link_dirs:
                 if not item.strip():
                     raise ValueError("link_dirs cannot contain empty strings")
-
-        # Validate tracker_aliases: keys and values must not be empty strings
-        for key, value in self.tracker_aliases.items():
-            if not key.strip():
-                raise ValueError("tracker_aliases cannot contain empty keys")
-            if not value.strip():
-                raise ValueError(
-                    f"tracker_aliases value for '{key}' cannot be an empty string"
-                )
 
 
 class GlobalConfig(msgspec.Struct):
@@ -206,6 +196,7 @@ class TargetSiteConfig(msgspec.Struct):
     server: str = ""
     api_key: str | None = None
     cookie: str | None = None
+    link_dir_override: str | None = None
 
     def __post_init__(self):
         if not self.server:
@@ -222,6 +213,9 @@ class TargetSiteConfig(msgspec.Struct):
             )
 
         self.server = self.server.rstrip("/")
+
+        if self.link_dir_override is not None and not self.link_dir_override.strip():
+            raise ValueError("link_dir_override cannot be an empty string")
 
 
 class NemorosaConfig(msgspec.Struct):
@@ -429,6 +423,8 @@ target_site:
     api_key: "your_api_key_here"
   - server: "https://dicmusic.com"
     cookie: "your_cookie_here" # For sites that don't support API, use cookie instead
+    # Optional: override link directory name (default: tracker URL hostname)
+    # link_dir_override: "custom_name"
 """
 
     target_path.write_text(default_config, encoding="utf-8")

@@ -41,6 +41,7 @@ class TestPrepareLinkedDownloadDir:
                 matched_fdict={"01 - Track.flac": 30000000},
                 download_dir="/downloads",
                 torrent_name="Test Album",
+                link_dir="test-tracker",
             )
 
         assert result == "/downloads"
@@ -63,6 +64,7 @@ class TestPrepareLinkedDownloadDir:
                 matched_fdict={"01 - Track.flac": 30000000},
                 download_dir="/downloads",
                 torrent_name="Test Album",
+                link_dir="test-tracker",
             )
 
         assert result == "/linked/dir"
@@ -85,6 +87,7 @@ class TestPrepareLinkedDownloadDir:
                 matched_fdict={"01 - Track.flac": 30000000},
                 download_dir="/downloads",
                 torrent_name="Test Album",
+                link_dir="test-tracker",
             )
 
         assert result == "/downloads"
@@ -108,7 +111,10 @@ class TestInjectMatchedTorrent:
             mock_config.cfg.linking.enable_linking = False
 
             result = await injector.inject_matched_torrent(
-                mock_torrent_client, sample_torrent, sample_local_info
+                mock_torrent_client,
+                sample_torrent,
+                sample_local_info,
+                link_dir="test-tracker",
             )
 
         assert result is True
@@ -128,7 +134,10 @@ class TestInjectMatchedTorrent:
             mock_config.cfg.linking.enable_linking = False
 
             result = await injector.inject_matched_torrent(
-                mock_torrent_client, sample_torrent, sample_local_info
+                mock_torrent_client,
+                sample_torrent,
+                sample_local_info,
+                link_dir="test-tracker",
             )
 
         assert result is False
@@ -145,7 +154,11 @@ class TestInjectMatchedTorrent:
             mock_config.cfg.linking.enable_linking = False
 
             await injector.inject_matched_torrent(
-                mock_torrent_client, sample_torrent, sample_local_info, hash_match=True
+                mock_torrent_client,
+                sample_torrent,
+                sample_local_info,
+                link_dir="test-tracker",
+                hash_match=True,
             )
 
         call_args = mock_torrent_client.inject_torrent.call_args
@@ -181,6 +194,7 @@ class TestInjectableLinkFn:
                 matched_fdict={"01 - Track.flac": 30000000},
                 download_dir="/downloads",
                 torrent_name="Test Album",
+                link_dir="test-tracker",
             )
 
         assert result == "/fake/linked/dir"
@@ -204,6 +218,7 @@ class TestInjectableLinkFn:
                 matched_fdict={"01 - Track.flac": 30000000},
                 download_dir="/downloads",
                 torrent_name="Test Album",
+                link_dir="test-tracker",
             )
 
         assert result == "/downloads"
@@ -228,7 +243,10 @@ class TestInjectableLinkFn:
             mock_config.cfg.linking.enable_linking = True
 
             result = await injector.inject_matched_torrent(
-                mock_torrent_client, sample_torrent, sample_local_info
+                mock_torrent_client,
+                sample_torrent,
+                sample_local_info,
+                link_dir="test-tracker",
             )
 
         assert result is True
