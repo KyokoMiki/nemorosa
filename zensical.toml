@@ -1,0 +1,69 @@
+# Built with Zensical - https://zensical.org
+
+[project]
+site_name = "nemorosa"
+site_description = "A specialized cross-seeding tool for music torrents"
+site_url = "https://nemorosa.readthedocs.io/"
+repo_url = "https://github.com/KyokoMiki/nemorosa"
+repo_name = "KyokoMiki/nemorosa"
+
+[project.theme]
+language = "en"
+logo = "images/nemorosa.svg"
+favicon = "images/favicon.ico"
+features = [
+    "content.code.copy",
+    "content.tabs.link",
+    "navigation.sections",
+    "navigation.expand",
+    "navigation.top",
+    "navigation.footer",
+    "search.suggest",
+    "search.highlight",
+]
+
+[[project.theme.palette]]
+scheme = "default"
+primary = "teal"
+accent = "teal"
+toggle.icon = "lucide/sun"
+toggle.name = "Switch to dark mode"
+
+[[project.theme.palette]]
+scheme = "slate"
+primary = "teal"
+accent = "teal"
+toggle.icon = "lucide/moon"
+toggle.name = "Switch to light mode"
+
+[project.markdown_extensions.admonition]
+[project.markdown_extensions.toc]
+permalink = true
+[project.markdown_extensions.pymdownx.details]
+[project.markdown_extensions.pymdownx.superfences]
+[project.markdown_extensions.pymdownx.highlight]
+anchor_linenums = true
+[project.markdown_extensions.pymdownx.inlinehilite]
+[project.markdown_extensions.pymdownx.tabbed]
+alternate_style = true
+
+[[project.nav]]
+Home = "index.md"
+
+[[project.nav]]
+Basics = [
+    { "Getting Started" = "getting-started.md" },
+    { "Managing the Daemon" = "managing-the-daemon.md" },
+    { "Configuration" = "configuration.md" },
+]
+
+[[project.nav]]
+Tutorials = [
+    { "Announce Matching" = "announce-matching.md" },
+    { "Triggering Searches" = "triggering-searches.md" },
+]
+
+[[project.nav]]
+Reference = [
+    { "HTTP API" = "http-api.md" },
+]
