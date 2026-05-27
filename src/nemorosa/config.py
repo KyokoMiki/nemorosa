@@ -357,7 +357,7 @@ global:
   # Whether to automatically start torrents after successful injection
   auto_start_torrents: true
   # Apprise notification URLs
-  # See: https://github.com/caronc/apprise/wiki
+  # See: https://appriseit.com/services
   notification_urls: []
 
 linking:

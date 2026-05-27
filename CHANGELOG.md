@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **Multiple Torrent Clients Support**: Added support for configuring and using multiple torrent clients simultaneously. The `downloader` config section now accepts a list of clients, enabling cross-seeding across different clients (**BREAKING CHANGE**: The `downloader` config must be updated to list format. Please refer to the [wiki](https://github.com/KyokoMiki/nemorosa/wiki) for migration details)
+- **Multiple Torrent Clients Support**: Added support for configuring and using multiple torrent clients simultaneously. The `downloader` config section now accepts a list of clients, enabling cross-seeding across different clients (**BREAKING CHANGE**: The `downloader` config must be updated to list format. Please refer to the [wiki](https://nemorosa.readthedocs.io) for migration details)
 - **Jpopsuki Tracker Support**: Added support for Jpopsuki tracker (filename search only, hash search not supported)
 - **Bemaniso Tracker Support**: Added support for Bemaniso tracker (supports both hash search and filename search)
 - **Approximate Size Matching**: Added two-stage matching strategy for trackers that only provide human-readable sizes (e.g., JPopSuki): first filter by approximate file size, then download .torrent for exact verification
@@ -214,7 +214,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Announce API Endpoint**: Changed `/api/announce` endpoint to accept `album` (string) instead of `torrentdata` (base64 encoded torrent data). Torrent files are now only downloaded after finding an album name match in the local client, reducing unnecessary downloads (**BREAKING CHANGE**: Update the `Data (JSON)` section in autobrr's External filter webhook configuration. Please refer to the [wiki](https://github.com/KyokoMiki/nemorosa/wiki/Announce-Matching#setting-up-autobrr) for details)
+- **Announce API Endpoint**: Changed `/api/announce` endpoint to accept `album` (string) instead of `torrentdata` (base64 encoded torrent data). Torrent files are now only downloaded after finding an album name match in the local client, reducing unnecessary downloads (**BREAKING CHANGE**: Update the `Data (JSON)` section in autobrr's External filter webhook configuration. Please refer to the [wiki](https://nemorosa.readthedocs.io/en/latest/announce-matching/#setting-up-autobrr) for details)
 - **Album Name Matching**: Added album name matching logic before downloading torrent files. The system now searches for matching torrents by album keywords in the local client before proceeding with torrent file downloads
 - **Empty Client Initialization**: Allow initialization of new clients without existing torrents.
 

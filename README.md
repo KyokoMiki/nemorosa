@@ -49,7 +49,7 @@ Unlike traditional music torrent cross-seeding tools that can only match torrent
 
 ## Usage
 
-For detailed usage instructions, please refer to our [Wiki](https://github.com/KyokoMiki/nemorosa/wiki).
+For detailed usage instructions, please refer to our [Wiki](https://nemorosa.readthedocs.io).
 
 ## Contributing
 

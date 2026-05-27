@@ -46,7 +46,7 @@ dependencies = [
 ]
 
 [project.urls]
-Documentation = "https://github.com/KyokoMiki/nemorosa/wiki"
+Documentation = "https://nemorosa.readthedocs.io"
 Homepage = "https://github.com/KyokoMiki/nemorosa"
 Repository = "https://github.com/KyokoMiki/nemorosa"
 Issues = "https://github.com/KyokoMiki/nemorosa/issues"
