@@ -45,6 +45,7 @@ downloader:
     url: "http://localhost:8080"
     username: "admin"
     password: "adminadmin"
+    api_key: ""
     torrents_dir: ""
     label: "nemorosa"
     tags: null
@@ -334,6 +335,22 @@ Client password for authentication.
 ```yaml
 downloader:
   - password: "adminadmin"
+```
+
+### `api_key`
+
+API key for qBittorrent authentication (qBittorrent 5.2.0+). This provides a stateless alternative to username/password authentication.
+
+When `api_key` is set, it takes priority over `username`/`password`. You can generate an API key in qBittorrent via **Preferences > Web UI**.
+
+**Default:** `""` (empty string, disabled)
+
+**Note:** Only applicable to qBittorrent clients.
+
+```yaml
+downloader:
+  - type: "qbittorrent"
+    api_key: "your-qbittorrent-api-key"
 ```
 
 ### `torrents_dir`

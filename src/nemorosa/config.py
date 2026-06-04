@@ -107,6 +107,7 @@ class DownloaderConfig(msgspec.Struct):
     url: str
     username: str = ""
     password: str = ""
+    api_key: str = ""
     torrents_dir: str = ""
     label: str | None = "nemorosa"
     tags: list[str] | None = None
@@ -391,6 +392,10 @@ downloader:
     url: "" # Client connection URL
     username: "" # Client username
     password: "" # Client password
+    # qBittorrent 5.2.0+ supports API key authentication as an alternative
+    # to username/password. When api_key is set, it takes priority over
+    # username/password. Generate via qBittorrent Preferences > Web UI.
+    api_key: ""
     # The directory where your torrent client stores its .torrent files.
     # For qBittorrent 4.5.0+, torrents_dir is not needed.
     # For Windows: Use forward slashes (/) in path
