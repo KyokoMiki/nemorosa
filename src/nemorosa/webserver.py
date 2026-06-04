@@ -6,10 +6,12 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Annotated
 
+import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse, Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
+from uvicorn.config import LOGGING_CONFIG
 
 from . import __version__, config, logger
 from .core import NemorosaCore, ProcessResponse, ProcessStatus, get_core
@@ -40,7 +42,7 @@ class AnnounceRequest(BaseModel):
 async def lifespan(_: FastAPI):
     """Lifespan event handler for FastAPI app."""
     # Initialize core components (torrent client, database, API connections, scheduler)
-    from .cli import async_init
+    from .cli import async_init  # noqa: PLC0415
 
     await async_init()
 
@@ -406,11 +408,11 @@ def setup_event_loop():
     """Setup the best available event loop for the current platform."""
     try:
         if sys.platform == "win32":
-            import winloop  # type: ignore[import]
+            import winloop  # type: ignore[import]  # noqa: PLC0415
 
             winloop.install()
         else:
-            import uvloop  # type: ignore[import]
+            import uvloop  # type: ignore[import]  # noqa: PLC0415
 
             uvloop.install()
     except ImportError as e:
@@ -456,10 +458,6 @@ def run_webserver():
         logger.info("Scheduler will be started with configured jobs")
     else:
         logger.info("No scheduled jobs configured")
-
-    # Import uvicorn here to avoid import issues
-    import uvicorn
-    from uvicorn.config import LOGGING_CONFIG
 
     # Override uvicorn log format to match nemorosa log format
     LOGGING_CONFIG["formatters"]["default"]["fmt"] = (

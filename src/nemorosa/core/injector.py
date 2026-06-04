@@ -7,10 +7,10 @@ from typing import Any
 from asyncer import asyncify
 from torf import Torrent
 
-from .. import config, logger
-from ..clients import ClientTorrentInfo, TorrentClient
-from ..filecompare import generate_link_map, generate_rename_map
-from ..filelinking import create_file_links_for_torrent
+from nemorosa import config, logger
+from nemorosa.clients import ClientTorrentInfo, TorrentClient
+from nemorosa.filecompare import generate_link_map, generate_rename_map
+from nemorosa.filelinking import create_file_links_for_torrent
 
 # Type alias for the link function signature
 LinkFn = Callable[[Torrent, Path, str, dict[str, Any], str], Path | None]

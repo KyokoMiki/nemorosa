@@ -7,8 +7,9 @@ from typing import TypeAlias
 
 import anyio
 
-from .. import logger
-from ..config import TargetSiteConfig
+from nemorosa import logger
+from nemorosa.config import TargetSiteConfig
+
 from .api_common import TrackerSpec
 from .gazelle_games import GazelleGamesNet
 from .gazelle_html import GazelleParser

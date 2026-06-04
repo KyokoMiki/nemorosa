@@ -82,6 +82,10 @@ select = [
     "TC",
     # McCabe complexity
     "C90",
+    # import-outside-toplevel
+    "PLC0415",
+    # flake8-tidy-imports
+    "TID",
 ]
 
 [tool.pyright]

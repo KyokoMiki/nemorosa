@@ -5,21 +5,22 @@ from typing import TYPE_CHECKING
 
 from torf import Torrent
 
-from .. import config, logger
-from ..clients import (
+from nemorosa import config, logger
+from nemorosa.clients import (
     ClientTorrentInfo,
     PostProcessStatus,
     TorrentConflictError,
     find_client_by_key,
 )
-from ..filecompare import (
+from nemorosa.filecompare import (
     check_conflicts,
     generate_rename_map,
     is_music_file,
     make_search_query,
     select_search_filenames,
 )
-from ..trackers import find_api_by_site_host, find_api_by_tracker
+from nemorosa.trackers import find_api_by_site_host, find_api_by_tracker
+
 from .injector import TorrentInjector
 from .models import (
     PostProcessStats,
@@ -36,10 +37,10 @@ from .utils import (
 )
 
 if TYPE_CHECKING:
-    from ..clients import TorrentClient
-    from ..db import NemorosaDatabase
-    from ..notifier import Notifier
-    from ..trackers import GazelleAPI
+    from nemorosa.clients import TorrentClient
+    from nemorosa.db import NemorosaDatabase
+    from nemorosa.notifier import Notifier
+    from nemorosa.trackers import GazelleAPI
 
 
 class NemorosaCore:

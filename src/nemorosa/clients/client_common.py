@@ -24,12 +24,12 @@ from asyncer import asyncify
 from tenacity import before_sleep_log, retry, stop_after_attempt, wait_fixed
 from torf import Torrent
 
-from .. import config, filecompare, logger
-from ..config import DownloaderConfig
+from nemorosa import config, filecompare, logger
+from nemorosa.config import DownloaderConfig
 
 if TYPE_CHECKING:
-    from ..db import NemorosaDatabase
-    from ..notifier import Notifier
+    from nemorosa.db import NemorosaDatabase
+    from nemorosa.notifier import Notifier
 
 TORRENT_CLIENT_TIMEOUT = 60
 
