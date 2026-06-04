@@ -5,7 +5,8 @@ from http.cookies import SimpleCookie
 import msgspec
 from aiohttp import ClientSession
 
-from .. import logger
+from nemorosa import logger
+
 from .api_common import (
     AuthMethod,
     GazelleBase,

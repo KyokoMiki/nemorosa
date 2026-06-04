@@ -8,7 +8,8 @@ from aiohttp import ClientSession
 from bs4 import BeautifulSoup, Tag
 from humanfriendly import InvalidSize, parse_size
 
-from .. import logger
+from nemorosa import logger
+
 from .api_common import (
     GazelleBase,
     RequestException,

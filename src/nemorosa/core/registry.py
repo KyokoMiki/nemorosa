@@ -2,11 +2,12 @@
 
 import anyio
 
-from .. import config
-from ..clients import get_torrent_clients
-from ..db import get_database
-from ..notifier import get_notifier
-from ..trackers import get_target_apis
+from nemorosa import config
+from nemorosa.clients import get_torrent_clients
+from nemorosa.db import get_database
+from nemorosa.notifier import get_notifier
+from nemorosa.trackers import get_target_apis
+
 from .processor import NemorosaCore
 from .searcher import TorrentSearcher
 

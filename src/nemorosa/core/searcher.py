@@ -5,22 +5,20 @@ from typing import TYPE_CHECKING
 
 from torf import Torrent
 
-from .. import config, logger
-from ..filecompare import (
+from nemorosa import config, logger
+from nemorosa.filecompare import (
     check_conflicts,
     is_music_file,
     is_size_approx_equal,
     make_search_query,
     select_search_filenames,
 )
+
 from .models import SearchMatchResult
 
 if TYPE_CHECKING:
-    from ..clients import ClientTorrentInfo
-    from ..trackers import (
-        GazelleAPI,
-        TorrentSearchResult,
-    )
+    from nemorosa.clients import ClientTorrentInfo
+    from nemorosa.trackers import GazelleAPI, TorrentSearchResult
 
 # Constants
 MAX_SEARCH_RESULTS = 20

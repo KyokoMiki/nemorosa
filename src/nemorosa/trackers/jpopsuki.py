@@ -5,7 +5,8 @@ from contextlib import suppress
 from bs4 import BeautifulSoup
 from humanfriendly import InvalidSize, parse_size
 
-from .. import logger
+from nemorosa import logger
+
 from .api_common import TorrentSearchResult
 from .gazelle_html import GazelleParser
 

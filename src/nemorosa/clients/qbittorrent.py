@@ -13,7 +13,8 @@ from anyio import Path
 from asyncer import asyncify
 from torf import Torrent
 
-from .. import config, logger
+from nemorosa import config, logger
+
 from .client_common import (
     TORRENT_CLIENT_TIMEOUT,
     ClientTorrentFile,
@@ -27,9 +28,9 @@ from .client_common import (
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-    from ..config import DownloaderConfig
-    from ..db import NemorosaDatabase
-    from ..notifier import Notifier
+    from nemorosa.config import DownloaderConfig
+    from nemorosa.db import NemorosaDatabase
+    from nemorosa.notifier import Notifier
 
 # Category suffix for duplicate categories feature
 CATEGORY_SUFFIX = ".nemorosa"

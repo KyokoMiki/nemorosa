@@ -24,7 +24,7 @@ from tenacity import (
 )
 from torf import Torrent
 
-from .. import logger
+from nemorosa import logger
 
 
 class AuthMethod(StrEnum):

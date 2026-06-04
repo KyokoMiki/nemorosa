@@ -7,7 +7,7 @@ no side effects, no I/O operations.
 from collections.abc import Collection
 from urllib.parse import parse_qs, urlparse
 
-from ..filecompare import make_search_query
+from nemorosa.filecompare import make_search_query
 
 
 def parse_torrent_id_from_link(torrent_link: str) -> str:

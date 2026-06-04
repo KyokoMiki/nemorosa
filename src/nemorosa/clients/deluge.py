@@ -13,7 +13,8 @@ import deluge_client
 from anyio import Path
 from asyncer import asyncify
 
-from .. import logger
+from nemorosa import logger
+
 from .client_common import (
     TORRENT_CLIENT_TIMEOUT,
     ClientTorrentFile,
@@ -27,9 +28,9 @@ from .client_common import (
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-    from ..config import DownloaderConfig
-    from ..db import NemorosaDatabase
-    from ..notifier import Notifier
+    from nemorosa.config import DownloaderConfig
+    from nemorosa.db import NemorosaDatabase
+    from nemorosa.notifier import Notifier
 
 # Label suffix for duplicate categories feature
 LABEL_SUFFIX = ".nemorosa"

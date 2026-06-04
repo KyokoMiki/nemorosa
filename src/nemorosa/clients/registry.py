@@ -5,7 +5,8 @@ from typing import TYPE_CHECKING
 import anyio
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from ..config import ClientType, DownloaderConfig
+from nemorosa.config import ClientType, DownloaderConfig
+
 from .client_common import TorrentClient
 from .deluge import DelugeClient
 from .qbittorrent import QBittorrentClient
@@ -13,8 +14,8 @@ from .rtorrent import RTorrentClient
 from .transmission import TransmissionClient
 
 if TYPE_CHECKING:
-    from ..db import NemorosaDatabase
-    from ..notifier import Notifier
+    from nemorosa.db import NemorosaDatabase
+    from nemorosa.notifier import Notifier
 
 
 # Torrent client factory mapping

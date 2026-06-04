@@ -14,7 +14,8 @@ from anyio import Path
 from asyncer import asyncify
 from torf import Torrent
 
-from .. import config, logger
+from nemorosa import config, logger
+
 from .client_common import (
     ClientTorrentFile,
     ClientTorrentInfo,
@@ -29,9 +30,9 @@ from .scgitransport import SCGITransport
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-    from ..config import DownloaderConfig
-    from ..db import NemorosaDatabase
-    from ..notifier import Notifier
+    from nemorosa.config import DownloaderConfig
+    from nemorosa.db import NemorosaDatabase
+    from nemorosa.notifier import Notifier
 
 
 def _get_rtorrent_state(is_active, is_open, complete, hashing) -> TorrentState:
