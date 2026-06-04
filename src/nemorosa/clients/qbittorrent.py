@@ -123,10 +123,13 @@ class QBittorrentClient(TorrentClient):
             host=downloader_config.url or "http://localhost:8080",
             username=downloader_config.username or None,
             password=downloader_config.password or None,
+            api_key=downloader_config.api_key or None,
             REQUESTS_ARGS={"timeout": TORRENT_CLIENT_TIMEOUT},
         )
         # Authenticate with qBittorrent
-        if downloader_config.username and downloader_config.password:
+        if downloader_config.api_key or (
+            downloader_config.username and downloader_config.password
+        ):
             self.client.auth_log_in()
 
         # Initialize sync state for incremental updates
