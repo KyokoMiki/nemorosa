@@ -20,7 +20,7 @@ jobs:
       version: ${{ env.VERSION }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
@@ -73,7 +73,7 @@ jobs:
       packages: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main # Checkout the latest main branch (after update-version push)
           fetch-depth: 0 # Ensures we get all history for tag retrieval and pushing
@@ -129,7 +129,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: main # Checkout the latest main branch (after update-version push)
           fetch-depth: 0
