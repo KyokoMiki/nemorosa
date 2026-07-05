@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v7
 
       - name: Run Ruff
-        uses: astral-sh/ruff-action@v4.0.0
+        uses: astral-sh/ruff-action@v4.1.0
 
   pyright:
     runs-on: ubuntu-latest
