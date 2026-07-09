@@ -5,7 +5,59 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.5.0...HEAD)
+## [Unreleased](https://github.com/KyokoMiki/nemorosa/compare/0.5.1...HEAD)
+
+## [0.5.1](https://github.com/KyokoMiki/nemorosa/compare/0.5.0...0.5.1) - 2026-07-09
+
+### Added
+
+- **qBittorrent 5.2.0+ Support**: Added api_key authentication support and fixed connection issues for qBittorrent 5.2.0+
+- **File Linking Per-Site Directory Override**: Added per-site `link_dir_override` configuration to customize link directory names for each tracker, overriding the default hostname-based naming
+
+### Fixed
+
+- **rTorrent XML-RPC**: Fixed rTorrent RPC connection failure issue by migrating to async XML-RPC implementation with aioxmlrpc
+
+### What's Changed
+
+* build(deps-dev): bump pytest from 9.0.2 to 9.0.3 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/146
+* build(deps-dev): bump ruff from 0.15.9 to 0.15.10 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/147
+* build(deps): bump platformdirs from 4.9.4 to 4.9.6 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/148
+* build(deps): bump winloop from 0.6.0 to 0.6.2 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/149
+* ci: enable dependency grouping for dependabot updates by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/150
+* build(deps): bump the dependencies group with 2 updates by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/151
+* build(deps): bump lxml from 6.0.4 to 6.1.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/152
+* build(deps): bump the dependencies group with 4 updates by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/153
+* feat(filelinking): add tracker aliases by @keatonhasse in https://github.com/KyokoMiki/nemorosa/pull/154
+* build(deps): bump qbittorrent-api from 2025.7.0 to 2026.5.0 in the dependencies group by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/155
+* build(deps): bump urllib3 from 2.6.3 to 2.7.0 by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/156
+* build(deps): bump qbittorrent-api from 2026.5.0 to 2026.5.1 in the dependencies group by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/157
+* refactor(filelinking): replace tracker_aliases with per-site link_dir_override by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/158
+* feat(trackers): skip unsupported target sites instead of failing by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/159
+* build(deps): bump the dependencies group with 2 updates by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/161
+* build(deps): bump the dependencies group with 5 updates by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/163
+* style: enable ruff PLC0415 and TID rules and auto-format by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/165
+* feat(qbittorrent): add api_key authentication support for qBittorrent by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/166
+* ci: configure dependabot to update uv transitive dependencies by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/168
+* build(deps): bump the dependencies group with 2 updates by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/169
+* build(deps): bump the dependencies group with 4 updates by @dependabot[bot] in https://github.com/KyokoMiki/nemorosa/pull/170
+* chore(deps): update github-actions dependencies (major) by @renovate[bot] in https://github.com/KyokoMiki/nemorosa/pull/177
+* chore(deps): lock file maintenance python dependencies by @renovate[bot] in https://github.com/KyokoMiki/nemorosa/pull/178
+* chore(deps): update github-actions dependencies to v7 by @renovate[bot] in https://github.com/KyokoMiki/nemorosa/pull/179
+* chore(deps): lock file maintenance python dependencies by @renovate[bot] in https://github.com/KyokoMiki/nemorosa/pull/180
+* fix(deps): update dependency asyncer to v0.0.18 by @renovate[bot] in https://github.com/KyokoMiki/nemorosa/pull/183
+* chore(deps): lock file maintenance by @renovate[bot] in https://github.com/KyokoMiki/nemorosa/pull/181
+* chore(deps): update astral-sh/setup-uv action to v8.3.0 by @renovate[bot] in https://github.com/KyokoMiki/nemorosa/pull/184
+* chore(deps): update astral-sh/ruff-action action to v4.1.0 by @renovate[bot] in https://github.com/KyokoMiki/nemorosa/pull/185
+* chore(deps): lock file maintenance by @renovate[bot] in https://github.com/KyokoMiki/nemorosa/pull/186
+* refactor(rtorrent): replace xmlrpc.client with aioxmlrpc for async XML-RPC by @KyokoMiki in https://github.com/KyokoMiki/nemorosa/pull/187
+
+### New Contributors
+
+* @keatonhasse made their first contribution in https://github.com/KyokoMiki/nemorosa/pull/154
+* @renovate[bot] made their first contribution in https://github.com/KyokoMiki/nemorosa/pull/177
+
+**Full Changelog**: https://github.com/KyokoMiki/nemorosa/compare/0.5.0...0.5.1
 
 ## [0.5.0](https://github.com/KyokoMiki/nemorosa/compare/0.4.3...0.5.0) - 2026-04-04
 
