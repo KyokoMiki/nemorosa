@@ -1,17 +1,17 @@
-"""SCGI XMLRPC Transport.
+"""Async SCGI XMLRPC Transport.
 
 XMLRPC in Python only supports HTTP(S). This module extends the transport
 to also support SCGI. SCGI is required by rTorrent if you want to communicate
 directly with an instance.
 """
 
-import ipaddress
-import socket
+import xmlrpc.client  # nosec B411
 from io import BytesIO
 from urllib.parse import urlparse
-from xmlrpc.client import Transport  # nosec B411
 
+import anyio
 import defusedxml.xmlrpc
+from aioxmlrpc.client import ServerProxy
 
 from .client_common import TORRENT_CLIENT_TIMEOUT
 
@@ -26,77 +26,85 @@ def encode_header(key: bytes, value: bytes) -> bytes:
     return key + b"\x00" + value + b"\x00"
 
 
-class SCGITransport(Transport):
-    """SCGI transport for XML-RPC."""
+class AsyncSCGITransport(xmlrpc.client.Transport):
+    """Async SCGI transport for XML-RPC, compatible with aioxmlrpc."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *, socket_path: str = "") -> None:
         # Monkey-patch xmlrpc.client to mitigate XML vulnerabilities
         defusedxml.xmlrpc.monkey_patch()
 
-        self.socket_path = kwargs.pop("socket_path", "")
-        Transport.__init__(self, *args, **kwargs)
+        self.socket_path = socket_path
+        super().__init__()
 
-    def single_request(self, host, handler, request_body, verbose=False):
-        """Make a single SCGI request."""
+    async def request(  # type: ignore[override]
+        self,
+        host: str,
+        handler: str,
+        request_body: bytes,
+        verbose: bool = False,
+    ) -> tuple:
+        """Send an SCGI request and return the parsed response.
+
+        Args:
+            host: Host in "hostname:port" format (ignored when using a
+                Unix socket).
+            handler: Request URI (e.g. "/RPC2").
+            request_body: Marshalled XML-RPC request body.
+            verbose: Unused, kept for interface compatibility.
+
+        Returns:
+            The parsed XML-RPC response.
+        """
         self.verbose = verbose
-        address = None
 
-        if self.socket_path:
-            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-            address = self.socket_path
-        else:
-            # host is a string in format "hostname:port"
-            host_str = str(host) if not isinstance(host, str) else host
-            # Add dummy scheme for urlparse (not part of SCGI protocol)
-            parsed = urlparse(f"scgi://{host_str}")
-            if not parsed.hostname or not parsed.port:
-                raise ValueError(
-                    f"Invalid host format '{host}', expected 'hostname:port'"
-                )
+        request = encode_header(b"CONTENT_LENGTH", str(len(request_body)).encode())
+        request += encode_header(b"SCGI", b"1")
+        request += encode_header(b"REQUEST_METHOD", b"POST")
+        request += encode_header(b"REQUEST_URI", handler.encode())
 
-            try:
-                is_ipv6 = isinstance(
-                    ipaddress.ip_address(parsed.hostname), ipaddress.IPv6Address
-                )
-            except ValueError:
-                # Not a valid IP address, treat as socket.AF_INET
-                is_ipv6 = False
+        request = encode_netstring(request)
+        request += request_body
 
-            s = socket.socket(
-                socket.AF_INET6 if is_ipv6 else socket.AF_INET, socket.SOCK_STREAM
-            )
-            address = (parsed.hostname, parsed.port)
+        with anyio.fail_after(TORRENT_CLIENT_TIMEOUT):
+            if self.socket_path:
+                stream = await anyio.connect_unix(self.socket_path)
+            else:
+                # host is a string in format "hostname:port"
+                # Add dummy scheme for urlparse (not part of SCGI protocol)
+                parsed = urlparse(f"scgi://{host}")
+                if not parsed.hostname or not parsed.port:
+                    raise ValueError(
+                        f"Invalid host format '{host}', expected 'hostname:port'"
+                    )
 
-        try:
-            s.settimeout(TORRENT_CLIENT_TIMEOUT)
-            s.connect(address)
+                stream = await anyio.connect_tcp(parsed.hostname, parsed.port)
 
-            request = encode_header(b"CONTENT_LENGTH", str(len(request_body)).encode())
-            request += encode_header(b"SCGI", b"1")
-            request += encode_header(b"REQUEST_METHOD", b"POST")
-            request += encode_header(b"REQUEST_URI", handler.encode())
+            async with stream:
+                await stream.send(request)
+                await stream.send_eof()  # Signal no more data will be sent
 
-            request = encode_netstring(request)
-            request += request_body
+                response = b""
+                while True:
+                    try:
+                        response += await stream.receive(1024)
+                    except anyio.EndOfStream:
+                        break
 
-            s.sendall(request)
-            s.shutdown(socket.SHUT_WR)  # Signal no more data will be sent
+        # Split only once at first blank line to separate headers from body
+        parts = response.split(b"\r\n\r\n", 1)
+        response_body = BytesIO(parts[1] if len(parts) > 1 else b"")
 
-            response = b""
-            while True:
-                r = s.recv(1024)
-                if not r:
-                    break
-                response += r
-
-            # Split only once at first blank line to separate headers from body
-            parts = response.split(b"\r\n\r\n", 1)
-            response_body = BytesIO(parts[1] if len(parts) > 1 else b"")
-
-            return self.parse_response(response_body)  # type: ignore[arg-type]
-        finally:
-            s.close()
+        return self.parse_response(response_body)  # type: ignore[arg-type]
 
 
-if not hasattr(Transport, "single_request"):
-    SCGITransport.request = SCGITransport.single_request
+class SCGIServerProxy(ServerProxy):
+    """aioxmlrpc-compatible ServerProxy that talks SCGI instead of HTTP."""
+
+    def __init__(self, uri: str, *, socket_path: str = "") -> None:
+        # Bypass aioxmlrpc's __init__ (which builds an httpx transport) and
+        # initialize the base ServerProxy with the async SCGI transport.
+        xmlrpc.client.ServerProxy.__init__(  # pylint: disable=non-parent-init-called
+            self,
+            uri,
+            transport=AsyncSCGITransport(socket_path=socket_path),
+        )
