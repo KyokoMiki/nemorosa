@@ -4,19 +4,19 @@ Provides integration with rTorrent via XML-RPC interface using SCGI transport.
 """
 
 import posixpath
-import xmlrpc.client  # nosec B411
 from typing import TYPE_CHECKING
 from urllib.parse import quote, urlsplit
 
 import anyio
 import defusedxml.xmlrpc
+from aioxmlrpc.client import MultiCall, ServerProxy
 from anyio import Path
-from asyncer import asyncify
 from torf import Torrent
 
 from nemorosa import config, logger
 
 from .client_common import (
+    TORRENT_CLIENT_TIMEOUT,
     ClientTorrentFile,
     ClientTorrentInfo,
     FieldSpec,
@@ -25,7 +25,7 @@ from .client_common import (
     TorrentState,
     decode_bitfield_bytes,
 )
-from .scgitransport import SCGITransport
+from .scgitransport import SCGIServerProxy
 
 if TYPE_CHECKING:
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -153,8 +153,8 @@ def _build_authenticated_url(url: str, username: str, password: str | None) -> s
     return parsed._replace(netloc=f"{quoted_user}{quoted_pass}@{host_port}").geturl()
 
 
-def create_proxy(url: str) -> xmlrpc.client.ServerProxy:
-    """Create XML-RPC proxy with SCGI support.
+def create_proxy(url: str) -> ServerProxy:
+    """Create async XML-RPC proxy with SCGI support.
 
     Args:
         url: URL in format scgi://host:port or scgi:///path/to/socket or http://host:port/path
@@ -166,15 +166,9 @@ def create_proxy(url: str) -> xmlrpc.client.ServerProxy:
     proto = url.split(":")[0].lower()
     if proto == "scgi":
         if parsed.netloc:
-            proxy_url = f"http://{parsed.netloc}"
-            return xmlrpc.client.ServerProxy(proxy_url, transport=SCGITransport())
-        else:
-            path = parsed.path
-            return xmlrpc.client.ServerProxy(
-                "http://1", transport=SCGITransport(socket_path=path)
-            )
-    else:
-        return xmlrpc.client.ServerProxy(url)
+            return SCGIServerProxy(f"http://{parsed.netloc}")
+        return SCGIServerProxy("http://1", socket_path=parsed.path)
+    return ServerProxy(url, timeout=TORRENT_CLIENT_TIMEOUT)
 
 
 class RTorrentClient(TorrentClient):
@@ -236,30 +230,32 @@ class RTorrentClient(TorrentClient):
             field_config, arguments = self._get_field_config_and_arguments(fields)
 
             if torrent_hashes:
-                # If specific hashes are requested, use xmlrpc.client's MultiCall
+                # If specific hashes are requested, use aioxmlrpc's MultiCall
                 torrents_data = []
                 for torrent_hash in torrent_hashes:
                     try:
-                        # Use xmlrpc.client's MultiCall for single torrent info
-                        multicall = xmlrpc.client.MultiCall(self.client)
+                        # Use aioxmlrpc's MultiCall for single torrent info
+                        multicall = MultiCall(self.client)
 
                         # Add all method calls to the multicall
                         for arg in arguments:
                             getattr(multicall, arg)(torrent_hash.upper())
 
                         # Execute all calls at once
-                        results = await asyncify(multicall)()
+                        results = await multicall()
 
                         if results:
                             # Build result similar to d.multicall2 format
-                            torrents_data.append(results)
+                            torrents_data.append(
+                                [results[i] for i in range(len(arguments))]
+                            )
                     except Exception as e:
                         # Skip torrents that don't exist or can't be accessed
                         logger.warning("Failed to get torrent %s: %s", torrent_hash, e)
                         continue
             else:
                 # Get all torrents
-                torrents_data = await asyncify(self.client.d.multicall2)(
+                torrents_data = await self.client.d.multicall2(
                     "",
                     "main",
                     *[f"{arg}=" for arg in arguments],
@@ -308,7 +304,7 @@ class RTorrentClient(TorrentClient):
     ) -> dict[str, TorrentState]:
         """Get torrent states for monitoring (optimized for rTorrent).
 
-        Uses xmlrpc.client's MultiCall to get only the required state information
+        Uses aioxmlrpc's MultiCall to get only the required state information
         for monitoring.
 
         Args:
@@ -323,15 +319,15 @@ class RTorrentClient(TorrentClient):
         result = {}
         for torrent_hash in torrent_hashes:
             try:
-                # Use xmlrpc.client's MultiCall for batch operations
-                multicall = xmlrpc.client.MultiCall(self.client)
+                # Use aioxmlrpc's MultiCall for batch operations
+                multicall = MultiCall(self.client)
 
                 # Add all method calls to the multicall
                 for field in monitoring_fields:
                     getattr(multicall, field)(torrent_hash.upper())
 
                 # Execute all calls at once
-                results = await asyncify(multicall)()
+                results = await multicall()
 
                 is_active = results[0]
                 is_open = results[1]
@@ -366,8 +362,8 @@ class RTorrentClient(TorrentClient):
             # Get field configuration and required arguments
             field_config, arguments = self._get_field_config_and_arguments(fields)
 
-            # Use xmlrpc.client's MultiCall for single torrent info
-            multicall = xmlrpc.client.MultiCall(self.client)
+            # Use aioxmlrpc's MultiCall for single torrent info
+            multicall = MultiCall(self.client)
 
             # Add all method calls to the multicall
             for arg in arguments:
@@ -375,7 +371,7 @@ class RTorrentClient(TorrentClient):
                 getattr(multicall, arg)(torrent_hash.upper())
 
             # Execute all calls at once
-            results = await asyncify(multicall)()
+            results = await multicall()
 
             if not results:
                 return None
@@ -432,7 +428,7 @@ class RTorrentClient(TorrentClient):
             List of ClientTorrentFile objects
         """
         try:
-            files_data = await asyncify(self.client.f.multicall)(
+            files_data = await self.client.f.multicall(
                 torrent_hash.upper(),
                 "",
                 "f.path=",
@@ -467,7 +463,7 @@ class RTorrentClient(TorrentClient):
             List of tracker URLs
         """
         try:
-            trackers_data = await asyncify(self.client.t.multicall)(
+            trackers_data = await self.client.t.multicall(
                 torrent_hash.upper(), "", "t.url="
             )
             if not isinstance(trackers_data, list):
@@ -594,12 +590,12 @@ class RTorrentClient(TorrentClient):
             if torrent_completed:
                 # The only way to use fast resume information is to start downloading,
                 # so if auto_start_torrents = false is set, we can only start then pause
-                await asyncify(self.client.load.raw_start)("", *cmd)
+                await self.client.load.raw_start("", *cmd)
                 if not config.cfg.global_config.auto_start_torrents:
                     await anyio.sleep(1)
-                    await asyncify(self.client.d.pause)(info_hash.upper())
+                    await self.client.d.pause(info_hash.upper())
             else:
-                await asyncify(self.client.load.raw)("", *cmd)
+                await self.client.load.raw("", *cmd)
 
             return str(info_hash)
 
@@ -623,7 +619,7 @@ class RTorrentClient(TorrentClient):
         """
         try:
             # Erase torrent (without deleting files)
-            await asyncify(self.client.d.erase)(torrent_hash.upper())
+            await self.client.d.erase(torrent_hash.upper())
         except Exception as e:
             logger.error("Error removing torrent from rTorrent: %s", e)
 
@@ -687,7 +683,7 @@ class RTorrentClient(TorrentClient):
             torrent_hash (str): Torrent hash.
         """
         try:
-            await asyncify(self.client.d.check_hash)(torrent_hash.upper())
+            await self.client.d.check_hash(torrent_hash.upper())
         except Exception as e:
             logger.error("Error verifying torrent in rTorrent: %s", e)
 
@@ -745,7 +741,7 @@ class RTorrentClient(TorrentClient):
         """
         try:
             # Start torrent
-            await asyncify(self.client.d.start)(torrent_hash.upper())
+            await self.client.d.start(torrent_hash.upper())
             return True
         except Exception as e:
             logger.error("Failed to resume torrent %s: %s", torrent_hash, e)

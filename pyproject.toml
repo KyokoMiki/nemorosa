@@ -23,6 +23,7 @@ dependencies = [
     "aiohttp>=3.13.2 ; sys_platform == 'win32'",
     "aiohttp[speedups]>=3.13.2 ; sys_platform != 'win32'",
     "aiolimiter>=1.1.0",
+    "aioxmlrpc>=0.10.0",
     "anyio>=4.12.1",
     "apprise>=1.9.6",
     "apscheduler>=3.10.4",
