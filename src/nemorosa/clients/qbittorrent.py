@@ -3,7 +3,6 @@ qBittorrent client implementation.
 Provides integration with qBittorrent via its Web API.
 """
 
-import json
 import os
 import posixpath
 import time
@@ -12,6 +11,7 @@ from typing import TYPE_CHECKING
 import qbittorrentapi
 from anyio import Path
 from asyncer import asyncify
+from qbittorrentapi.torrents import TorrentsAddedMetadata
 from torf import Torrent
 
 from nemorosa import config, logger
@@ -411,21 +411,19 @@ class QBittorrentClient(TorrentClient):
         )
         return dupe_category, default_tags
 
-    def _add_succeeded(self, result: object, info_hash: str) -> bool:
+    def _add_succeeded(
+        self, result: str | TorrentsAddedMetadata, info_hash: str
+    ) -> bool:
         """Whether a torrents/add response indicates the torrent was added.
 
         qBittorrent < 5.2 returns the string ``"Ok."`` on success; 5.2+ returns
-        a JSON body such as ``{"added_torrent_ids": ["<hash>"], ...}``.
+        a TorrentsAddedMetadata object with added_torrent_ids list.
         """
         if result == "Ok.":
             return True
-        if not isinstance(result, str):
-            return False
-        try:
-            added = json.loads(result).get("added_torrent_ids", [])
-        except (ValueError, TypeError):
-            return False
-        return info_hash.lower() in {h.lower() for h in added}
+        if isinstance(result, TorrentsAddedMetadata):
+            return info_hash.lower() in {h.lower() for h in result.added_torrent_ids}
+        return False
 
     async def _add_torrent(
         self,
