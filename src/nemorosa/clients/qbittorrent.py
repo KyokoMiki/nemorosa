@@ -3,6 +3,7 @@ qBittorrent client implementation.
 Provides integration with qBittorrent via its Web API.
 """
 
+import json
 import os
 import posixpath
 import time
@@ -469,22 +470,37 @@ class QBittorrentClient(TorrentClient):
 
         current_time = time.time()
 
-        result = await asyncify(self.client.torrents_add)(
-            torrent_files=torrent_data,
-            save_path=download_dir if not use_auto_tmm else None,
-            is_paused=True,
-            category=category,
-            tags=tags,
-            use_auto_torrent_management=use_auto_tmm,
-            is_skip_checking=hash_match,
-        )
-
         # qBittorrent doesn't return the hash directly, we need to decode it
         torrent_obj = Torrent.read_stream(torrent_data)
         info_hash = torrent_obj.infohash
 
-        # qBittorrent returns "Ok." for success and "Fails." for failure
-        if result != "Ok.":
+        try:
+            result = await asyncify(self.client.torrents_add)(
+                torrent_files=torrent_data,
+                save_path=download_dir if not use_auto_tmm else None,
+                is_paused=True,
+                category=category,
+                tags=tags,
+                use_auto_torrent_management=use_auto_tmm,
+                is_skip_checking=hash_match,
+            )
+        except qbittorrentapi.Conflict409Error as e:
+            # qBittorrent 5.2+ returns HTTP 409 when the torrent already exists
+            # (older versions returned "Fails." instead).
+            raise TorrentConflictError(info_hash) from e
+
+        # qBittorrent < 5.2 returns "Ok."/"Fails."; 5.2+ returns a JSON body such as
+        # {"added_torrent_ids": ["<hash>"], "failure_count": 0, "success_count": 1}.
+        added_ok = result == "Ok."
+        if not added_ok and isinstance(result, str):
+            try:
+                added_ok = info_hash.lower() in {
+                    h.lower() for h in json.loads(result).get("added_torrent_ids", [])
+                }
+            except (ValueError, TypeError):
+                added_ok = False
+
+        if not added_ok:
             # Check if torrent already exists by comparing add time
             try:
                 torrent_info = await asyncify(self.client.torrents_info)(
