@@ -1234,9 +1234,9 @@ class TorrentClient(ABC):
                     )
                     result.status = PostProcessStatus.PARTIAL_KEPT
                 else:
-                    reflink_enabled = config.cfg.linking.link_type in (
-                        config.LinkType.REFLINK,
-                        config.LinkType.REFLINK_OR_COPY,
+                    reflink_enabled = config.cfg.linking.enable_linking and (
+                        config.cfg.linking.link_type
+                        in (config.LinkType.REFLINK, config.LinkType.REFLINK_OR_COPY)
                     )
                     if (
                         reflink_enabled
