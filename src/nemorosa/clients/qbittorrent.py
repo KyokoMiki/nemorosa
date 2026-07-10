@@ -411,6 +411,22 @@ class QBittorrentClient(TorrentClient):
         )
         return dupe_category, default_tags
 
+    def _add_succeeded(self, result: object, info_hash: str) -> bool:
+        """Whether a torrents/add response indicates the torrent was added.
+
+        qBittorrent < 5.2 returns the string ``"Ok."`` on success; 5.2+ returns
+        a JSON body such as ``{"added_torrent_ids": ["<hash>"], ...}``.
+        """
+        if result == "Ok.":
+            return True
+        if not isinstance(result, str):
+            return False
+        try:
+            added = json.loads(result).get("added_torrent_ids", [])
+        except (ValueError, TypeError):
+            return False
+        return info_hash.lower() in {h.lower() for h in added}
+
     async def _add_torrent(
         self,
         torrent_data: bytes,
@@ -489,18 +505,7 @@ class QBittorrentClient(TorrentClient):
             # (older versions returned "Fails." instead).
             raise TorrentConflictError(info_hash) from e
 
-        # qBittorrent < 5.2 returns "Ok."/"Fails."; 5.2+ returns a JSON body such as
-        # {"added_torrent_ids": ["<hash>"], "failure_count": 0, "success_count": 1}.
-        added_ok = result == "Ok."
-        if not added_ok and isinstance(result, str):
-            try:
-                added_ok = info_hash.lower() in {
-                    h.lower() for h in json.loads(result).get("added_torrent_ids", [])
-                }
-            except (ValueError, TypeError):
-                added_ok = False
-
-        if not added_ok:
+        if not self._add_succeeded(result, info_hash):
             # Check if torrent already exists by comparing add time
             try:
                 torrent_info = await asyncify(self.client.torrents_info)(
