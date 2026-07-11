@@ -194,6 +194,14 @@ class TorrentClient(ABC):
         """Client key used as identity for database cache isolation."""
         return self.downloader_config.client_key
 
+    @property
+    def should_sanitize_link_paths(self) -> bool:
+        """Whether to sanitize link-path elements to match this client's on-disk names.
+
+        Resolves the per-client ``sanitize_paths`` config (client-aware default).
+        """
+        return self.downloader_config.effective_sanitize_paths
+
     # region Abstract Public
 
     @abstractmethod

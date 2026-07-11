@@ -111,7 +111,7 @@ class TorrentInjector:
             local_torrent_info.download_dir,
             local_torrent_info.name,
             link_dir,
-            torrent_client.downloader_config.effective_sanitize_paths,
+            torrent_client.should_sanitize_link_paths,
         )
 
         logger.debug("Attempting to inject torrent: %s", local_torrent_info.name)
