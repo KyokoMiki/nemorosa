@@ -51,6 +51,7 @@ downloader:
     tags: null
     use_unified_labels: true
     duplicate_categories: false
+    sanitize_paths: null
 
 target_site:
   # Target tracker settings
@@ -449,6 +450,27 @@ qBittorrent/Deluge specific setting (only takes effect when `use_unified_labels`
 ```yaml
 downloader:
   - duplicate_categories: false
+```
+
+### `sanitize_paths`
+
+Whether to sanitize link path names to match how the torrent client writes files to disk. Only affects **linking mode**.
+
+libtorrent-based clients (qBittorrent, Deluge) strip certain Unicode control/format characters — for example U+200E (LEFT-TO-RIGHT MARK) — from file and folder names when saving to disk. If nemorosa builds a link path from the raw torrent name while the client looks for the stripped name, the two differ by those invisible characters, the client can't find the files, and the torrent stays stuck at 0%. When enabled, nemorosa strips the same characters (Unicode `Cc`/`Cf` categories) from each link path element so the link matches where the client looks. (See [libtorrent#7568](https://github.com/arvidn/libtorrent/issues/7568).)
+
+**Default:** `null` (auto-detect from client type)
+
+**Behavior:**
+
+- When unset (`null`): defaults per client type — `true` for qBittorrent and Deluge, `false` for Transmission and rTorrent (which don't strip these characters)
+- When `true`: always sanitize link path elements
+- When `false`: never sanitize; use the raw torrent names
+
+**Note:** Only affects linking mode. The non-linking (rename) path is unaffected, since the client applies its own sanitization there.
+
+```yaml
+downloader:
+  - sanitize_paths: null
 ```
 
 ## Target Site Settings

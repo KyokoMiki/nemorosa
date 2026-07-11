@@ -113,6 +113,7 @@ class DownloaderConfig(msgspec.Struct):
     tags: list[str] | None = None
     use_unified_labels: bool = True
     duplicate_categories: bool = False
+    sanitize_paths: bool | None = None
 
     def __post_init__(self):
         if not self.url or not self.url.strip():
@@ -143,6 +144,19 @@ class DownloaderConfig(msgspec.Struct):
     def client_key(self) -> str:
         """Unique client identifier for database cache isolation."""
         return f"{self.type.value}+{self.url}"
+
+    @property
+    def effective_sanitize_paths(self) -> bool:
+        """Whether to sanitize link-path elements to match the client's on-disk names.
+
+        libtorrent-based clients (qBittorrent, Deluge) strip Unicode control/format
+        characters (e.g. U+200E LEFT-TO-RIGHT MARK) from filenames when writing to
+        disk, so a link built from the raw torrent name won't match where the client
+        looks. Defaults per client engine; ``sanitize_paths`` overrides when set.
+        """
+        if self.sanitize_paths is not None:
+            return self.sanitize_paths
+        return self.type in (ClientType.QBITTORRENT, ClientType.DELUGE)
 
 
 class ServerConfig(msgspec.Struct):
@@ -419,6 +433,13 @@ downloader:
     #   but "{{original_category}}.nemorosa" is added as tag
     # Example: original category "Music" -> injected to "Music.nemorosa"
     duplicate_categories: false
+    # Whether to sanitize link-path names to match how the client writes files.
+    # libtorrent-based clients (qBittorrent, Deluge) strip Unicode control/format
+    # characters (e.g. U+200E) from filenames on disk, so a link built from the raw
+    # torrent name won't match and the injected torrent stalls at 0%. Leave unset to
+    # default per client (qBittorrent/Deluge = true, Transmission/rTorrent = false);
+    # set explicitly to override. Only affects linking mode.
+    # sanitize_paths: true
 
 target_site:
   # Target site settings
