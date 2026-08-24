@@ -109,7 +109,7 @@ async def test_partial_kept_when_opted_in(
 
         result = await client.post_process_single_injected_torrent(MATCHED_HASH)
 
-    assert result.status == PostProcessStatus.PARTIAL_KEPT
+    assert result.status == PostProcessStatus.PARTIAL_KEPT  # nosec B101
     client._remove_torrent.assert_not_awaited()
     client.database.update_scan_result_checked.assert_awaited_once_with(
         client.client_key, MATCHED_HASH, True
@@ -134,7 +134,7 @@ async def test_partial_removed_when_not_opted_in(
 
         result = await client.post_process_single_injected_torrent(MATCHED_HASH)
 
-    assert result.status == PostProcessStatus.PARTIAL_REMOVED
+    assert result.status == PostProcessStatus.PARTIAL_REMOVED  # nosec B101
     client._remove_torrent.assert_awaited_once_with(MATCHED_HASH)
     client.database.clear_matched_torrent_info.assert_awaited_once_with(
         client.client_key, MATCHED_HASH
