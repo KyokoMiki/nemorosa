@@ -1234,14 +1234,26 @@ class TorrentClient(ABC):
                     )
                     result.status = PostProcessStatus.PARTIAL_KEPT
                 else:
-                    if config.cfg.linking.link_type in (
-                        config.LinkType.REFLINK,
-                        config.LinkType.REFLINK_OR_COPY,
+                    reflink_enabled = config.cfg.linking.enable_linking and (
+                        config.cfg.linking.link_type
+                        in (config.LinkType.REFLINK, config.LinkType.REFLINK_OR_COPY)
+                    )
+                    if (
+                        reflink_enabled
+                        or config.cfg.global_config.keep_partial_torrents
                     ):
-                        # Keep partial torrent explicitly due to reflink being enabled
+                        # Keep the partial match paused for manual review: either
+                        # reflink makes keeping it cheap, or the user opted in via
+                        # keep_partial_torrents.
+                        reason = (
+                            "reflink enabled"
+                            if reflink_enabled
+                            else "keep_partial_torrents enabled"
+                        )
                         logger.info(
-                            "Keeping partial torrent %s - kept due to reflink enabled",
+                            "Keeping partial torrent %s - kept due to %s",
                             matched_torrent.name,
+                            reason,
                         )
                         await self.database.update_scan_result_checked(
                             self.client_key, matched_torrent_hash, True
