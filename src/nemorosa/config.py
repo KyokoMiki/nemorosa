@@ -89,6 +89,7 @@ class GlobalConfig(msgspec.Struct):
     )
     check_music_only: bool = True
     auto_start_torrents: bool = True
+    keep_partial_torrents: bool = False
     notification_urls: list[str] = msgspec.field(default_factory=list)
 
     def __post_init__(self):
@@ -357,6 +358,8 @@ global:
   check_music_only: true # Whether to check music files only
   # Whether to automatically start torrents after successful injection
   auto_start_torrents: true
+  # Keep partial matches paused for manual review instead of removing them
+  keep_partial_torrents: false
   # Apprise notification URLs
   # See: https://appriseit.com/services
   notification_urls: []
