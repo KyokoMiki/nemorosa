@@ -6,6 +6,7 @@ allowing files to be linked instead of copied to avoid duplicate storage.
 
 import errno
 import shutil
+import unicodedata
 import uuid
 from pathlib import Path
 
@@ -14,6 +15,24 @@ from torf import Torrent
 
 from . import config, logger
 from .config import LinkType
+
+
+def sanitize_path_element(name: str) -> str:
+    """Strip Unicode control/format characters from a single path element.
+
+    Mirrors how libtorrent-based clients (qBittorrent, Deluge) sanitize names when
+    writing files to disk — they drop characters in the Unicode Cc (control) and Cf
+    (format) categories, e.g. U+200E LEFT-TO-RIGHT MARK. Keeping the link path in
+    sync with that avoids the client looking one invisible byte away and finding
+    nothing (the torrent then stalls at 0%).
+    See https://github.com/arvidn/libtorrent/issues/7568.
+    """
+    return "".join(c for c in name if unicodedata.category(c) not in ("Cc", "Cf"))
+
+
+def _sanitize_rel_path(rel_path: str) -> str:
+    """Sanitize each component of a relative path (see sanitize_path_element)."""
+    return "/".join(sanitize_path_element(p) for p in rel_path.split("/"))
 
 
 def _safe_stat_dev(path: Path) -> int | None:
@@ -191,7 +210,10 @@ def create_file_link(
 
 
 def create_directory_links(
-    source_dir: Path, dest_dir: Path, file_mapping: dict[str, str]
+    source_dir: Path,
+    dest_dir: Path,
+    file_mapping: dict[str, str],
+    sanitize: bool = False,
 ) -> dict[str, bool]:
     """Create links for multiple files in a directory structure.
 
@@ -199,6 +221,8 @@ def create_directory_links(
         source_dir: Source directory path.
         dest_dir: Destination directory path.
         file_mapping: Mapping of relative file paths to new names.
+        sanitize: If True, strip Unicode control/format chars from each destination
+            path element so it matches the client's on-disk name.
 
     Returns:
         Dictionary mapping file paths to success status.
@@ -207,7 +231,8 @@ def create_directory_links(
 
     for rel_path, new_name in file_mapping.items():
         source_path = source_dir / rel_path
-        dest_path = dest_dir / new_name
+        dest_name = _sanitize_rel_path(new_name) if sanitize else new_name
+        dest_path = dest_dir / dest_name
 
         if source_path.exists():
             success = create_file_link(source_path, dest_path)
@@ -250,6 +275,7 @@ def create_file_links_for_torrent(
     local_torrent_name: str,
     file_mapping: dict,
     link_dir: str,
+    sanitize: bool = False,
 ) -> Path | None:
     """Create file links for a torrent instead of renaming files.
 
@@ -279,13 +305,20 @@ def create_file_links_for_torrent(
             logger.warning("No torrent name found")
             return None
 
-        # Create torrent-specific directory (following cross-seed structure)
+        # Create torrent-specific directory (following cross-seed structure).
+        # Sanitize the folder name the same way the client sanitizes on-disk names,
+        # so the link path matches where the client will actually look.
+        root_name = (
+            sanitize_path_element(torrent_object.name)
+            if sanitize
+            else torrent_object.name
+        )
         final_download_dir = link_root_dir / link_dir
-        torrent_link_dir = final_download_dir / torrent_object.name
+        torrent_link_dir = final_download_dir / root_name
 
         # Create directory links
         results = create_directory_links(
-            original_download_dir, torrent_link_dir, file_mapping
+            original_download_dir, torrent_link_dir, file_mapping, sanitize
         )
 
         # Check results

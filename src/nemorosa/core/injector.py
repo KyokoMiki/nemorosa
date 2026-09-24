@@ -13,7 +13,7 @@ from nemorosa.filecompare import generate_link_map, generate_rename_map
 from nemorosa.filelinking import create_file_links_for_torrent
 
 # Type alias for the link function signature
-LinkFn = Callable[[Torrent, Path, str, dict[str, Any], str], Path | None]
+LinkFn = Callable[[Torrent, Path, str, dict[str, Any], str, bool], Path | None]
 
 
 class TorrentInjector:
@@ -46,6 +46,7 @@ class TorrentInjector:
         download_dir: str,
         torrent_name: str,
         link_dir: str,
+        sanitize: bool = False,
     ) -> str:
         """Prepare download directory with file linking if enabled.
 
@@ -56,6 +57,7 @@ class TorrentInjector:
             download_dir: Original download directory.
             torrent_name: Name of the torrent.
             link_dir: Override directory name under the link directory.
+            sanitize: If True, sanitize link-path elements to match the client.
 
         Returns:
             Final download directory path (linked or original).
@@ -70,6 +72,7 @@ class TorrentInjector:
             torrent_name,
             file_mapping,
             link_dir,
+            sanitize,
         )
         if final_dir is None:
             logger.error(
@@ -108,6 +111,7 @@ class TorrentInjector:
             local_torrent_info.download_dir,
             local_torrent_info.name,
             link_dir,
+            torrent_client.should_sanitize_link_paths,
         )
 
         logger.debug("Attempting to inject torrent: %s", local_torrent_info.name)
