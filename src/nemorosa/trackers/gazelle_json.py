@@ -61,6 +61,19 @@ class GazelleJSONAPI(GazelleBase):
             results = []
             for group in response[self.spec.response_key]["results"]:
                 if "torrents" not in group:
+                    # Non-music categories (e.g. Audiobooks, E-Books on RED) come back
+                    # as flat groups: one torrent per group, with torrentId and size on
+                    # the group itself and no "torrents" list.
+                    flat_id = group.get("torrentId")
+                    if flat_id:
+                        flat_title = group.get("groupName", "")
+                        results.append(
+                            TorrentSearchResult(
+                                torrent_id=int(flat_id),
+                                size=int(group.get("size", 0)),
+                                title=flat_title or f"Torrent {flat_id}",
+                            )
+                        )
                     continue
                 group_name = group.get("groupName", "")
                 for torrent in group["torrents"]:
