@@ -163,6 +163,9 @@ class TorrentClient(ABC):
     # Class attribute: whether client supports fast resume
     # (skip verification on hash mismatch)
     supports_fast_resume = False
+    # Whether a torrent added with skip-checking shows as complete while it is
+    # still stopped. qBittorrent does not: it keeps 0 pieces until a recheck.
+    skip_check_marks_complete = True
 
     def __init__(
         self,
@@ -1063,6 +1066,7 @@ class TorrentClient(ABC):
             name_differs
             or bool(rename_map)
             or (not hash_match and not self.supports_fast_resume)
+            or (hash_match and not self.skip_check_marks_complete)
         )
         if should_verify:
             logger.debug("Verifying torrent after renaming")
