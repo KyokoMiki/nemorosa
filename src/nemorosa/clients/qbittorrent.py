@@ -106,6 +106,9 @@ _QBITTORRENT_FIELD_SPECS = {
 class QBittorrentClient(TorrentClient):
     """qBittorrent torrent client implementation."""
 
+    # Added stopped (is_paused=True), so a skip-checked add needs a recheck.
+    skip_check_marks_complete = False
+
     def __init__(
         self,
         downloader_config: "DownloaderConfig",
