@@ -597,6 +597,7 @@ class TorrentClient(ABC):
                 fields=[
                     "hash",
                     "name",
+                    "progress",
                     "total_size",
                     "files",
                     "trackers",
@@ -615,6 +616,14 @@ class TorrentClient(ABC):
 
             # Check if torrent meets basic conditions
             if not self._should_include_torrent(target_torrent):
+                return None
+
+            if target_torrent.progress < 1.0:
+                logger.debug(
+                    "Torrent %s filtered out: still downloading (%.1f%%)",
+                    target_torrent.name,
+                    target_torrent.progress * 100,
+                )
                 return None
 
             # Collect which target trackers this content already exists on
@@ -743,6 +752,17 @@ class TorrentClient(ABC):
                     if target_tracker in tracker_url:
                         content_tracker_mapping[content_name].add(target_tracker)
 
+            # A torrent that is still downloading may not have its files at
+            # download_dir yet (clients can keep them in a temporary path), so
+            # it is never used as a source. It still counts as present above.
+            if torrent.progress < 1.0:
+                logger.debug(
+                    "Torrent %s not used as a source: still downloading (%.1f%%)",
+                    content_name,
+                    torrent.progress * 100,
+                )
+                continue
+
             # Save torrent info (if duplicated, choose better version)
             if content_name not in valid_torrents:
                 valid_torrents[content_name] = torrent
@@ -783,6 +803,7 @@ class TorrentClient(ABC):
                     fields=[
                         "hash",
                         "name",
+                        "progress",
                         "total_size",
                         "files",
                         "trackers",
